@@ -72,6 +72,14 @@ type conn struct {
 	// The sender (readLoop/dispatch) closes this channel; the writer drains it.
 	responses chan taggedResponse
 
+	// inflight tracks per-request goroutines for flush cancellation and
+	// drain-on-disconnect.
+	inflight *inflightMap
+
+	// semaphore limits concurrent request goroutines to MaxInflight.
+	// A buffered channel of size maxInflight acts as a counting semaphore.
+	semaphore chan struct{}
+
 	logger *slog.Logger
 }
 
@@ -82,6 +90,8 @@ func newConn(s *Server, nc net.Conn) *conn {
 		nc:        nc,
 		fids:      newFidTable(),
 		responses: make(chan taggedResponse, s.maxInflight),
+		inflight:  newInflightMap(),
+		semaphore: make(chan struct{}, s.maxInflight),
 		logger:    s.logger.With(slog.String("remote", nc.RemoteAddr().String())),
 	}
 }
@@ -120,6 +130,13 @@ func (c *conn) serve(ctx context.Context) {
 	}()
 
 	c.readLoop(ctx)
+
+	// Cancel all inflight request contexts and wait for handler goroutines
+	// to finish before closing the responses channel. This prevents a data
+	// race between handler goroutines sending responses and serve() closing
+	// the channel (GO-CC-1: sender closes channels).
+	c.inflight.cancelAll()
+	c.inflight.wait()
 	close(c.responses)
 
 	// Wait for the writer to drain and exit.
@@ -303,6 +320,20 @@ func (c *conn) readLoop(ctx context.Context) {
 			continue
 		}
 
+		// Handle Tflush synchronously in the read loop to avoid deadlock:
+		// if all semaphore slots are taken, Tflush must still execute to
+		// cancel a pending request and free a slot (T-02-10).
+		if msgType == proto.TypeTflush {
+			var tf proto.Tflush
+			if err := tf.DecodeFrom(bytes.NewReader(buf[3:])); err != nil {
+				c.logger.Warn("decode tflush error", slog.Any("error", err))
+				return
+			}
+			resp := c.handleFlush(ctx, &tf)
+			c.sendResponse(tag, resp)
+			continue
+		}
+
 		// Decode message body via protocol-specific message factory.
 		msg, err := c.newMessage(msgType)
 		if err != nil {
@@ -318,7 +349,40 @@ func (c *conn) readLoop(ctx context.Context) {
 			return // Fatal decode error.
 		}
 
-		c.dispatch(ctx, tag, msg)
+		// Acquire semaphore slot (blocks if MaxInflight reached).
+		select {
+		case c.semaphore <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+
+		// Create per-request context with cancellation for flush support.
+		reqCtx, cancel := context.WithCancel(ctx)
+		c.inflight.start(tag, cancel)
+
+		go c.handleRequest(reqCtx, tag, msg)
+	}
+}
+
+// handleRequest runs a single request in its own goroutine with panic recovery.
+// It releases the semaphore slot and clears the inflight entry when done.
+func (c *conn) handleRequest(ctx context.Context, tag proto.Tag, msg proto.Message) {
+	defer func() {
+		if r := recover(); r != nil {
+			// SERV-06: Handler panic -> EIO, never crash the server.
+			c.logger.Error("handler panic",
+				slog.Any("panic", r),
+				slog.String("message_type", msg.Type().String()),
+			)
+			c.sendResponse(tag, c.errorMsg(proto.EIO))
+		}
+		c.inflight.finish(tag)
+		<-c.semaphore // Release semaphore slot.
+	}()
+
+	resp := c.dispatch(ctx, tag, msg)
+	if resp != nil {
+		c.sendResponse(tag, resp)
 	}
 }
 

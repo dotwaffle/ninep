@@ -9,27 +9,24 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9u"
 )
 
-// dispatch routes a decoded message to the appropriate handler.
-func (c *conn) dispatch(ctx context.Context, tag proto.Tag, msg proto.Message) {
-	var resp proto.Message
+// dispatch routes a decoded message to the appropriate handler and returns the
+// response message. It returns nil for message types that are handled inline
+// (e.g. Tflush is handled in the read loop, not here). Callers are responsible
+// for sending the response via sendResponse.
+func (c *conn) dispatch(ctx context.Context, tag proto.Tag, msg proto.Message) proto.Message {
 	switch m := msg.(type) {
 	case *proto.Tattach:
-		resp = c.handleAttach(ctx, m)
+		return c.handleAttach(ctx, m)
 	case *proto.Twalk:
-		resp = c.handleWalk(ctx, m)
+		return c.handleWalk(ctx, m)
 	case *proto.Tclunk:
-		resp = c.handleClunk(ctx, m)
-	case *proto.Tflush:
-		resp = c.handleFlush(ctx, m)
+		return c.handleClunk(ctx, m)
 	case *proto.Tauth:
 		// Auth is out of scope per project constraints.
-		c.sendError(tag, proto.ENOSYS)
-		return
+		return c.errorMsg(proto.ENOSYS)
 	default:
-		c.sendError(tag, proto.ENOSYS)
-		return
+		return c.errorMsg(proto.ENOSYS)
 	}
-	c.sendResponse(tag, resp)
 }
 
 // handleAttach creates a fid pointing to the resolved root node.
@@ -67,7 +64,7 @@ func (c *conn) handleAttach(ctx context.Context, ta *proto.Tattach) proto.Messag
 }
 
 // handleWalk resolves a path from Fid and assigns NewFid to the result.
-func (c *conn) handleWalk(_ context.Context, tw *proto.Twalk) proto.Message {
+func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 	src := c.fids.get(tw.Fid)
 	if src == nil {
 		return c.errorMsg(proto.EBADF)
@@ -99,7 +96,7 @@ func (c *conn) handleWalk(_ context.Context, tw *proto.Twalk) proto.Message {
 			break // Partial walk.
 		}
 
-		child, err := lookuper.Lookup(context.Background(), name)
+		child, err := lookuper.Lookup(ctx, name)
 		if err != nil {
 			if i == 0 {
 				return c.errorMsg(errnoFromError(err))
@@ -137,8 +134,11 @@ func (c *conn) handleClunk(_ context.Context, tc *proto.Tclunk) proto.Message {
 	return &proto.Rclunk{}
 }
 
-// handleFlush is a stub for Plan 03. Always responds Rflush per spec.
-func (c *conn) handleFlush(_ context.Context, _ *proto.Tflush) proto.Message {
+// handleFlush cancels the target request's context and returns Rflush.
+// Per spec, Rflush is always returned regardless of whether the target tag
+// was found. The handler goroutine will see ctx.Done() and should abort.
+func (c *conn) handleFlush(_ context.Context, tf *proto.Tflush) proto.Message {
+	c.inflight.flush(tf.OldTag)
 	return &proto.Rflush{}
 }
 
