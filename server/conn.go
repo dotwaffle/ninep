@@ -504,6 +504,16 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 		return &p9l.Treadlink{}, nil
 	case proto.TypeTstatfs:
 		return &p9l.Tstatfs{}, nil
+	case proto.TypeTunlinkat:
+		return &p9l.Tunlinkat{}, nil
+	case proto.TypeTrenameat:
+		return &p9l.Trenameat{}, nil
+	case proto.TypeTrename:
+		return &p9l.Trename{}, nil
+	case proto.TypeTlock:
+		return &p9l.Tlock{}, nil
+	case proto.TypeTgetlock:
+		return &p9l.Tgetlock{}, nil
 	default:
 		return nil, fmt.Errorf("unknown message type %d", t)
 	}

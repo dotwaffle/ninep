@@ -446,6 +446,195 @@ func (c *conn) handleStatfs(ctx context.Context, m *p9l.Tstatfs) proto.Message {
 	return &p9l.Rstatfs{Stat: stat}
 }
 
+// handleUnlinkat dispatches to NodeUnlinker and removes the child from the
+// Inode tree on success.
+func (c *conn) handleUnlinkat(ctx context.Context, m *p9l.Tunlinkat) proto.Message {
+	fs := c.fids.get(m.DirFid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	if !validName(m.Name) {
+		return c.errorMsg(proto.EINVAL)
+	}
+
+	unlinker, ok := fs.node.(NodeUnlinker)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	if err := unlinker.Unlink(ctx, m.Name, m.Flags); err != nil {
+		return c.errorMsg(errnoFromError(err))
+	}
+
+	// Remove child from Inode tree if parent implements InodeEmbedder.
+	if parentIE, ok := fs.node.(InodeEmbedder); ok {
+		parentIE.EmbeddedInode().RemoveChild(m.Name)
+	}
+
+	return &p9l.Runlinkat{}
+}
+
+// handleRenameat dispatches to NodeRenamer using AT-style directory fids.
+// Both old and new directory fids are looked up independently.
+func (c *conn) handleRenameat(ctx context.Context, m *p9l.Trenameat) proto.Message {
+	oldDirFS := c.fids.get(m.OldDirFid)
+	if oldDirFS == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	newDirFS := c.fids.get(m.NewDirFid)
+	if newDirFS == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	if !validName(m.OldName) {
+		return c.errorMsg(proto.EINVAL)
+	}
+	if !validName(m.NewName) {
+		return c.errorMsg(proto.EINVAL)
+	}
+
+	renamer, ok := oldDirFS.node.(NodeRenamer)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	if err := renamer.Rename(ctx, m.OldName, newDirFS.node, m.NewName); err != nil {
+		return c.errorMsg(errnoFromError(err))
+	}
+
+	// Update Inode tree: move child from old dir to new dir.
+	if oldIE, ok := oldDirFS.node.(InodeEmbedder); ok {
+		oldInode := oldIE.EmbeddedInode()
+		children := oldInode.Children()
+		if child, found := children[m.OldName]; found {
+			oldInode.RemoveChild(m.OldName)
+			if newIE, ok := newDirFS.node.(InodeEmbedder); ok {
+				newIE.EmbeddedInode().AddChild(m.NewName, child)
+			}
+		}
+	}
+
+	return &p9l.Rrenameat{}
+}
+
+// handleRename dispatches deprecated Trename (fid-based) by resolving the
+// parent directory via Inode tree. Returns ENOSYS if the node does not use
+// Inode embedding or the parent cannot be determined.
+func (c *conn) handleRename(ctx context.Context, m *p9l.Trename) proto.Message {
+	fs := c.fids.get(m.Fid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	dirFS := c.fids.get(m.DirFid)
+	if dirFS == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	if !validName(m.Name) {
+		return c.errorMsg(proto.EINVAL)
+	}
+
+	// Trename is fid-based: we need the parent directory of the fid being
+	// renamed. Resolve via Inode tree.
+	ie, ok := fs.node.(InodeEmbedder)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	parentInode := ie.EmbeddedInode().Parent()
+	if parentInode == nil {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	// Find the old name by scanning parent's children for this node's Inode.
+	childInode := ie.EmbeddedInode()
+	var oldName string
+	for name, child := range parentInode.Children() {
+		if child == childInode {
+			oldName = name
+			break
+		}
+	}
+	if oldName == "" {
+		return c.errorMsg(proto.EINVAL)
+	}
+
+	// The parent directory's node must implement NodeRenamer.
+	renamer, ok := parentInode.node.(NodeRenamer)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	if err := renamer.Rename(ctx, oldName, dirFS.node, m.Name); err != nil {
+		return c.errorMsg(errnoFromError(err))
+	}
+
+	// Update Inode tree: move child from parent to target dir.
+	parentInode.RemoveChild(oldName)
+	if targetIE, ok := dirFS.node.(InodeEmbedder); ok {
+		targetIE.EmbeddedInode().AddChild(m.Name, childInode)
+	}
+
+	return &p9l.Rrename{}
+}
+
+// handleLock dispatches to NodeLocker.Lock. Requires the fid to be in opened
+// state per T-04-05.
+func (c *conn) handleLock(ctx context.Context, m *p9l.Tlock) proto.Message {
+	fs := c.fids.get(m.Fid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+	if fs.state != fidOpened {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	locker, ok := fs.node.(NodeLocker)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	status, err := locker.Lock(ctx, m.LockType, m.Flags, m.Start, m.Length, m.ProcID, m.ClientID)
+	if err != nil {
+		return c.errorMsg(errnoFromError(err))
+	}
+
+	return &p9l.Rlock{Status: status}
+}
+
+// handleGetlock dispatches to NodeLocker.GetLock. Requires the fid to be in
+// opened state per T-04-05.
+func (c *conn) handleGetlock(ctx context.Context, m *p9l.Tgetlock) proto.Message {
+	fs := c.fids.get(m.Fid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+	if fs.state != fidOpened {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	locker, ok := fs.node.(NodeLocker)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	lt, start, length, procID, clientID, err := locker.GetLock(ctx, m.LockType, m.Start, m.Length, m.ProcID, m.ClientID)
+	if err != nil {
+		return c.errorMsg(errnoFromError(err))
+	}
+
+	return &p9l.Rgetlock{
+		LockType: lt,
+		Start:    start,
+		Length:   length,
+		ProcID:   procID,
+		ClientID: clientID,
+	}
+}
+
 // validName returns true if name is a valid 9P file name (no /, no NUL,
 // non-empty, not "." or "..").
 func validName(name string) bool {

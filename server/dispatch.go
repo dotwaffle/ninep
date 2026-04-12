@@ -51,6 +51,16 @@ func (c *conn) dispatch(ctx context.Context, tag proto.Tag, msg proto.Message) p
 		return c.handleReadlink(ctx, m)
 	case *p9l.Tstatfs:
 		return c.handleStatfs(ctx, m)
+	case *p9l.Tunlinkat:
+		return c.handleUnlinkat(ctx, m)
+	case *p9l.Trenameat:
+		return c.handleRenameat(ctx, m)
+	case *p9l.Trename:
+		return c.handleRename(ctx, m)
+	case *p9l.Tlock:
+		return c.handleLock(ctx, m)
+	case *p9l.Tgetlock:
+		return c.handleGetlock(ctx, m)
 	default:
 		return c.errorMsg(proto.ENOSYS)
 	}
