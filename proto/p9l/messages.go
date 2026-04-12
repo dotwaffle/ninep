@@ -1052,6 +1052,9 @@ func (m *Rreaddir) DecodeFrom(r io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("decode rreaddir count: %w", err)
 	}
+	if count > proto.MaxDataSize {
+		return fmt.Errorf("decode rreaddir count %d exceeds maximum %d", count, proto.MaxDataSize)
+	}
 	m.Data = make([]byte, count)
 	if count > 0 {
 		if _, err := io.ReadFull(r, m.Data); err != nil {

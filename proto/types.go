@@ -1,5 +1,12 @@
 package proto
 
+// MaxDataSize is the hard upper bound on data allocations from untrusted wire
+// input (e.g. Rread, Twrite, Rreaddir count fields). It is intentionally
+// larger than the typical negotiated msize (4 MiB) to avoid rejecting valid
+// messages, but small enough to prevent a crafted uint32 count from triggering
+// a multi-gigabyte allocation and OOM.
+const MaxDataSize = 1 << 24 // 16 MiB
+
 // Fid is a 32-bit handle identifying a file on the server, scoped to a
 // single 9P connection.
 type Fid uint32
