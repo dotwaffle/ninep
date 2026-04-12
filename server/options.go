@@ -16,9 +16,14 @@ func WithMaxMsize(msize uint32) Option {
 }
 
 // WithMaxInflight sets the maximum number of concurrent in-flight requests
-// per connection. Default: 64.
+// per connection. Values less than 1 are clamped to 1. Default: 64.
 func WithMaxInflight(n int) Option {
-	return func(s *Server) { s.maxInflight = n }
+	return func(s *Server) {
+		if n < 1 {
+			n = 1
+		}
+		s.maxInflight = n
+	}
 }
 
 // WithLogger sets the structured logger for the server. Default: slog.Default().
