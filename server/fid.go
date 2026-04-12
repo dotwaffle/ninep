@@ -17,9 +17,11 @@ const (
 
 // fidState holds the server-side state for a single fid.
 type fidState struct {
-	node  Node
-	state fidStatus
-	// handle will be added in Phase 3 for per-open FileHandle state.
+	node      Node
+	state     fidStatus
+	handle    FileHandle     // Non-nil after Open returns a handle (per API-04).
+	dirCache  []proto.Dirent // Cached dirents for simple Readdirer (offset tracking).
+	dirCached bool           // True after first readdir populates cache.
 }
 
 // fidTable is a concurrent-safe mapping from fid numbers to their state.
@@ -106,6 +108,21 @@ func (ft *fidTable) markOpened(fid proto.Fid) bool {
 		return false
 	}
 	fs.state = fidOpened
+	return true
+}
+
+// markOpenedWithHandle transitions a fid from fidAllocated to fidOpened and
+// stores the FileHandle. Returns false if the fid is not present or is already
+// opened. Safe for concurrent use.
+func (ft *fidTable) markOpenedWithHandle(fid proto.Fid, h FileHandle) bool {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	fs, ok := ft.fids[fid]
+	if !ok || fs.state != fidAllocated {
+		return false
+	}
+	fs.state = fidOpened
+	fs.handle = h
 	return true
 }
 

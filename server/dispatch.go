@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
@@ -24,6 +25,22 @@ func (c *conn) dispatch(ctx context.Context, tag proto.Tag, msg proto.Message) p
 	case *proto.Tauth:
 		// Auth is out of scope per project constraints.
 		return c.errorMsg(proto.ENOSYS)
+	case *p9l.Tlopen:
+		return c.handleLopen(ctx, m)
+	case *proto.Tread:
+		return c.handleRead(ctx, m)
+	case *proto.Twrite:
+		return c.handleWrite(ctx, m)
+	case *p9l.Tgetattr:
+		return c.handleGetattr(ctx, m)
+	case *p9l.Tsetattr:
+		return c.handleSetattr(ctx, m)
+	case *p9l.Treaddir:
+		return c.handleReaddir(ctx, m)
+	case *p9l.Tlcreate:
+		return c.handleLcreate(ctx, m)
+	case *p9l.Tmkdir:
+		return c.handleMkdir(ctx, m)
 	default:
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -125,12 +142,19 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 
 // handleClunk removes a fid from the table. Per 9P spec, the fid is always
 // invalidated, even if cleanup fails.
-func (c *conn) handleClunk(_ context.Context, tc *proto.Tclunk) proto.Message {
+func (c *conn) handleClunk(ctx context.Context, tc *proto.Tclunk) proto.Message {
 	fs := c.fids.clunk(tc.Fid)
 	if fs == nil {
 		return c.errorMsg(proto.EBADF)
 	}
-	// Phase 3 will add FileHandle.Close() call here.
+	// Release FileHandle if present (per 9P spec, clunk always succeeds).
+	releaseHandle(ctx, fs, c.logger)
+	// Call NodeCloser if implemented.
+	if closer, ok := fs.node.(NodeCloser); ok {
+		if err := closer.Close(ctx); err != nil {
+			c.logger.Debug("node close error on clunk", slog.Any("error", err))
+		}
+	}
 	return &proto.Rclunk{}
 }
 
@@ -140,6 +164,19 @@ func (c *conn) handleClunk(_ context.Context, tc *proto.Tclunk) proto.Message {
 func (c *conn) handleFlush(_ context.Context, tf *proto.Tflush) proto.Message {
 	c.inflight.flush(tf.OldTag)
 	return &proto.Rflush{}
+}
+
+// releaseHandle calls FileReleaser.Release() on the handle if present.
+// Errors are logged but do not fail the operation (per 9P spec, clunk always succeeds).
+func releaseHandle(ctx context.Context, fs *fidState, logger *slog.Logger) {
+	if fs.handle == nil {
+		return
+	}
+	if rel, ok := fs.handle.(FileReleaser); ok {
+		if err := rel.Release(ctx); err != nil {
+			logger.Debug("file handle release error", slog.Any("error", err))
+		}
+	}
 }
 
 // errnoFromError converts a Go error to a proto.Errno. If the error wraps or

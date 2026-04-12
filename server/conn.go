@@ -480,13 +480,21 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 		return &proto.Twrite{}, nil
 	case proto.TypeTremove:
 		return &proto.Tremove{}, nil
+
+	// 9P2000.L-specific message types for capability bridge.
+	case proto.TypeTlopen:
+		return &p9l.Tlopen{}, nil
+	case proto.TypeTlcreate:
+		return &p9l.Tlcreate{}, nil
+	case proto.TypeTgetattr:
+		return &p9l.Tgetattr{}, nil
+	case proto.TypeTsetattr:
+		return &p9l.Tsetattr{}, nil
+	case proto.TypeTreaddir:
+		return &p9l.Treaddir{}, nil
+	case proto.TypeTmkdir:
+		return &p9l.Tmkdir{}, nil
 	default:
-		// Delegate to the protocol-specific codec for extension types.
-		if c.codec.decode != nil {
-			// We cannot use the codec's Decode (it reads from an io.Reader).
-			// For now return unknown; Phase 3+ will add protocol-specific types.
-			return nil, fmt.Errorf("unknown message type %d", t)
-		}
 		return nil, fmt.Errorf("unknown message type %d", t)
 	}
 }

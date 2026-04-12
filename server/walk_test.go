@@ -480,12 +480,12 @@ func TestDispatch_UnknownMessageType(t *testing.T) {
 	cp := newConnPair(t, root)
 	defer cp.close(t)
 
-	// Send a Tread without an opened fid -- the dispatch should handle it.
-	// Actually Tread is in newMessage but dispatch doesn't have a case for it,
-	// so it falls through to the default ENOSYS case.
-	sendMessage(t, cp.client, 1, &proto.Tread{Fid: 0, Offset: 0, Count: 1024})
+	// Send a Tread on a non-existent fid. Tread is now a handled message type
+	// (dispatched to handleRead), which checks fid existence first, returning
+	// EBADF for an unknown fid.
+	sendMessage(t, cp.client, 1, &proto.Tread{Fid: 99, Offset: 0, Count: 1024})
 	_, msg := readResponse(t, cp.client)
-	isError(t, msg, proto.ENOSYS)
+	isError(t, msg, proto.EBADF)
 }
 
 func TestAttach_AuthFidRejected(t *testing.T) {
