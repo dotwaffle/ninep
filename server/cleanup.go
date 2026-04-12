@@ -29,12 +29,16 @@ func (c *conn) cleanup() {
 		)
 	}
 
-	// Step 3: Clunk all fids.
+	// Step 3: Clunk all fids and release handles.
 	// Use swap-and-clear pattern: clunkAll returns all states, iterate outside lock.
 	states := c.fids.clunkAll()
 	for _, fs := range states {
-		// Phase 3 will call FileHandle.Close() here for open fids.
-		_ = fs
+		releaseHandle(context.Background(), fs, c.logger)
+		if closer, ok := fs.node.(NodeCloser); ok {
+			if err := closer.Close(context.Background()); err != nil {
+				c.logger.Debug("node close error during cleanup", slog.Any("error", err))
+			}
+		}
 	}
 	if len(states) > 0 {
 		c.logger.Debug("cleanup: clunked fids",
