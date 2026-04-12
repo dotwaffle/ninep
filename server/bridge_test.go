@@ -1177,3 +1177,579 @@ func TestBridge_EINVAL_CreateDotDot(t *testing.T) {
 	msg := cp.lcreate(t, 3, 1, "..", 0, 0o644, 0)
 	isError(t, msg, proto.EINVAL)
 }
+
+// --- Phase 4 end-to-end integration tests ---
+
+func TestBridge_Symlink(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Create symlink.
+	sendMessage(t, cp.client, 2, &p9l.Tsymlink{DirFid: 0, Name: "link", Target: "/tmp/target", GID: 0})
+	_, msg := readResponse(t, cp.client)
+	rs, ok := msg.(*p9l.Rsymlink)
+	if !ok {
+		t.Fatalf("expected Rsymlink, got %T: %+v", msg, msg)
+	}
+	if rs.QID.Type != proto.QTSYMLINK {
+		t.Errorf("symlink QID type = %d, want QTSYMLINK (%d)", rs.QID.Type, proto.QTSYMLINK)
+	}
+
+	// Walk to the symlink.
+	msg = cp.walk(t, 3, 0, 2, "link")
+	rw, ok := msg.(*proto.Rwalk)
+	if !ok {
+		t.Fatalf("expected Rwalk to symlink, got %T: %+v", msg, msg)
+	}
+	if len(rw.QIDs) != 1 {
+		t.Fatalf("walk QIDs = %d, want 1", len(rw.QIDs))
+	}
+	if rw.QIDs[0].Type != proto.QTSYMLINK {
+		t.Errorf("walked QID type = %d, want QTSYMLINK", rw.QIDs[0].Type)
+	}
+
+	// Readlink on the symlink.
+	sendMessage(t, cp.client, 4, &p9l.Treadlink{Fid: 2})
+	_, msg = readResponse(t, cp.client)
+	rl, ok := msg.(*p9l.Rreadlink)
+	if !ok {
+		t.Fatalf("expected Rreadlink, got %T: %+v", msg, msg)
+	}
+	if rl.Target != "/tmp/target" {
+		t.Errorf("readlink target = %q, want %q", rl.Target, "/tmp/target")
+	}
+}
+
+func TestBridge_Link(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	child := &bridgeFile{content: []byte("data"), mode: 0o644}
+	child.Init(gen.Next(proto.QTFILE), child)
+	root.AddChild("child", child.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Walk to child file as fid 2.
+	msg := cp.walk(t, 2, 0, 2, "child")
+	if _, ok := msg.(*proto.Rwalk); !ok {
+		t.Fatalf("expected Rwalk, got %T: %+v", msg, msg)
+	}
+
+	// Create hard link.
+	sendMessage(t, cp.client, 3, &p9l.Tlink{DirFid: 0, Fid: 2, Name: "hardlink"})
+	_, msg = readResponse(t, cp.client)
+	if _, ok := msg.(*p9l.Rlink); !ok {
+		t.Fatalf("expected Rlink, got %T: %+v", msg, msg)
+	}
+}
+
+func TestBridge_Mknod(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Create device node.
+	sendMessage(t, cp.client, 2, &p9l.Tmknod{DirFid: 0, Name: "dev", Mode: proto.FileMode(0o644), Major: 1, Minor: 3, GID: 0})
+	_, msg := readResponse(t, cp.client)
+	rm, ok := msg.(*p9l.Rmknod)
+	if !ok {
+		t.Fatalf("expected Rmknod, got %T: %+v", msg, msg)
+	}
+	if rm.QID.Type != proto.QTFILE {
+		t.Errorf("mknod QID type = %d, want QTFILE", rm.QID.Type)
+	}
+
+	// Walk to the new device.
+	msg = cp.walk(t, 3, 0, 2, "dev")
+	rw, ok := msg.(*proto.Rwalk)
+	if !ok {
+		t.Fatalf("expected Rwalk to dev, got %T: %+v", msg, msg)
+	}
+	if len(rw.QIDs) != 1 {
+		t.Fatalf("walk QIDs = %d, want 1", len(rw.QIDs))
+	}
+}
+
+func TestBridge_Unlinkat(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	child := &bridgeFile{content: []byte("delete-me"), mode: 0o644}
+	child.Init(gen.Next(proto.QTFILE), child)
+	root.AddChild("child", child.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Verify child exists via walk.
+	msg := cp.walk(t, 2, 0, 2, "child")
+	if _, ok := msg.(*proto.Rwalk); !ok {
+		t.Fatalf("expected Rwalk, got %T: %+v", msg, msg)
+	}
+	// Clunk the walk fid so it doesn't interfere.
+	cp.clunk(t, 3, 2)
+
+	// Unlink child.
+	sendMessage(t, cp.client, 4, &p9l.Tunlinkat{DirFid: 0, Name: "child", Flags: 0})
+	_, msg = readResponse(t, cp.client)
+	if _, ok := msg.(*p9l.Runlinkat); !ok {
+		t.Fatalf("expected Runlinkat, got %T: %+v", msg, msg)
+	}
+
+	// Walk to child should now fail.
+	msg = cp.walk(t, 5, 0, 3, "child")
+	isError(t, msg, proto.ENOENT)
+}
+
+func TestBridge_Renameat(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+
+	// Build tree: root -> dir1 (with file "a"), dir2 (empty).
+	dir1 := &symlinkDir{gen: gen}
+	dir1.Init(gen.Next(proto.QTDIR), dir1)
+	fileA := &bridgeFile{content: []byte("content-a"), mode: 0o644}
+	fileA.Init(gen.Next(proto.QTFILE), fileA)
+	dir1.AddChild("a", fileA.EmbeddedInode())
+
+	dir2 := &symlinkDir{gen: gen}
+	dir2.Init(gen.Next(proto.QTDIR), dir2)
+
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+	root.AddChild("dir1", dir1.EmbeddedInode())
+	root.AddChild("dir2", dir2.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Walk to dir1 (fid 2) and dir2 (fid 3).
+	msg := cp.walk(t, 2, 0, 2, "dir1")
+	if _, ok := msg.(*proto.Rwalk); !ok {
+		t.Fatalf("walk dir1: expected Rwalk, got %T: %+v", msg, msg)
+	}
+	msg = cp.walk(t, 3, 0, 3, "dir2")
+	if _, ok := msg.(*proto.Rwalk); !ok {
+		t.Fatalf("walk dir2: expected Rwalk, got %T: %+v", msg, msg)
+	}
+
+	// Rename "a" from dir1 to dir2 as "moved".
+	sendMessage(t, cp.client, 4, &p9l.Trenameat{OldDirFid: 2, OldName: "a", NewDirFid: 3, NewName: "moved"})
+	_, msg = readResponse(t, cp.client)
+	if _, ok := msg.(*p9l.Rrenameat); !ok {
+		t.Fatalf("expected Rrenameat, got %T: %+v", msg, msg)
+	}
+
+	// Walk from dir2 to "moved" should succeed.
+	msg = cp.walk(t, 5, 3, 4, "moved")
+	rw, ok := msg.(*proto.Rwalk)
+	if !ok {
+		t.Fatalf("walk moved: expected Rwalk, got %T: %+v", msg, msg)
+	}
+	if len(rw.QIDs) != 1 {
+		t.Fatalf("walk moved QIDs = %d, want 1", len(rw.QIDs))
+	}
+
+	// Walk from dir1 to "a" should fail.
+	msg = cp.walk(t, 6, 2, 5, "a")
+	isError(t, msg, proto.ENOENT)
+}
+
+func TestBridge_Statfs(t *testing.T) {
+	t.Parallel()
+
+	wantStat := proto.FSStat{
+		Type:    0x6969,
+		BSize:   4096,
+		Blocks:  1000,
+		BFree:   500,
+		BAvail:  400,
+		Files:   100,
+		FFree:   50,
+		FSID:    123,
+		NameLen: 255,
+	}
+	root := &statfsNode{stat: wantStat}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Send Tstatfs on root fid.
+	sendMessage(t, cp.client, 2, &p9l.Tstatfs{Fid: 0})
+	_, msg := readResponse(t, cp.client)
+	rs, ok := msg.(*p9l.Rstatfs)
+	if !ok {
+		t.Fatalf("expected Rstatfs, got %T: %+v", msg, msg)
+	}
+	if rs.Stat != wantStat {
+		t.Errorf("statfs = %+v, want %+v", rs.Stat, wantStat)
+	}
+}
+
+func TestBridge_Xattr(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	xf := &xattrFile{xattrs: map[string][]byte{"user.color": []byte("red")}}
+	xf.Init(gen.Next(proto.QTFILE), xf)
+	root.AddChild("xfile", xf.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Walk to xattr file.
+	msg := cp.walk(t, 2, 0, 2, "xfile")
+	if _, ok := msg.(*proto.Rwalk); !ok {
+		t.Fatalf("expected Rwalk, got %T: %+v", msg, msg)
+	}
+
+	t.Run("Get", func(t *testing.T) {
+		// Txattrwalk to get "user.color".
+		sendMessage(t, cp.client, 10, &p9l.Txattrwalk{Fid: 2, NewFid: 10, Name: "user.color"})
+		_, msg := readResponse(t, cp.client)
+		rxw, ok := msg.(*p9l.Rxattrwalk)
+		if !ok {
+			t.Fatalf("expected Rxattrwalk, got %T: %+v", msg, msg)
+		}
+		if rxw.Size != 3 {
+			t.Errorf("xattrwalk size = %d, want 3", rxw.Size)
+		}
+
+		// Read the xattr data.
+		msg = cp.read(t, 11, 10, 0, 100)
+		rr, ok := msg.(*proto.Rread)
+		if !ok {
+			t.Fatalf("expected Rread, got %T: %+v", msg, msg)
+		}
+		if string(rr.Data) != "red" {
+			t.Errorf("xattr data = %q, want %q", string(rr.Data), "red")
+		}
+
+		// Clunk xattr fid.
+		cp.clunk(t, 12, 10)
+	})
+
+	t.Run("List", func(t *testing.T) {
+		// Txattrwalk with empty name to list.
+		sendMessage(t, cp.client, 20, &p9l.Txattrwalk{Fid: 2, NewFid: 11, Name: ""})
+		_, msg := readResponse(t, cp.client)
+		rxw, ok := msg.(*p9l.Rxattrwalk)
+		if !ok {
+			t.Fatalf("expected Rxattrwalk, got %T: %+v", msg, msg)
+		}
+		if rxw.Size == 0 {
+			t.Fatal("xattr list size should be > 0")
+		}
+
+		// Read list data.
+		msg = cp.read(t, 21, 11, 0, 1024)
+		rr, ok := msg.(*proto.Rread)
+		if !ok {
+			t.Fatalf("expected Rread, got %T: %+v", msg, msg)
+		}
+		// Should contain "user.color\0".
+		if !bytes.Contains(rr.Data, []byte("user.color")) {
+			t.Errorf("xattr list = %q, want to contain %q", string(rr.Data), "user.color")
+		}
+
+		cp.clunk(t, 22, 11)
+	})
+
+	t.Run("Set", func(t *testing.T) {
+		// Clone fid 2 to fid 12 (walk with 0 names).
+		msg := cp.walk(t, 30, 2, 12)
+		if _, ok := msg.(*proto.Rwalk); !ok {
+			t.Fatalf("expected Rwalk clone, got %T: %+v", msg, msg)
+		}
+
+		// Txattrcreate to set "user.size" with value "large" (5 bytes).
+		sendMessage(t, cp.client, 31, &p9l.Txattrcreate{Fid: 12, Name: "user.size", AttrSize: 5, Flags: 0})
+		_, msg = readResponse(t, cp.client)
+		if _, ok := msg.(*p9l.Rxattrcreate); !ok {
+			t.Fatalf("expected Rxattrcreate, got %T: %+v", msg, msg)
+		}
+
+		// Write the xattr data.
+		msg = cp.write(t, 32, 12, 0, []byte("large"))
+		if _, ok := msg.(*proto.Rwrite); !ok {
+			t.Fatalf("expected Rwrite, got %T: %+v", msg, msg)
+		}
+
+		// Clunk to commit.
+		msg = cp.clunk(t, 33, 12)
+		if _, ok := msg.(*proto.Rclunk); !ok {
+			t.Fatalf("expected Rclunk, got %T: %+v", msg, msg)
+		}
+
+		// Verify by reading the xattr back via xattrwalk.
+		sendMessage(t, cp.client, 34, &p9l.Txattrwalk{Fid: 2, NewFid: 13, Name: "user.size"})
+		_, msg = readResponse(t, cp.client)
+		rxw, ok := msg.(*p9l.Rxattrwalk)
+		if !ok {
+			t.Fatalf("expected Rxattrwalk for verify, got %T: %+v", msg, msg)
+		}
+		if rxw.Size != 5 {
+			t.Errorf("verify xattrwalk size = %d, want 5", rxw.Size)
+		}
+
+		msg = cp.read(t, 35, 13, 0, 100)
+		rr, ok := msg.(*proto.Rread)
+		if !ok {
+			t.Fatalf("expected Rread for verify, got %T: %+v", msg, msg)
+		}
+		if string(rr.Data) != "large" {
+			t.Errorf("verify xattr data = %q, want %q", string(rr.Data), "large")
+		}
+
+		cp.clunk(t, 36, 13)
+	})
+}
+
+func TestBridge_XattrSizeMismatch(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	xf := &xattrFile{xattrs: map[string][]byte{}}
+	xf.Init(gen.Next(proto.QTFILE), xf)
+	root.AddChild("xfile", xf.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Walk to xattr file.
+	cp.walk(t, 2, 0, 2, "xfile")
+
+	// Clone fid 2 to fid 3.
+	cp.walk(t, 3, 2, 3)
+
+	// Txattrcreate declaring size=3.
+	sendMessage(t, cp.client, 4, &p9l.Txattrcreate{Fid: 3, Name: "test", AttrSize: 3, Flags: 0})
+	_, msg := readResponse(t, cp.client)
+	if _, ok := msg.(*p9l.Rxattrcreate); !ok {
+		t.Fatalf("expected Rxattrcreate, got %T: %+v", msg, msg)
+	}
+
+	// Write only 2 bytes (declared 3).
+	msg = cp.write(t, 5, 3, 0, []byte("ab"))
+	if _, ok := msg.(*proto.Rwrite); !ok {
+		t.Fatalf("expected Rwrite, got %T: %+v", msg, msg)
+	}
+
+	// Clunk should fail with EIO due to size mismatch.
+	msg = cp.clunk(t, 6, 3)
+	isError(t, msg, proto.EIO)
+}
+
+func TestBridge_RawXattr(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	rxf := &rawXattrFile{xattrs: map[string][]byte{"raw.test": []byte("raw-value")}}
+	rxf.Init(gen.Next(proto.QTFILE), rxf)
+	root.AddChild("rawfile", rxf.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Walk to raw xattr file.
+	msg := cp.walk(t, 2, 0, 2, "rawfile")
+	if _, ok := msg.(*proto.Rwalk); !ok {
+		t.Fatalf("expected Rwalk, got %T: %+v", msg, msg)
+	}
+
+	t.Run("Get", func(t *testing.T) {
+		// Txattrwalk for "raw.test".
+		sendMessage(t, cp.client, 10, &p9l.Txattrwalk{Fid: 2, NewFid: 20, Name: "raw.test"})
+		_, msg := readResponse(t, cp.client)
+		rxw, ok := msg.(*p9l.Rxattrwalk)
+		if !ok {
+			t.Fatalf("expected Rxattrwalk, got %T: %+v", msg, msg)
+		}
+		if rxw.Size != 9 {
+			t.Errorf("xattrwalk size = %d, want 9", rxw.Size)
+		}
+
+		// Read the xattr data.
+		msg = cp.read(t, 11, 20, 0, 100)
+		rr, ok := msg.(*proto.Rread)
+		if !ok {
+			t.Fatalf("expected Rread, got %T: %+v", msg, msg)
+		}
+		if string(rr.Data) != "raw-value" {
+			t.Errorf("xattr data = %q, want %q", string(rr.Data), "raw-value")
+		}
+
+		cp.clunk(t, 12, 20)
+	})
+
+	t.Run("Set", func(t *testing.T) {
+		// Clone fid 2 to fid 21.
+		msg := cp.walk(t, 20, 2, 21)
+		if _, ok := msg.(*proto.Rwalk); !ok {
+			t.Fatalf("expected Rwalk clone, got %T: %+v", msg, msg)
+		}
+
+		// Txattrcreate.
+		sendMessage(t, cp.client, 21, &p9l.Txattrcreate{Fid: 21, Name: "raw.new", AttrSize: 7, Flags: 0})
+		_, msg = readResponse(t, cp.client)
+		if _, ok := msg.(*p9l.Rxattrcreate); !ok {
+			t.Fatalf("expected Rxattrcreate, got %T: %+v", msg, msg)
+		}
+
+		// Write data.
+		msg = cp.write(t, 22, 21, 0, []byte("written"))
+		if _, ok := msg.(*proto.Rwrite); !ok {
+			t.Fatalf("expected Rwrite, got %T: %+v", msg, msg)
+		}
+
+		// Clunk to commit via XattrWriter.
+		msg = cp.clunk(t, 23, 21)
+		if _, ok := msg.(*proto.Rclunk); !ok {
+			t.Fatalf("expected Rclunk, got %T: %+v", msg, msg)
+		}
+
+		// Verify the raw xattr file received the write.
+		if rxf.lastWriteName != "raw.new" {
+			t.Errorf("lastWriteName = %q, want %q", rxf.lastWriteName, "raw.new")
+		}
+		if string(rxf.xattrs["raw.new"]) != "written" {
+			t.Errorf("xattrs[raw.new] = %q, want %q", string(rxf.xattrs["raw.new"]), "written")
+		}
+	})
+}
+
+func TestBridge_Lock(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	lf := &lockableFile{lockStatus: proto.LockStatusOK}
+	lf.Init(gen.Next(proto.QTFILE), lf)
+	root.AddChild("lockfile", lf.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Walk to file, open it.
+	cp.walk(t, 2, 0, 2, "lockfile")
+	msg := cp.lopen(t, 3, 2, 0)
+	if _, ok := msg.(*p9l.Rlopen); !ok {
+		t.Fatalf("expected Rlopen, got %T: %+v", msg, msg)
+	}
+
+	// Send Tlock.
+	sendMessage(t, cp.client, 4, &p9l.Tlock{
+		Fid:      2,
+		LockType: proto.LockTypeWrLck,
+		Flags:    0,
+		Start:    0,
+		Length:   100,
+		ProcID:   1234,
+		ClientID: "test",
+	})
+	_, msg = readResponse(t, cp.client)
+	rl, ok := msg.(*p9l.Rlock)
+	if !ok {
+		t.Fatalf("expected Rlock, got %T: %+v", msg, msg)
+	}
+	if rl.Status != proto.LockStatusOK {
+		t.Errorf("lock status = %d, want LockStatusOK (%d)", rl.Status, proto.LockStatusOK)
+	}
+}
+
+func TestBridge_Getlock(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	lf := &lockableFile{lockStatus: proto.LockStatusOK}
+	lf.Init(gen.Next(proto.QTFILE), lf)
+	root.AddChild("lockfile", lf.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Walk to file, open it.
+	cp.walk(t, 2, 0, 2, "lockfile")
+	msg := cp.lopen(t, 3, 2, 0)
+	if _, ok := msg.(*p9l.Rlopen); !ok {
+		t.Fatalf("expected Rlopen, got %T: %+v", msg, msg)
+	}
+
+	// Send Tgetlock.
+	sendMessage(t, cp.client, 4, &p9l.Tgetlock{
+		Fid:      2,
+		LockType: proto.LockTypeRdLck,
+		Start:    0,
+		Length:   100,
+		ProcID:   1234,
+		ClientID: "test",
+	})
+	_, msg = readResponse(t, cp.client)
+	rgl, ok := msg.(*p9l.Rgetlock)
+	if !ok {
+		t.Fatalf("expected Rgetlock, got %T: %+v", msg, msg)
+	}
+	if rgl.LockType != proto.LockTypeRdLck {
+		t.Errorf("getlock type = %d, want LockTypeRdLck (%d)", rgl.LockType, proto.LockTypeRdLck)
+	}
+	if rgl.Start != 0 || rgl.Length != 100 {
+		t.Errorf("getlock range = [%d, %d), want [0, 100)", rgl.Start, rgl.Length)
+	}
+	if rgl.ProcID != 1234 {
+		t.Errorf("getlock procID = %d, want 1234", rgl.ProcID)
+	}
+	if rgl.ClientID != "test" {
+		t.Errorf("getlock clientID = %q, want %q", rgl.ClientID, "test")
+	}
+}
+
+func TestBridge_ENOSYS_Symlink(t *testing.T) {
+	t.Parallel()
+
+	// Root is a plain Inode -- no NodeSymlinker.
+	root := &testDir{}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Send Tsymlink on a node that doesn't implement NodeSymlinker.
+	sendMessage(t, cp.client, 2, &p9l.Tsymlink{DirFid: 0, Name: "link", Target: "/tmp/t", GID: 0})
+	_, msg := readResponse(t, cp.client)
+	isError(t, msg, proto.ENOSYS)
+}
