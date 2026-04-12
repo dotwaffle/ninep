@@ -180,6 +180,214 @@ var (
 	_ InodeEmbedder = (*readOnlyTestFile)(nil)
 )
 
+// --- Phase 4 test node types ---
+
+// symlinkDir is a test directory supporting Symlink, Link, Mknod, Unlink,
+// Rename, and Readlink on children.
+type symlinkDir struct {
+	Inode
+	gen *QIDGenerator
+}
+
+func (d *symlinkDir) Symlink(_ context.Context, name, target string, _ uint32) (Node, error) {
+	child := &symlinkNode{target: target}
+	child.Init(d.gen.Next(proto.QTSYMLINK), child)
+	return child, nil
+}
+
+func (d *symlinkDir) Link(_ context.Context, _ Node, _ string) error {
+	return nil
+}
+
+func (d *symlinkDir) Mknod(_ context.Context, _ string, _ proto.FileMode, _, _, _ uint32) (Node, error) {
+	child := &bridgeFile{content: nil, mode: 0}
+	child.Init(d.gen.Next(proto.QTFILE), child)
+	return child, nil
+}
+
+func (d *symlinkDir) Unlink(_ context.Context, _ string, _ uint32) error {
+	return nil
+}
+
+func (d *symlinkDir) Rename(_ context.Context, _ string, _ Node, _ string) error {
+	return nil
+}
+
+func (d *symlinkDir) Open(_ context.Context, _ uint32) (FileHandle, uint32, error) {
+	return nil, 0, nil
+}
+
+func (d *symlinkDir) Lookup(ctx context.Context, name string) (Node, error) {
+	return d.Inode.Lookup(ctx, name)
+}
+
+// symlinkNode is a symlink that implements NodeReadlinker.
+type symlinkNode struct {
+	Inode
+	target string
+}
+
+func (s *symlinkNode) Readlink(_ context.Context) (string, error) {
+	return s.target, nil
+}
+
+// statfsNode implements NodeStatFSer.
+type statfsNode struct {
+	Inode
+	stat proto.FSStat
+}
+
+func (s *statfsNode) StatFS(_ context.Context) (proto.FSStat, error) {
+	return s.stat, nil
+}
+
+// lockableFile implements NodeLocker for lock tests.
+type lockableFile struct {
+	Inode
+	lockStatus proto.LockStatus
+}
+
+func (f *lockableFile) Open(_ context.Context, _ uint32) (FileHandle, uint32, error) {
+	return nil, 0, nil
+}
+
+func (f *lockableFile) Lock(_ context.Context, _ proto.LockType, _ proto.LockFlags, _, _ uint64, _ uint32, _ string) (proto.LockStatus, error) {
+	return f.lockStatus, nil
+}
+
+func (f *lockableFile) GetLock(_ context.Context, _ proto.LockType, start, length uint64, procID uint32, clientID string) (proto.LockType, uint64, uint64, uint32, string, error) {
+	return proto.LockTypeRdLck, start, length, procID, clientID, nil
+}
+
+// xattrFile implements NodeXattrGetter, NodeXattrSetter, NodeXattrLister,
+// NodeXattrRemover for xattr tests.
+type xattrFile struct {
+	Inode
+	xattrs map[string][]byte
+}
+
+func (f *xattrFile) Open(_ context.Context, _ uint32) (FileHandle, uint32, error) {
+	return nil, 0, nil
+}
+
+func (f *xattrFile) GetXattr(_ context.Context, name string) ([]byte, error) {
+	data, ok := f.xattrs[name]
+	if !ok {
+		return nil, proto.ENODATA
+	}
+	return data, nil
+}
+
+func (f *xattrFile) SetXattr(_ context.Context, name string, data []byte, _ uint32) error {
+	if f.xattrs == nil {
+		f.xattrs = make(map[string][]byte)
+	}
+	f.xattrs[name] = append([]byte(nil), data...)
+	return nil
+}
+
+func (f *xattrFile) ListXattrs(_ context.Context) ([]string, error) {
+	names := make([]string, 0, len(f.xattrs))
+	for name := range f.xattrs {
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+func (f *xattrFile) RemoveXattr(_ context.Context, name string) error {
+	delete(f.xattrs, name)
+	return nil
+}
+
+// rawXattrFile implements RawXattrer for testing the escape hatch.
+type rawXattrFile struct {
+	Inode
+	xattrs        map[string][]byte
+	lastWriteName string
+	lastWriteData []byte
+}
+
+func (f *rawXattrFile) Open(_ context.Context, _ uint32) (FileHandle, uint32, error) {
+	return nil, 0, nil
+}
+
+func (f *rawXattrFile) HandleXattrwalk(_ context.Context, name string) ([]byte, error) {
+	if name == "" {
+		var buf []byte
+		for n := range f.xattrs {
+			buf = append(buf, []byte(n)...)
+			buf = append(buf, 0)
+		}
+		return buf, nil
+	}
+	data, ok := f.xattrs[name]
+	if !ok {
+		return nil, proto.ENODATA
+	}
+	return data, nil
+}
+
+func (f *rawXattrFile) HandleXattrcreate(_ context.Context, name string, _ uint64, _ uint32) (XattrWriter, error) {
+	return &testXattrWriter{file: f, name: name}, nil
+}
+
+// testXattrWriter accumulates writes and commits to the rawXattrFile.
+type testXattrWriter struct {
+	file *rawXattrFile
+	name string
+	data []byte
+}
+
+func (w *testXattrWriter) Write(_ context.Context, data []byte) (int, error) {
+	w.data = append(w.data, data...)
+	return len(data), nil
+}
+
+func (w *testXattrWriter) Commit(_ context.Context) error {
+	if w.file.xattrs == nil {
+		w.file.xattrs = make(map[string][]byte)
+	}
+	w.file.xattrs[w.name] = w.data
+	w.file.lastWriteName = w.name
+	w.file.lastWriteData = w.data
+	return nil
+}
+
+// Compile-time checks for Phase 4 test types.
+var (
+	_ NodeSymlinker    = (*symlinkDir)(nil)
+	_ NodeLinker       = (*symlinkDir)(nil)
+	_ NodeMknoder      = (*symlinkDir)(nil)
+	_ NodeUnlinker     = (*symlinkDir)(nil)
+	_ NodeRenamer      = (*symlinkDir)(nil)
+	_ NodeOpener       = (*symlinkDir)(nil)
+	_ NodeLookuper     = (*symlinkDir)(nil)
+	_ InodeEmbedder    = (*symlinkDir)(nil)
+
+	_ NodeReadlinker   = (*symlinkNode)(nil)
+	_ InodeEmbedder    = (*symlinkNode)(nil)
+
+	_ NodeStatFSer     = (*statfsNode)(nil)
+	_ InodeEmbedder    = (*statfsNode)(nil)
+
+	_ NodeOpener       = (*lockableFile)(nil)
+	_ NodeLocker       = (*lockableFile)(nil)
+	_ InodeEmbedder    = (*lockableFile)(nil)
+
+	_ NodeOpener       = (*xattrFile)(nil)
+	_ NodeXattrGetter  = (*xattrFile)(nil)
+	_ NodeXattrSetter  = (*xattrFile)(nil)
+	_ NodeXattrLister  = (*xattrFile)(nil)
+	_ NodeXattrRemover = (*xattrFile)(nil)
+	_ InodeEmbedder    = (*xattrFile)(nil)
+
+	_ NodeOpener       = (*rawXattrFile)(nil)
+	_ RawXattrer       = (*rawXattrFile)(nil)
+	_ InodeEmbedder    = (*rawXattrFile)(nil)
+
+	_ XattrWriter      = (*testXattrWriter)(nil)
+)
+
 // --- Bridge test helpers ---
 
 // setupBridgeConn creates a connPair with the given root, performs version

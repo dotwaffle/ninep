@@ -112,6 +112,116 @@ func TestInodeENOSYSDefaults(t *testing.T) {
 				return err
 			},
 		},
+		{
+			name: "Symlink",
+			fn: func() error {
+				node, err := i.Symlink(ctx, "link", "/target", 0)
+				if node != nil {
+					t.Error("Symlink: node not nil")
+				}
+				return err
+			},
+		},
+		{
+			name: "Link",
+			fn: func() error {
+				return i.Link(ctx, nil, "hardlink")
+			},
+		},
+		{
+			name: "Mknod",
+			fn: func() error {
+				node, err := i.Mknod(ctx, "dev", 0, 0, 0, 0)
+				if node != nil {
+					t.Error("Mknod: node not nil")
+				}
+				return err
+			},
+		},
+		{
+			name: "Readlink",
+			fn: func() error {
+				target, err := i.Readlink(ctx)
+				if target != "" {
+					t.Error("Readlink: target not empty")
+				}
+				return err
+			},
+		},
+		{
+			name: "Unlink",
+			fn: func() error {
+				return i.Unlink(ctx, "file", 0)
+			},
+		},
+		{
+			name: "Rename",
+			fn: func() error {
+				return i.Rename(ctx, "old", nil, "new")
+			},
+		},
+		{
+			name: "StatFS",
+			fn: func() error {
+				stat, err := i.StatFS(ctx)
+				if stat != (proto.FSStat{}) {
+					t.Error("StatFS: stat not zero")
+				}
+				return err
+			},
+		},
+		{
+			name: "Lock",
+			fn: func() error {
+				status, err := i.Lock(ctx, 0, 0, 0, 0, 0, "")
+				if status != 0 {
+					t.Error("Lock: status not 0")
+				}
+				return err
+			},
+		},
+		{
+			name: "GetLock",
+			fn: func() error {
+				lt, start, length, procID, clientID, err := i.GetLock(ctx, 0, 0, 0, 0, "")
+				if lt != 0 || start != 0 || length != 0 || procID != 0 || clientID != "" {
+					t.Error("GetLock: non-zero return values")
+				}
+				return err
+			},
+		},
+		{
+			name: "GetXattr",
+			fn: func() error {
+				data, err := i.GetXattr(ctx, "user.test")
+				if data != nil {
+					t.Error("GetXattr: data not nil")
+				}
+				return err
+			},
+		},
+		{
+			name: "SetXattr",
+			fn: func() error {
+				return i.SetXattr(ctx, "user.test", []byte("val"), 0)
+			},
+		},
+		{
+			name: "ListXattrs",
+			fn: func() error {
+				names, err := i.ListXattrs(ctx)
+				if names != nil {
+					t.Error("ListXattrs: names not nil")
+				}
+				return err
+			},
+		},
+		{
+			name: "RemoveXattr",
+			fn: func() error {
+				return i.RemoveXattr(ctx, "user.test")
+			},
+		},
 	}
 
 	for _, tt := range tests {
