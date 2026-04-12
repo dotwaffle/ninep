@@ -11,8 +11,10 @@ import (
 type fidStatus uint8
 
 const (
-	fidAllocated fidStatus = iota // Assigned by attach or walk, not yet opened.
-	fidOpened                     // Opened via Tlopen/Topen.
+	fidAllocated  fidStatus = iota // Assigned by attach or walk, not yet opened.
+	fidOpened                      // Opened via Tlopen/Topen.
+	fidXattrRead                   // After xattrwalk: fid holds cached xattr data for reading.
+	fidXattrWrite                  // After xattrcreate: fid accumulates writes, commits on clunk.
 )
 
 // fidState holds the server-side state for a single fid.
@@ -22,6 +24,14 @@ type fidState struct {
 	handle    FileHandle     // Non-nil after Open returns a handle (per API-04).
 	dirCache  []proto.Dirent // Cached dirents for simple Readdirer (offset tracking).
 	dirCached bool           // True after first readdir populates cache.
+
+	// Xattr fields (used when state is fidXattrRead or fidXattrWrite).
+	xattrNode   Node        // Original node the xattr belongs to.
+	xattrName   string      // Attribute name.
+	xattrData   []byte      // Buffer: cached value (read) or accumulated writes (write).
+	xattrSize   uint64      // Declared size from xattrcreate.
+	xattrFlags  uint32      // Flags from xattrcreate (XATTR_CREATE, XATTR_REPLACE).
+	xattrWriter XattrWriter // Non-nil when RawXattrer is in use for writes.
 }
 
 // fidTable is a concurrent-safe mapping from fid numbers to their state.

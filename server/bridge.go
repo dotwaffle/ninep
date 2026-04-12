@@ -635,6 +635,137 @@ func (c *conn) handleGetlock(ctx context.Context, m *p9l.Tgetlock) proto.Message
 	}
 }
 
+// handleXattrwalk handles Txattrwalk: creates a new fid in xattr read mode.
+// For name != "", retrieves a single xattr. For name == "", lists all xattrs.
+// RawXattrer takes precedence over simple interfaces per CONTEXT.md locked decision.
+func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Message {
+	fs := c.fids.get(m.Fid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	// RawXattrer takes precedence over simple interfaces.
+	if raw, ok := fs.node.(RawXattrer); ok {
+		data, err := raw.HandleXattrwalk(ctx, m.Name)
+		if err != nil {
+			return c.errorMsg(errnoFromError(err))
+		}
+		xfs := &fidState{
+			node:      fs.node,
+			state:     fidXattrRead,
+			xattrNode: fs.node,
+			xattrName: m.Name,
+			xattrData: data,
+		}
+		if err := c.fids.add(m.NewFid, xfs); err != nil {
+			return c.errorMsg(proto.EBADF)
+		}
+		return &p9l.Rxattrwalk{Size: uint64(len(data))}
+	}
+
+	if m.Name == "" {
+		// List mode: return null-separated list of xattr names.
+		lister, ok := fs.node.(NodeXattrLister)
+		if !ok {
+			return c.errorMsg(proto.ENOSYS)
+		}
+		names, err := lister.ListXattrs(ctx)
+		if err != nil {
+			return c.errorMsg(errnoFromError(err))
+		}
+		var buf []byte
+		for _, name := range names {
+			buf = append(buf, []byte(name)...)
+			buf = append(buf, 0)
+		}
+		xfs := &fidState{
+			node:      fs.node,
+			state:     fidXattrRead,
+			xattrNode: fs.node,
+			xattrData: buf,
+		}
+		if err := c.fids.add(m.NewFid, xfs); err != nil {
+			return c.errorMsg(proto.EBADF)
+		}
+		return &p9l.Rxattrwalk{Size: uint64(len(buf))}
+	}
+
+	// Single xattr get.
+	getter, ok := fs.node.(NodeXattrGetter)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+	data, err := getter.GetXattr(ctx, m.Name)
+	if err != nil {
+		return c.errorMsg(errnoFromError(err))
+	}
+	xfs := &fidState{
+		node:      fs.node,
+		state:     fidXattrRead,
+		xattrNode: fs.node,
+		xattrName: m.Name,
+		xattrData: data,
+	}
+	if err := c.fids.add(m.NewFid, xfs); err != nil {
+		return c.errorMsg(proto.EBADF)
+	}
+	return &p9l.Rxattrwalk{Size: uint64(len(data))}
+}
+
+// handleXattrcreate handles Txattrcreate: mutates the existing fid to xattr
+// write mode. Per Pitfall 1: xattrcreate MUTATES the existing fid (does not
+// create a new fid). Subsequent read/write on this fid go to the xattr buffer.
+func (c *conn) handleXattrcreate(ctx context.Context, m *p9l.Txattrcreate) proto.Message {
+	fs := c.fids.get(m.Fid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	// Clamp xattr buffer to msize to prevent oversized allocations (T-04-06).
+	if m.AttrSize > uint64(c.msize) {
+		return c.errorMsg(proto.EINVAL)
+	}
+
+	// RawXattrer takes precedence over simple interfaces.
+	if raw, ok := fs.node.(RawXattrer); ok {
+		writer, err := raw.HandleXattrcreate(ctx, m.Name, m.AttrSize, m.Flags)
+		if err != nil {
+			return c.errorMsg(errnoFromError(err))
+		}
+		fs.state = fidXattrWrite
+		fs.xattrNode = fs.node
+		fs.xattrName = m.Name
+		fs.xattrSize = m.AttrSize
+		fs.xattrFlags = m.Flags
+		fs.xattrData = nil
+		fs.xattrWriter = writer
+		return &p9l.Rxattrcreate{}
+	}
+
+	// Validate the node supports xattr setting or removal.
+	if m.AttrSize == 0 {
+		// Size=0 is a remove operation per protocol convention.
+		if _, ok := fs.node.(NodeXattrRemover); !ok {
+			return c.errorMsg(proto.ENOSYS)
+		}
+	} else {
+		if _, ok := fs.node.(NodeXattrSetter); !ok {
+			return c.errorMsg(proto.ENOSYS)
+		}
+	}
+
+	// Mutate the fid to xattr write mode.
+	fs.state = fidXattrWrite
+	fs.xattrNode = fs.node
+	fs.xattrName = m.Name
+	fs.xattrSize = m.AttrSize
+	fs.xattrFlags = m.Flags
+	fs.xattrData = nil
+	fs.xattrWriter = nil
+
+	return &p9l.Rxattrcreate{}
+}
+
 // validName returns true if name is a valid 9P file name (no /, no NUL,
 // non-empty, not "." or "..").
 func validName(name string) bool {

@@ -514,6 +514,10 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 		return &p9l.Tlock{}, nil
 	case proto.TypeTgetlock:
 		return &p9l.Tgetlock{}, nil
+	case proto.TypeTxattrwalk:
+		return &p9l.Txattrwalk{}, nil
+	case proto.TypeTxattrcreate:
+		return &p9l.Txattrcreate{}, nil
 	default:
 		return nil, fmt.Errorf("unknown message type %d", t)
 	}

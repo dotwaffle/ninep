@@ -41,7 +41,11 @@ var (
 	_ NodeUnlinker   = (*Inode)(nil)
 	_ NodeRenamer    = (*Inode)(nil)
 	_ NodeStatFSer   = (*Inode)(nil)
-	_ NodeLocker     = (*Inode)(nil)
+	_ NodeLocker       = (*Inode)(nil)
+	_ NodeXattrGetter  = (*Inode)(nil)
+	_ NodeXattrSetter  = (*Inode)(nil)
+	_ NodeXattrLister  = (*Inode)(nil)
+	_ NodeXattrRemover = (*Inode)(nil)
 )
 
 // Init initializes the Inode with a QID and a back-reference to the
@@ -205,4 +209,24 @@ func (i *Inode) Lock(_ context.Context, _ proto.LockType, _ proto.LockFlags, _, 
 // GetLock returns zero values and proto.ENOSYS. Override by implementing NodeLocker.
 func (i *Inode) GetLock(_ context.Context, _ proto.LockType, _, _ uint64, _ uint32, _ string) (proto.LockType, uint64, uint64, uint32, string, error) {
 	return 0, 0, 0, 0, "", proto.ENOSYS
+}
+
+// GetXattr returns (nil, proto.ENOSYS). Override by implementing NodeXattrGetter.
+func (i *Inode) GetXattr(_ context.Context, _ string) ([]byte, error) {
+	return nil, proto.ENOSYS
+}
+
+// SetXattr returns proto.ENOSYS. Override by implementing NodeXattrSetter.
+func (i *Inode) SetXattr(_ context.Context, _ string, _ []byte, _ uint32) error {
+	return proto.ENOSYS
+}
+
+// ListXattrs returns (nil, proto.ENOSYS). Override by implementing NodeXattrLister.
+func (i *Inode) ListXattrs(_ context.Context) ([]string, error) {
+	return nil, proto.ENOSYS
+}
+
+// RemoveXattr returns proto.ENOSYS. Override by implementing NodeXattrRemover.
+func (i *Inode) RemoveXattr(_ context.Context, _ string) error {
+	return proto.ENOSYS
 }

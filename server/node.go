@@ -160,3 +160,45 @@ type NodeCloser interface {
 	// Close releases resources associated with this node.
 	Close(ctx context.Context) error
 }
+
+// NodeXattrGetter reads extended attributes.
+type NodeXattrGetter interface {
+	GetXattr(ctx context.Context, name string) ([]byte, error)
+}
+
+// NodeXattrSetter sets extended attributes.
+type NodeXattrSetter interface {
+	SetXattr(ctx context.Context, name string, data []byte, flags uint32) error
+}
+
+// NodeXattrLister lists extended attribute names.
+type NodeXattrLister interface {
+	ListXattrs(ctx context.Context) ([]string, error)
+}
+
+// NodeXattrRemover removes extended attributes.
+type NodeXattrRemover interface {
+	RemoveXattr(ctx context.Context, name string) error
+}
+
+// XattrWriter accumulates xattr write data and commits on Close.
+// Returned by RawXattrer.HandleXattrcreate. The library calls Write
+// for each Twrite on the xattr fid, then Commit on Tclunk.
+type XattrWriter interface {
+	Write(ctx context.Context, data []byte) (int, error)
+	Commit(ctx context.Context) error
+}
+
+// RawXattrer provides protocol-level control over the xattr two-phase
+// flow. When a node implements RawXattrer, it takes precedence over
+// the simple xattr interfaces (NodeXattrGetter, NodeXattrLister, etc.).
+//
+// HandleXattrwalk is called for both get (name != "") and list (name == "").
+// It returns the full xattr data that will be served to Tread calls.
+//
+// HandleXattrcreate returns an XattrWriter that accumulates Twrite data
+// and commits the xattr on Tclunk.
+type RawXattrer interface {
+	HandleXattrwalk(ctx context.Context, name string) ([]byte, error)
+	HandleXattrcreate(ctx context.Context, name string, size uint64, flags uint32) (XattrWriter, error)
+}

@@ -61,6 +61,10 @@ func (c *conn) dispatch(ctx context.Context, tag proto.Tag, msg proto.Message) p
 		return c.handleLock(ctx, m)
 	case *p9l.Tgetlock:
 		return c.handleGetlock(ctx, m)
+	case *p9l.Txattrwalk:
+		return c.handleXattrwalk(ctx, m)
+	case *p9l.Txattrcreate:
+		return c.handleXattrcreate(ctx, m)
 	default:
 		return c.errorMsg(proto.ENOSYS)
 	}
