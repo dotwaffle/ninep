@@ -73,10 +73,15 @@ func readRversion(t *testing.T, r io.Reader) *proto.Rversion {
 
 // rootNode is a minimal directory node for testing.
 type rootNode struct {
-	qid proto.QID
+	Inode
 }
 
-func (n *rootNode) QID() proto.QID { return n.qid }
+// newRootNode creates a rootNode initialized with the given QID.
+func newRootNode(qid proto.QID) *rootNode {
+	n := &rootNode{}
+	n.Init(qid, n)
+	return n
+}
 
 func TestVersionNegotiation(t *testing.T) {
 	t.Parallel()
@@ -138,7 +143,7 @@ func TestVersionNegotiation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			root := &rootNode{qid: rootQID}
+			root := newRootNode(rootQID)
 			srv := New(root, WithMaxMsize(tt.serverMsize))
 
 			client, server := net.Pipe()
@@ -199,7 +204,7 @@ func TestVersionNegotiation(t *testing.T) {
 func TestProtocolAutoDetect(t *testing.T) {
 	t.Parallel()
 
-	root := &rootNode{qid: proto.QID{Type: proto.QTDIR, Path: 1}}
+	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
 	srv := New(root, WithMaxMsize(65536))
 
 	// Connection 1: 9P2000.L
@@ -264,30 +269,24 @@ func readResponse(t *testing.T, r io.Reader) (proto.Tag, proto.Message) {
 	return tag, msg
 }
 
-// dirNode implements Node and NodeLookuper for lifecycle tests.
+// dirNode implements a directory node using Inode embedding for lifecycle tests.
+// Lookup is provided by the embedded Inode via children map.
 type dirNode struct {
-	qid      proto.QID
-	children map[string]Node
+	Inode
 }
 
-func (d *dirNode) QID() proto.QID { return d.qid }
-
-func (d *dirNode) Lookup(_ context.Context, name string) (Node, error) {
-	child, ok := d.children[name]
-	if !ok {
-		return nil, proto.ENOENT
-	}
-	return child, nil
+// newDirNode creates a dirNode initialized with the given QID.
+func newDirNode(qid proto.QID) *dirNode {
+	n := &dirNode{}
+	n.Init(qid, n)
+	return n
 }
 
 func TestServeConn(t *testing.T) {
 	t.Parallel()
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
-	root := &dirNode{
-		qid:      rootQID,
-		children: map[string]Node{},
-	}
+	root := newDirNode(rootQID)
 	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
 	client, server := net.Pipe()
@@ -348,7 +347,7 @@ func TestServeConn(t *testing.T) {
 func TestServeListener(t *testing.T) {
 	t.Parallel()
 
-	root := &rootNode{qid: proto.QID{Type: proto.QTDIR, Path: 1}}
+	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
 	srv := New(root, WithMaxMsize(65536))
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -396,7 +395,7 @@ func TestServeListener(t *testing.T) {
 func TestIdleTimeout(t *testing.T) {
 	t.Parallel()
 
-	root := &rootNode{qid: proto.QID{Type: proto.QTDIR, Path: 1}}
+	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
 	srv := New(root,
 		WithMaxMsize(65536),
 		WithIdleTimeout(50*time.Millisecond),
@@ -435,10 +434,7 @@ func TestIdleTimeout_ResetOnActivity(t *testing.T) {
 	t.Parallel()
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
-	root := &dirNode{
-		qid:      rootQID,
-		children: map[string]Node{},
-	}
+	root := newDirNode(rootQID)
 	srv := New(root,
 		WithMaxMsize(65536),
 		WithIdleTimeout(100*time.Millisecond),

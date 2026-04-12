@@ -10,16 +10,21 @@ import (
 
 // testNode is a minimal Node implementation for test use.
 type testNode struct {
-	qid proto.QID
+	Inode
 }
 
-func (n *testNode) QID() proto.QID { return n.qid }
+// newTestNode creates a testNode initialized with the given QID.
+func newTestNode(qid proto.QID) *testNode {
+	n := &testNode{}
+	n.Init(qid, n)
+	return n
+}
 
 func TestFidTable_AddAndGet(t *testing.T) {
 	t.Parallel()
 
 	ft := newFidTable()
-	node := &testNode{qid: proto.QID{Type: proto.QTFILE, Version: 1, Path: 100}}
+	node := newTestNode(proto.QID{Type: proto.QTFILE, Version: 1, Path: 100})
 	fs := &fidState{node: node, state: fidAllocated}
 
 	if err := ft.add(1, fs); err != nil {
@@ -42,7 +47,7 @@ func TestFidTable_AddDuplicate(t *testing.T) {
 	t.Parallel()
 
 	ft := newFidTable()
-	node := &testNode{qid: proto.QID{Path: 1}}
+	node := newTestNode(proto.QID{Path: 1})
 	fs := &fidState{node: node, state: fidAllocated}
 
 	if err := ft.add(1, fs); err != nil {
@@ -72,7 +77,7 @@ func TestFidTable_Clunk(t *testing.T) {
 	t.Parallel()
 
 	ft := newFidTable()
-	node := &testNode{qid: proto.QID{Path: 2}}
+	node := newTestNode(proto.QID{Path: 2})
 	fs := &fidState{node: node, state: fidAllocated}
 
 	if err := ft.add(1, fs); err != nil {
@@ -108,7 +113,7 @@ func TestFidTable_ClunkAll(t *testing.T) {
 
 	ft := newFidTable()
 	for i := range 5 {
-		node := &testNode{qid: proto.QID{Path: uint64(i)}}
+		node := newTestNode(proto.QID{Path: uint64(i)})
 		if err := ft.add(proto.Fid(i), &fidState{node: node, state: fidAllocated}); err != nil {
 			t.Fatalf("add fid %d: %v", i, err)
 		}
@@ -129,8 +134,8 @@ func TestFidTable_Update(t *testing.T) {
 	t.Parallel()
 
 	ft := newFidTable()
-	node1 := &testNode{qid: proto.QID{Path: 10}}
-	node2 := &testNode{qid: proto.QID{Path: 20}}
+	node1 := newTestNode(proto.QID{Path: 10})
+	node2 := newTestNode(proto.QID{Path: 20})
 
 	if err := ft.add(1, &fidState{node: node1, state: fidAllocated}); err != nil {
 		t.Fatalf("add: %v", err)
@@ -153,7 +158,7 @@ func TestFidTable_UpdateNonexistent(t *testing.T) {
 	t.Parallel()
 
 	ft := newFidTable()
-	node := &testNode{qid: proto.QID{Path: 1}}
+	node := newTestNode(proto.QID{Path: 1})
 	if ft.update(42, node) {
 		t.Error("update nonexistent fid: got true, want false")
 	}
@@ -163,7 +168,7 @@ func TestFidTable_MarkOpened(t *testing.T) {
 	t.Parallel()
 
 	ft := newFidTable()
-	node := &testNode{qid: proto.QID{Path: 1}}
+	node := newTestNode(proto.QID{Path: 1})
 	if err := ft.add(1, &fidState{node: node, state: fidAllocated}); err != nil {
 		t.Fatalf("add: %v", err)
 	}
@@ -201,7 +206,7 @@ func TestFidTable_Len(t *testing.T) {
 	}
 
 	for i := range 3 {
-		node := &testNode{qid: proto.QID{Path: uint64(i)}}
+		node := newTestNode(proto.QID{Path: uint64(i)})
 		if err := ft.add(proto.Fid(i), &fidState{node: node, state: fidAllocated}); err != nil {
 			t.Fatalf("add fid %d: %v", i, err)
 		}
@@ -230,7 +235,7 @@ func TestFidTable_ConcurrentAccess(t *testing.T) {
 	for i := range goroutines {
 		go func(id int) {
 			defer wg.Done()
-			node := &testNode{qid: proto.QID{Path: uint64(id)}}
+			node := newTestNode(proto.QID{Path: uint64(id)})
 			_ = ft.add(proto.Fid(id), &fidState{node: node, state: fidAllocated})
 		}(i)
 	}

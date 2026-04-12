@@ -105,6 +105,17 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 	qids := make([]proto.QID, 0, len(tw.Names))
 
 	for i, name := range tw.Names {
+		// Check QID type first: per 9P spec, only directories can be walked.
+		// With Inode embedding, all nodes satisfy NodeLookuper, so we must
+		// check the QID type to distinguish files from directories.
+		qid := nodeQID(current)
+		if qid.Type&proto.QTDIR == 0 {
+			if i == 0 {
+				return c.errorMsg(proto.ENOTDIR)
+			}
+			break // Partial walk.
+		}
+
 		lookuper, ok := current.(NodeLookuper)
 		if !ok {
 			if i == 0 {

@@ -164,20 +164,19 @@ func TestInflightMap_WaitWithDeadline(t *testing.T) {
 // the provided channel is closed or context is cancelled. This lets tests
 // control when handlers complete.
 type blockingNode struct {
-	qid     proto.QID
+	Inode
 	block   chan struct{} // close to unblock Lookup
 	started chan struct{} // closed when Lookup begins executing
 }
 
 func newBlockingNode(qid proto.QID) *blockingNode {
-	return &blockingNode{
-		qid:     qid,
+	n := &blockingNode{
 		block:   make(chan struct{}),
 		started: make(chan struct{}),
 	}
+	n.Init(qid, n)
+	return n
 }
-
-func (n *blockingNode) QID() proto.QID { return n.qid }
 
 func (n *blockingNode) Lookup(ctx context.Context, _ string) (Node, error) {
 	// Signal that we've entered Lookup.
@@ -190,7 +189,9 @@ func (n *blockingNode) Lookup(ctx context.Context, _ string) (Node, error) {
 	// Block until unblocked or context cancelled.
 	select {
 	case <-n.block:
-		return &testFile{qid: proto.QID{Type: proto.QTFILE, Path: 42}}, nil
+		f := &testFile{}
+		f.Init(proto.QID{Type: proto.QTFILE, Path: 42}, f)
+		return f, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -198,10 +199,8 @@ func (n *blockingNode) Lookup(ctx context.Context, _ string) (Node, error) {
 
 // panicNode implements NodeLookuper and panics in Lookup.
 type panicNode struct {
-	qid proto.QID
+	Inode
 }
-
-func (n *panicNode) QID() proto.QID { return n.qid }
 
 func (n *panicNode) Lookup(_ context.Context, _ string) (Node, error) {
 	panic("test panic in Lookup")
@@ -209,21 +208,20 @@ func (n *panicNode) Lookup(_ context.Context, _ string) (Node, error) {
 
 // countingNode counts concurrent active Lookup calls.
 type countingNode struct {
-	qid     proto.QID
+	Inode
 	block   chan struct{}
 	active  atomic.Int32
 	started chan struct{} // closed when first Lookup begins
 }
 
 func newCountingNode(qid proto.QID) *countingNode {
-	return &countingNode{
-		qid:     qid,
+	n := &countingNode{
 		block:   make(chan struct{}),
 		started: make(chan struct{}),
 	}
+	n.Init(qid, n)
+	return n
 }
-
-func (n *countingNode) QID() proto.QID { return n.qid }
 
 func (n *countingNode) Lookup(ctx context.Context, _ string) (Node, error) {
 	n.active.Add(1)
@@ -238,7 +236,9 @@ func (n *countingNode) Lookup(ctx context.Context, _ string) (Node, error) {
 
 	select {
 	case <-n.block:
-		return &testFile{qid: proto.QID{Type: proto.QTFILE, Path: 42}}, nil
+		f := &testFile{}
+		f.Init(proto.QID{Type: proto.QTFILE, Path: 42}, f)
+		return f, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -303,7 +303,7 @@ func TestFlush_UnknownTag(t *testing.T) {
 	t.Parallel()
 
 	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
-	root := &rootNode{qid: rootQID}
+	root := newRootNode(rootQID)
 
 	cp := newConnPair(t, root)
 	defer cp.close(t)
@@ -366,7 +366,8 @@ func TestPanicRecovery(t *testing.T) {
 	t.Parallel()
 
 	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
-	root := &panicNode{qid: rootQID}
+	root := &panicNode{}
+	root.Init(rootQID, root)
 
 	cp := newConnPair(t, root)
 	defer cp.close(t)
@@ -493,9 +494,12 @@ func TestConcurrentDispatch(t *testing.T) {
 
 // Compile-time checks.
 var (
-	_ NodeLookuper = (*blockingNode)(nil)
-	_ NodeLookuper = (*panicNode)(nil)
-	_ NodeLookuper = (*countingNode)(nil)
+	_ NodeLookuper  = (*blockingNode)(nil)
+	_ InodeEmbedder = (*blockingNode)(nil)
+	_ NodeLookuper  = (*panicNode)(nil)
+	_ InodeEmbedder = (*panicNode)(nil)
+	_ NodeLookuper  = (*countingNode)(nil)
+	_ InodeEmbedder = (*countingNode)(nil)
 )
 
 // Suppress unused import warnings.

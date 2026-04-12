@@ -14,20 +14,19 @@ import (
 // stuckNode implements NodeLookuper with a Lookup that ignores context
 // cancellation, simulating a stuck handler.
 type stuckNode struct {
-	qid     proto.QID
+	Inode
 	block   chan struct{}
 	started chan struct{}
 }
 
 func newStuckNode(qid proto.QID) *stuckNode {
-	return &stuckNode{
-		qid:     qid,
+	n := &stuckNode{
 		block:   make(chan struct{}),
 		started: make(chan struct{}),
 	}
+	n.Init(qid, n)
+	return n
 }
-
-func (n *stuckNode) QID() proto.QID { return n.qid }
 
 func (n *stuckNode) Lookup(_ context.Context, _ string) (Node, error) {
 	select {
@@ -37,26 +36,29 @@ func (n *stuckNode) Lookup(_ context.Context, _ string) (Node, error) {
 	}
 	// Deliberately ignores ctx.Done() -- simulates stuck handler.
 	<-n.block
-	return &testFile{qid: proto.QID{Type: proto.QTFILE, Path: 42}}, nil
+	f := &testFile{}
+	f.Init(proto.QID{Type: proto.QTFILE, Path: 42}, f)
+	return f, nil
 }
 
 // trackingNode tracks whether clunkAll was called by counting fids that
 // survive cleanup.
 type trackingNode struct {
-	qid proto.QID
+	Inode
 }
 
-func (n *trackingNode) QID() proto.QID { return n.qid }
-
-func (n *trackingNode) Lookup(_ context.Context, name string) (Node, error) {
-	return &testFile{qid: proto.QID{Type: proto.QTFILE, Path: 42}}, nil
+func (n *trackingNode) Lookup(_ context.Context, _ string) (Node, error) {
+	f := &testFile{}
+	f.Init(proto.QID{Type: proto.QTFILE, Path: 42}, f)
+	return f, nil
 }
 
 func TestDisconnectCleanup_ClunksAllFids(t *testing.T) {
 	t.Parallel()
 
 	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
-	root := &trackingNode{qid: rootQID}
+	root := &trackingNode{}
+	root.Init(rootQID, root)
 
 	client, server := net.Pipe()
 	defer server.Close()
@@ -222,10 +224,7 @@ func TestServerSurvivesDisconnect(t *testing.T) {
 	t.Parallel()
 
 	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
-	root := &dirNode{
-		qid:      rootQID,
-		children: map[string]Node{},
-	}
+	root := newDirNode(rootQID)
 
 	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
@@ -288,10 +287,7 @@ func TestRapidConnectDisconnect(t *testing.T) {
 	t.Parallel()
 
 	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
-	root := &dirNode{
-		qid:      rootQID,
-		children: map[string]Node{},
-	}
+	root := newDirNode(rootQID)
 
 	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
@@ -362,6 +358,8 @@ func TestRapidConnectDisconnect(t *testing.T) {
 
 // Compile-time checks.
 var (
-	_ NodeLookuper = (*stuckNode)(nil)
-	_ NodeLookuper = (*trackingNode)(nil)
+	_ NodeLookuper  = (*stuckNode)(nil)
+	_ InodeEmbedder = (*stuckNode)(nil)
+	_ NodeLookuper  = (*trackingNode)(nil)
+	_ InodeEmbedder = (*trackingNode)(nil)
 )

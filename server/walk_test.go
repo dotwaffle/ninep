@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"io"
 	"net"
 	"testing"
 	"time"
@@ -11,34 +10,24 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9l"
 )
 
-// testDir implements Node and NodeLookuper for walk tests.
+// testDir implements a directory node using Inode embedding.
+// Lookup is provided by the embedded Inode via children map.
 type testDir struct {
-	qid      proto.QID
-	children map[string]Node
+	Inode
 }
 
-func (d *testDir) QID() proto.QID { return d.qid }
-
-func (d *testDir) Lookup(_ context.Context, name string) (Node, error) {
-	child, ok := d.children[name]
-	if !ok {
-		return nil, proto.ENOENT
-	}
-	return child, nil
-}
-
-// testFile implements Node but NOT NodeLookuper (not a directory).
+// testFile implements a file node using Inode embedding (not a directory).
 type testFile struct {
-	qid proto.QID
+	Inode
 }
-
-func (f *testFile) QID() proto.QID { return f.qid }
 
 // Compile-time checks.
 var (
 	_ Node          = (*testDir)(nil)
-	_ NodeLookuper  = (*testDir)(nil)
+	_ InodeEmbedder = (*testDir)(nil)
+	_ NodeLookuper  = (*testDir)(nil) // Inode satisfies NodeLookuper
 	_ Node          = (*testFile)(nil)
+	_ InodeEmbedder = (*testFile)(nil)
 )
 
 // testTree builds a filesystem tree for walk tests:
@@ -46,19 +35,21 @@ var (
 //	root (dir, path=1) -> "sub" (dir, path=2) -> "file.txt" (file, path=3)
 //	                   -> "other" (file, path=4)
 func testTree() *testDir {
-	file := &testFile{qid: proto.QID{Type: proto.QTFILE, Version: 0, Path: 3}}
-	sub := &testDir{
-		qid:      proto.QID{Type: proto.QTDIR, Version: 0, Path: 2},
-		children: map[string]Node{"file.txt": file},
-	}
-	other := &testFile{qid: proto.QID{Type: proto.QTFILE, Version: 0, Path: 4}}
-	root := &testDir{
-		qid: proto.QID{Type: proto.QTDIR, Version: 0, Path: 1},
-		children: map[string]Node{
-			"sub":   sub,
-			"other": other,
-		},
-	}
+	file := &testFile{}
+	file.Init(proto.QID{Type: proto.QTFILE, Version: 0, Path: 3}, file)
+
+	sub := &testDir{}
+	sub.Init(proto.QID{Type: proto.QTDIR, Version: 0, Path: 2}, sub)
+	sub.AddChild("file.txt", file.EmbeddedInode())
+
+	other := &testFile{}
+	other.Init(proto.QID{Type: proto.QTFILE, Version: 0, Path: 4}, other)
+
+	root := &testDir{}
+	root.Init(proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}, root)
+	root.AddChild("sub", sub.EmbeddedInode())
+	root.AddChild("other", other.EmbeddedInode())
+
 	return root
 }
 
@@ -173,10 +164,8 @@ func TestAttach_DefaultRoot(t *testing.T) {
 func TestAttach_WithAnames(t *testing.T) {
 	t.Parallel()
 	root := testTree()
-	altRoot := &testDir{
-		qid:      proto.QID{Type: proto.QTDIR, Version: 0, Path: 99},
-		children: map[string]Node{},
-	}
+	altRoot := &testDir{}
+	altRoot.Init(proto.QID{Type: proto.QTDIR, Version: 0, Path: 99}, altRoot)
 	anames := map[string]Node{"alt": altRoot}
 	cp := newConnPair(t, root, WithAnames(anames))
 	defer cp.close(t)
@@ -199,7 +188,8 @@ func (a *testAttacher) Attach(_ context.Context, _, _ string) (Node, error) {
 func TestAttach_WithAttacher(t *testing.T) {
 	t.Parallel()
 	root := testTree()
-	customNode := &testFile{qid: proto.QID{Type: proto.QTFILE, Path: 77}}
+	customNode := &testFile{}
+	customNode.Init(proto.QID{Type: proto.QTFILE, Path: 77}, customNode)
 	att := &testAttacher{node: customNode}
 	cp := newConnPair(t, root, WithAttacher(att))
 	defer cp.close(t)
@@ -278,19 +268,20 @@ func TestWalk_ThreeElements(t *testing.T) {
 	t.Parallel()
 
 	// Build deeper tree: root -> "a" -> "b" -> "c" (file).
-	cFile := &testFile{qid: proto.QID{Type: proto.QTFILE, Path: 30}}
-	bDir := &testDir{
-		qid:      proto.QID{Type: proto.QTDIR, Path: 20},
-		children: map[string]Node{"c": cFile},
-	}
-	aDir := &testDir{
-		qid:      proto.QID{Type: proto.QTDIR, Path: 10},
-		children: map[string]Node{"b": bDir},
-	}
-	root := &testDir{
-		qid:      proto.QID{Type: proto.QTDIR, Path: 1},
-		children: map[string]Node{"a": aDir},
-	}
+	cFile := &testFile{}
+	cFile.Init(proto.QID{Type: proto.QTFILE, Path: 30}, cFile)
+
+	bDir := &testDir{}
+	bDir.Init(proto.QID{Type: proto.QTDIR, Path: 20}, bDir)
+	bDir.AddChild("c", cFile.EmbeddedInode())
+
+	aDir := &testDir{}
+	aDir.Init(proto.QID{Type: proto.QTDIR, Path: 10}, aDir)
+	aDir.AddChild("b", bDir.EmbeddedInode())
+
+	root := &testDir{}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+	root.AddChild("a", aDir.EmbeddedInode())
 
 	cp := newConnPair(t, root)
 	defer cp.close(t)
@@ -521,5 +512,3 @@ func TestAttach_TauthRejected(t *testing.T) {
 	isError(t, msg, proto.ENOSYS)
 }
 
-// Suppress unused import warning for io.
-var _ = io.Discard
