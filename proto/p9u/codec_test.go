@@ -159,7 +159,10 @@ func TestStatEncodedSize(t *testing.T) {
 	}
 
 	// EncodedSize returns the body length (excluding the 2-byte size prefix).
-	encodedSize := stat.EncodedSize()
+	encodedSize, err := stat.EncodedSize()
+	if err != nil {
+		t.Fatalf("EncodedSize: %v", err)
+	}
 
 	// The buffer should contain size[2] + body[encodedSize].
 	if buf.Len() != int(encodedSize)+2 {

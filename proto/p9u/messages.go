@@ -5,6 +5,7 @@ package p9u
 import (
 	"fmt"
 	"io"
+	"math"
 
 	"github.com/dotwaffle/ninep/proto"
 )
@@ -244,23 +245,31 @@ type Stat struct {
 
 // EncodedSize calculates the total encoded size of the stat body, excluding the
 // 2-byte size prefix itself. This value is written as the size prefix.
-func (s *Stat) EncodedSize() uint16 {
+// It returns an error if the total exceeds the uint16 maximum (65535).
+func (s *Stat) EncodedSize() (uint16, error) {
 	// Fixed fields: type[2] + dev[4] + qid[13] + mode[4] + atime[4] + mtime[4] + length[8] = 39
 	// String fields: each has 2-byte length prefix + data
 	// Extension fields: extension[s] + n_uid[4] + n_gid[4] + n_muid[4] = s + 12
-	size := uint16(39)
-	size += 2 + uint16(len(s.Name))
-	size += 2 + uint16(len(s.UID))
-	size += 2 + uint16(len(s.GID))
-	size += 2 + uint16(len(s.MUID))
-	size += 2 + uint16(len(s.Extension))
+	size := uint32(39)
+	size += 2 + uint32(len(s.Name))
+	size += 2 + uint32(len(s.UID))
+	size += 2 + uint32(len(s.GID))
+	size += 2 + uint32(len(s.MUID))
+	size += 2 + uint32(len(s.Extension))
 	size += 12 // n_uid[4] + n_gid[4] + n_muid[4]
-	return size
+	if size > math.MaxUint16 {
+		return 0, fmt.Errorf("stat encoded size %d exceeds uint16 max", size)
+	}
+	return uint16(size), nil
 }
 
 // EncodeTo writes the stat to w: size[2] + body fields.
 func (s *Stat) EncodeTo(w io.Writer) error {
-	s.Size = s.EncodedSize()
+	encodedSize, err := s.EncodedSize()
+	if err != nil {
+		return fmt.Errorf("encode stat: %w", err)
+	}
+	s.Size = encodedSize
 	if err := proto.WriteUint16(w, s.Size); err != nil {
 		return fmt.Errorf("encode stat size: %w", err)
 	}
@@ -413,7 +422,11 @@ func (m *Rstat) Type() proto.MessageType { return proto.TypeRstat }
 // EncodeTo writes the Rstat body: nstat[2] + stat_data[nstat].
 func (m *Rstat) EncodeTo(w io.Writer) error {
 	// nstat = stat's 2-byte size prefix + stat body.
-	nstat := uint16(2) + m.Stat.EncodedSize()
+	encodedSize, err := m.Stat.EncodedSize()
+	if err != nil {
+		return fmt.Errorf("encode rstat: %w", err)
+	}
+	nstat := uint16(2) + encodedSize
 	if err := proto.WriteUint16(w, nstat); err != nil {
 		return fmt.Errorf("encode rstat nstat: %w", err)
 	}
@@ -452,7 +465,11 @@ func (m *Twstat) EncodeTo(w io.Writer) error {
 	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
 		return fmt.Errorf("encode twstat fid: %w", err)
 	}
-	nstat := uint16(2) + m.Stat.EncodedSize()
+	encodedSize, err := m.Stat.EncodedSize()
+	if err != nil {
+		return fmt.Errorf("encode twstat: %w", err)
+	}
+	nstat := uint16(2) + encodedSize
 	if err := proto.WriteUint16(w, nstat); err != nil {
 		return fmt.Errorf("encode twstat nstat: %w", err)
 	}
