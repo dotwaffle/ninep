@@ -15,6 +15,7 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9u"
 
 	"context"
+	"sync"
 )
 
 // protocol identifies the negotiated 9P dialect for a connection.
@@ -67,6 +68,11 @@ type conn struct {
 	protocol protocol
 	msize    uint32 // Negotiated msize (0 until version negotiation).
 	codec    codec
+
+	// writeMu serializes all writes to nc. Both writeRaw (used during
+	// version negotiation) and writeLoop write to the same net.Conn;
+	// this mutex prevents interleaved wire frames (GO-CC-3).
+	writeMu sync.Mutex
 
 	// responses carries encoded responses to the writeLoop goroutine.
 	// The sender (readLoop/dispatch) closes this channel; the writer drains it.
@@ -229,9 +235,12 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 }
 
 // writeRaw encodes a single message directly to the connection, bypassing the
-// writeLoop. Used during version negotiation before the writer goroutine is
-// started.
+// writeLoop. Used during version negotiation (both initial and mid-connection
+// re-negotiation). Acquires writeMu to prevent interleaving with writeLoop.
 func (c *conn) writeRaw(tag proto.Tag, msg proto.Message) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
 	// Set write deadline if idle timeout is configured.
 	if c.server.idleTimeout > 0 {
 		if err := c.nc.SetWriteDeadline(time.Now().Add(c.server.idleTimeout)); err != nil {
@@ -382,9 +391,23 @@ func (c *conn) handleRequest(ctx context.Context, tag proto.Tag, msg proto.Messa
 	}
 }
 
-// handleReVersion handles a Tversion message received mid-connection. Per spec,
-// this resets all fids and re-negotiates.
+// handleReVersion handles a Tversion message received mid-connection. Per the
+// 9P spec, Tversion aborts all outstanding I/O and clunks all fids, then
+// re-negotiates the protocol version and msize.
 func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
+	// Cancel all inflight request contexts first (WR-01), then wait for
+	// handlers to drain with a deadline before mutating connection state
+	// (CR-02). This ensures no handler goroutine reads c.msize, c.protocol,
+	// or c.codec while we are updating them (GO-CC-3).
+	c.inflight.cancelAll()
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), cleanupDeadline)
+	defer drainCancel()
+	if err := c.inflight.waitWithDeadline(drainCtx); err != nil {
+		c.logger.Warn("re-negotiation: timed out waiting for inflight drain",
+			slog.Int("remaining", c.inflight.len()),
+		)
+	}
+
 	c.fids.clunkAll()
 
 	var tver proto.Tversion
@@ -413,7 +436,8 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 		version = "unknown"
 	}
 
-	// Send Rversion directly (not through writeLoop to avoid ordering issues).
+	// Send Rversion directly via writeRaw, which acquires writeMu to
+	// prevent interleaving with the writeLoop goroutine (CR-01).
 	rver := &proto.Rversion{Msize: negotiated, Version: version}
 	if err := c.writeRaw(tag, rver); err != nil {
 		c.logger.Warn("re-negotiation send error", slog.Any("error", err))
@@ -478,14 +502,18 @@ func (c *conn) writeLoop(ctx context.Context) {
 			if !ok {
 				return
 			}
+			c.writeMu.Lock()
 			// Set write deadline for idle timeout (GO-SEC-1).
 			if c.server.idleTimeout > 0 {
 				if err := c.nc.SetWriteDeadline(time.Now().Add(c.server.idleTimeout)); err != nil {
+					c.writeMu.Unlock()
 					c.logger.Warn("failed to set write deadline", slog.Any("error", err))
 					return
 				}
 			}
-			if err := c.codec.encode(c.nc, resp.tag, resp.msg); err != nil {
+			err := c.codec.encode(c.nc, resp.tag, resp.msg)
+			c.writeMu.Unlock()
+			if err != nil {
 				c.logger.Warn("write error",
 					slog.String("type", resp.msg.Type().String()),
 					slog.Any("error", err),
@@ -497,10 +525,11 @@ func (c *conn) writeLoop(ctx context.Context) {
 	}
 }
 
-// sendResponse queues a response for the writer goroutine. If the responses
-// channel has been closed (connection cleanup completed), the send is silently
-// dropped via recover -- this handles the case where a stuck handler outlasts
-// the cleanup deadline.
+// sendResponse queues a response for the writer goroutine. The send blocks
+// until the writeLoop drains the channel, ensuring clients always receive
+// their replies. If the responses channel has been closed (connection cleanup
+// completed), the send panics and is recovered -- this handles the case where
+// a stuck handler outlasts the cleanup deadline.
 func (c *conn) sendResponse(tag proto.Tag, msg proto.Message) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -511,13 +540,7 @@ func (c *conn) sendResponse(tag proto.Tag, msg proto.Message) {
 		}
 	}()
 
-	select {
-	case c.responses <- taggedResponse{tag: tag, msg: msg}:
-	default:
-		c.logger.Warn("response channel full, dropping response",
-			slog.String("type", msg.Type().String()),
-		)
-	}
+	c.responses <- taggedResponse{tag: tag, msg: msg}
 }
 
 // sendError queues a protocol-appropriate error response.
