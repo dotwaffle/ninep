@@ -71,6 +71,11 @@ func (im *inflightMap) wait() {
 
 // waitWithDeadline blocks until all in-flight handlers finish or the context
 // deadline expires. Returns the context error if the deadline is exceeded.
+//
+// Note: the goroutine spawned here will leak if wg never reaches zero and the
+// deadline expires. This is acceptable in the cleanup and re-negotiation paths
+// because the connection is being torn down and the goroutine will exit once
+// all handler goroutines eventually finish and call wg.Done.
 func (im *inflightMap) waitWithDeadline(ctx context.Context) error {
 	ch := make(chan struct{})
 	go func() {
