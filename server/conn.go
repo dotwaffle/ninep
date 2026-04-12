@@ -121,26 +121,22 @@ func (c *conn) serve(ctx context.Context) {
 		c.nc.Close()
 	}()
 
-	// Start writer goroutine. The sender (readLoop) closes c.responses when
-	// done, which causes writeLoop to drain and exit (GO-CC-1).
-	done := make(chan struct{})
+	// Start writer goroutine. writeLoop exits when c.responses is closed
+	// (by cleanup) or ctx is done (GO-CC-1).
+	writerDone := make(chan struct{})
 	go func() {
-		defer close(done)
+		defer close(writerDone)
 		c.writeLoop(ctx)
 	}()
 
 	c.readLoop(ctx)
 
-	// Cancel all inflight request contexts and wait for handler goroutines
-	// to finish before closing the responses channel. This prevents a data
-	// race between handler goroutines sending responses and serve() closing
-	// the channel (GO-CC-1: sender closes channels).
-	c.inflight.cancelAll()
-	c.inflight.wait()
-	close(c.responses)
+	// Orderly shutdown: cancel inflight, drain with deadline, clunk fids,
+	// close responses channel (which terminates the writer).
+	c.cleanup()
 
 	// Wait for the writer to drain and exit.
-	<-done
+	<-writerDone
 }
 
 // negotiateVersion reads the first Tversion from the client and negotiates
@@ -501,8 +497,20 @@ func (c *conn) writeLoop(ctx context.Context) {
 	}
 }
 
-// sendResponse queues a response for the writer goroutine.
+// sendResponse queues a response for the writer goroutine. If the responses
+// channel has been closed (connection cleanup completed), the send is silently
+// dropped via recover -- this handles the case where a stuck handler outlasts
+// the cleanup deadline.
 func (c *conn) sendResponse(tag proto.Tag, msg proto.Message) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Channel was closed by cleanup -- drop the response.
+			c.logger.Debug("response dropped after cleanup",
+				slog.String("type", msg.Type().String()),
+			)
+		}
+	}()
+
 	select {
 	case c.responses <- taggedResponse{tag: tag, msg: msg}:
 	default:
