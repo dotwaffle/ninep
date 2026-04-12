@@ -49,6 +49,24 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 	if fs == nil {
 		return c.errorMsg(proto.EBADF)
 	}
+
+	// Xattr fid routing: read from cached xattr buffer (per Pitfall 6, T-04-08).
+	if fs.state == fidXattrRead {
+		maxData := c.msize - proto.HeaderSize - 4
+		if m.Count > maxData {
+			m.Count = maxData
+		}
+		offset := m.Offset
+		if offset >= uint64(len(fs.xattrData)) {
+			return &proto.Rread{Data: nil}
+		}
+		end := offset + uint64(m.Count)
+		if end > uint64(len(fs.xattrData)) {
+			end = uint64(len(fs.xattrData))
+		}
+		return &proto.Rread{Data: fs.xattrData[offset:end]}
+	}
+
 	if fs.state != fidOpened {
 		return c.errorMsg(proto.EBADF)
 	}
@@ -89,6 +107,23 @@ func (c *conn) handleWrite(ctx context.Context, m *proto.Twrite) proto.Message {
 	if fs == nil {
 		return c.errorMsg(proto.EBADF)
 	}
+
+	// Xattr fid routing: accumulate into xattr write buffer (per Pitfall 6, T-04-08).
+	if fs.state == fidXattrWrite {
+		// If RawXattrer is in use, delegate to the XattrWriter.
+		if fs.xattrWriter != nil {
+			n, err := fs.xattrWriter.Write(ctx, m.Data)
+			if err != nil {
+				return c.errorMsg(errnoFromError(err))
+			}
+			return &proto.Rwrite{Count: uint32(n)}
+		}
+		// Simple interface: append data to the xattr buffer. Offset is ignored
+		// for xattr writes (data is accumulated sequentially).
+		fs.xattrData = append(fs.xattrData, m.Data...)
+		return &proto.Rwrite{Count: uint32(len(m.Data))}
+	}
+
 	if fs.state != fidOpened {
 		return c.errorMsg(proto.EBADF)
 	}

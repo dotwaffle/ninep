@@ -182,6 +182,43 @@ func (c *conn) handleClunk(ctx context.Context, tc *proto.Tclunk) proto.Message 
 	if fs == nil {
 		return c.errorMsg(proto.EBADF)
 	}
+
+	// Handle xattr commit/cleanup before normal clunk logic.
+	if fs.state == fidXattrWrite {
+		// RawXattrer path: delegate commit to XattrWriter.
+		if fs.xattrWriter != nil {
+			if err := fs.xattrWriter.Commit(ctx); err != nil {
+				return c.errorMsg(errnoFromError(err))
+			}
+			return &proto.Rclunk{}
+		}
+
+		// Simple interface path: xattrcreate flow commits the xattr on clunk.
+		if fs.xattrSize == 0 {
+			// Size=0 means remove xattr.
+			if remover, ok := fs.xattrNode.(NodeXattrRemover); ok {
+				if err := remover.RemoveXattr(ctx, fs.xattrName); err != nil {
+					c.logger.Debug("xattr remove error on clunk", slog.Any("error", err))
+					return c.errorMsg(errnoFromError(err))
+				}
+			}
+			return &proto.Rclunk{}
+		}
+		// Validate written size matches declared size (per Pitfall 2, T-04-07).
+		if uint64(len(fs.xattrData)) != fs.xattrSize {
+			return c.errorMsg(proto.EIO)
+		}
+		setter, ok := fs.xattrNode.(NodeXattrSetter)
+		if !ok {
+			return c.errorMsg(proto.ENOSYS)
+		}
+		if err := setter.SetXattr(ctx, fs.xattrName, fs.xattrData, fs.xattrFlags); err != nil {
+			return c.errorMsg(errnoFromError(err))
+		}
+		return &proto.Rclunk{}
+	}
+	// For fidXattrRead, no commit needed -- just discard the buffer and clunk normally.
+
 	// Release FileHandle if present (per 9P spec, clunk always succeeds).
 	releaseHandle(ctx, fs, c.logger)
 	// Call NodeCloser if implemented.
