@@ -88,6 +88,66 @@ type NodeMkdirer interface {
 	Mkdir(ctx context.Context, name string, mode proto.FileMode, gid uint32) (Node, error)
 }
 
+// NodeSymlinker is implemented by directory nodes that can create symbolic links.
+type NodeSymlinker interface {
+	// Symlink creates a symbolic link named name pointing to target in this
+	// directory. Returns the new symlink Node.
+	Symlink(ctx context.Context, name, target string, gid uint32) (Node, error)
+}
+
+// NodeLinker is implemented by directory nodes that can create hard links.
+// The directory receives the request; target is the existing node being linked
+// (resolved from Tlink.Fid). Wire format: dfid[4] fid[4] name[s] -- dfid is
+// this directory, fid is the target.
+type NodeLinker interface {
+	// Link creates a hard link named name in this directory pointing to target.
+	Link(ctx context.Context, target Node, name string) error
+}
+
+// NodeMknoder is implemented by directory nodes that can create device nodes.
+type NodeMknoder interface {
+	// Mknod creates a device node named name with the given mode, major/minor
+	// numbers, and owning group.
+	Mknod(ctx context.Context, name string, mode proto.FileMode, major, minor, gid uint32) (Node, error)
+}
+
+// NodeReadlinker is implemented by symlink nodes that can report their target.
+type NodeReadlinker interface {
+	// Readlink returns the target path of this symbolic link.
+	Readlink(ctx context.Context) (string, error)
+}
+
+// NodeUnlinker is implemented by directory nodes that can remove entries.
+// Flags may include AT_REMOVEDIR (0x200) to indicate directory removal.
+type NodeUnlinker interface {
+	// Unlink removes the entry named name from this directory.
+	Unlink(ctx context.Context, name string, flags uint32) error
+}
+
+// NodeRenamer is implemented by directory nodes that support renaming entries.
+// newDir is the target directory Node resolved from the new directory fid.
+type NodeRenamer interface {
+	// Rename moves the entry oldName from this directory to newDir with newName.
+	Rename(ctx context.Context, oldName string, newDir Node, newName string) error
+}
+
+// NodeStatFSer is implemented by nodes that can report filesystem statistics.
+type NodeStatFSer interface {
+	// StatFS returns filesystem statistics for the filesystem containing this node.
+	StatFS(ctx context.Context) (proto.FSStat, error)
+}
+
+// NodeLocker is implemented by nodes that support POSIX byte-range locking.
+// Implementations control blocking behavior; the library does not impose any
+// blocking policy. Implementations should respect context deadlines if blocking.
+type NodeLocker interface {
+	// Lock acquires, tests, or releases a POSIX byte-range lock.
+	Lock(ctx context.Context, lockType proto.LockType, flags proto.LockFlags, start, length uint64, procID uint32, clientID string) (proto.LockStatus, error)
+	// GetLock tests whether a lock could be placed, returning the conflicting
+	// lock parameters if one exists.
+	GetLock(ctx context.Context, lockType proto.LockType, start, length uint64, procID uint32, clientID string) (proto.LockType, uint64, uint64, uint32, string, error)
+}
+
 // QIDer is implemented by nodes that provide their own QID. When present,
 // nodeQID uses this in preference to Inode.QID.
 type QIDer interface {

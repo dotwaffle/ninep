@@ -32,8 +32,16 @@ var (
 	_ NodeReaddirer = (*Inode)(nil)
 	_ NodeCreater   = (*Inode)(nil)
 	_ NodeMkdirer   = (*Inode)(nil)
-	_ NodeCloser    = (*Inode)(nil)
-	_ NodeLookuper  = (*Inode)(nil)
+	_ NodeCloser     = (*Inode)(nil)
+	_ NodeLookuper   = (*Inode)(nil)
+	_ NodeSymlinker  = (*Inode)(nil)
+	_ NodeLinker     = (*Inode)(nil)
+	_ NodeMknoder    = (*Inode)(nil)
+	_ NodeReadlinker = (*Inode)(nil)
+	_ NodeUnlinker   = (*Inode)(nil)
+	_ NodeRenamer    = (*Inode)(nil)
+	_ NodeStatFSer   = (*Inode)(nil)
+	_ NodeLocker     = (*Inode)(nil)
 )
 
 // Init initializes the Inode with a QID and a back-reference to the
@@ -152,4 +160,49 @@ func (i *Inode) Mkdir(_ context.Context, _ string, _ proto.FileMode, _ uint32) (
 // Close is a no-op that returns nil. Override by implementing NodeCloser.
 func (i *Inode) Close(_ context.Context) error {
 	return nil
+}
+
+// Symlink returns (nil, proto.ENOSYS). Override by implementing NodeSymlinker.
+func (i *Inode) Symlink(_ context.Context, _, _ string, _ uint32) (Node, error) {
+	return nil, proto.ENOSYS
+}
+
+// Link returns proto.ENOSYS. Override by implementing NodeLinker.
+func (i *Inode) Link(_ context.Context, _ Node, _ string) error {
+	return proto.ENOSYS
+}
+
+// Mknod returns (nil, proto.ENOSYS). Override by implementing NodeMknoder.
+func (i *Inode) Mknod(_ context.Context, _ string, _ proto.FileMode, _, _, _ uint32) (Node, error) {
+	return nil, proto.ENOSYS
+}
+
+// Readlink returns ("", proto.ENOSYS). Override by implementing NodeReadlinker.
+func (i *Inode) Readlink(_ context.Context) (string, error) {
+	return "", proto.ENOSYS
+}
+
+// Unlink returns proto.ENOSYS. Override by implementing NodeUnlinker.
+func (i *Inode) Unlink(_ context.Context, _ string, _ uint32) error {
+	return proto.ENOSYS
+}
+
+// Rename returns proto.ENOSYS. Override by implementing NodeRenamer.
+func (i *Inode) Rename(_ context.Context, _ string, _ Node, _ string) error {
+	return proto.ENOSYS
+}
+
+// StatFS returns (proto.FSStat{}, proto.ENOSYS). Override by implementing NodeStatFSer.
+func (i *Inode) StatFS(_ context.Context) (proto.FSStat, error) {
+	return proto.FSStat{}, proto.ENOSYS
+}
+
+// Lock returns (0, proto.ENOSYS). Override by implementing NodeLocker.
+func (i *Inode) Lock(_ context.Context, _ proto.LockType, _ proto.LockFlags, _, _ uint64, _ uint32, _ string) (proto.LockStatus, error) {
+	return 0, proto.ENOSYS
+}
+
+// GetLock returns zero values and proto.ENOSYS. Override by implementing NodeLocker.
+func (i *Inode) GetLock(_ context.Context, _ proto.LockType, _, _ uint64, _ uint32, _ string) (proto.LockType, uint64, uint64, uint32, string, error) {
+	return 0, 0, 0, 0, "", proto.ENOSYS
 }
