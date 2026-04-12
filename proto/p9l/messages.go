@@ -1163,10 +1163,16 @@ func (m *Tlock) DecodeFrom(r io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("decode tlock type: %w", err)
 	}
+	if lt > uint8(proto.LockTypeUnlck) {
+		return fmt.Errorf("decode tlock type: invalid lock type %d", lt)
+	}
 	m.LockType = proto.LockType(lt)
 	flags, err := proto.ReadUint32(r)
 	if err != nil {
 		return fmt.Errorf("decode tlock flags: %w", err)
+	}
+	if proto.LockFlags(flags)&^(proto.LockFlagBlock|proto.LockFlagReclaim) != 0 {
+		return fmt.Errorf("decode tlock flags: invalid flags %#x", flags)
 	}
 	m.Flags = proto.LockFlags(flags)
 	if m.Start, err = proto.ReadUint64(r); err != nil {
@@ -1206,6 +1212,9 @@ func (m *Rlock) DecodeFrom(r io.Reader) error {
 	v, err := proto.ReadUint8(r)
 	if err != nil {
 		return fmt.Errorf("decode rlock status: %w", err)
+	}
+	if v > uint8(proto.LockStatusGrace) {
+		return fmt.Errorf("decode rlock status: invalid lock status %d", v)
 	}
 	m.Status = proto.LockStatus(v)
 	return nil
@@ -1259,6 +1268,9 @@ func (m *Tgetlock) DecodeFrom(r io.Reader) error {
 	lt, err := proto.ReadUint8(r)
 	if err != nil {
 		return fmt.Errorf("decode tgetlock type: %w", err)
+	}
+	if lt > uint8(proto.LockTypeUnlck) {
+		return fmt.Errorf("decode tgetlock type: invalid lock type %d", lt)
 	}
 	m.LockType = proto.LockType(lt)
 	if m.Start, err = proto.ReadUint64(r); err != nil {
@@ -1315,6 +1327,9 @@ func (m *Rgetlock) DecodeFrom(r io.Reader) error {
 	lt, err := proto.ReadUint8(r)
 	if err != nil {
 		return fmt.Errorf("decode rgetlock type: %w", err)
+	}
+	if lt > uint8(proto.LockTypeUnlck) {
+		return fmt.Errorf("decode rgetlock type: invalid lock type %d", lt)
 	}
 	m.LockType = proto.LockType(lt)
 	if m.Start, err = proto.ReadUint64(r); err != nil {
