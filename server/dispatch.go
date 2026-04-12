@@ -41,6 +41,16 @@ func (c *conn) dispatch(ctx context.Context, tag proto.Tag, msg proto.Message) p
 		return c.handleLcreate(ctx, m)
 	case *p9l.Tmkdir:
 		return c.handleMkdir(ctx, m)
+	case *p9l.Tsymlink:
+		return c.handleSymlink(ctx, m)
+	case *p9l.Tlink:
+		return c.handleLink(ctx, m)
+	case *p9l.Tmknod:
+		return c.handleMknod(ctx, m)
+	case *p9l.Treadlink:
+		return c.handleReadlink(ctx, m)
+	case *p9l.Tstatfs:
+		return c.handleStatfs(ctx, m)
 	default:
 		return c.errorMsg(proto.ENOSYS)
 	}

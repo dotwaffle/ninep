@@ -313,6 +313,139 @@ func (c *conn) handleMkdir(ctx context.Context, m *p9l.Tmkdir) proto.Message {
 	return &p9l.Rmkdir{QID: nodeQID(child)}
 }
 
+// handleSymlink dispatches to NodeSymlinker and registers the new child in the
+// Inode tree.
+func (c *conn) handleSymlink(ctx context.Context, m *p9l.Tsymlink) proto.Message {
+	fs := c.fids.get(m.DirFid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	if !validName(m.Name) {
+		return c.errorMsg(proto.EINVAL)
+	}
+
+	symlinker, ok := fs.node.(NodeSymlinker)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	child, err := symlinker.Symlink(ctx, m.Name, m.Target, m.GID)
+	if err != nil {
+		return c.errorMsg(errnoFromError(err))
+	}
+
+	// Register child in parent Inode tree if both implement InodeEmbedder.
+	if parentIE, ok := fs.node.(InodeEmbedder); ok {
+		if childIE, ok := child.(InodeEmbedder); ok {
+			parentIE.EmbeddedInode().AddChild(m.Name, childIE.EmbeddedInode())
+		}
+	}
+
+	return &p9l.Rsymlink{QID: nodeQID(child)}
+}
+
+// handleLink dispatches to NodeLinker. The directory (DirFid) receives the
+// request; the target (Fid) is the existing node being linked.
+func (c *conn) handleLink(ctx context.Context, m *p9l.Tlink) proto.Message {
+	dirFS := c.fids.get(m.DirFid)
+	if dirFS == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	targetFS := c.fids.get(m.Fid)
+	if targetFS == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	if !validName(m.Name) {
+		return c.errorMsg(proto.EINVAL)
+	}
+
+	linker, ok := dirFS.node.(NodeLinker)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	if err := linker.Link(ctx, targetFS.node, m.Name); err != nil {
+		return c.errorMsg(errnoFromError(err))
+	}
+
+	return &p9l.Rlink{}
+}
+
+// handleMknod dispatches to NodeMknoder and registers the new child in the
+// Inode tree.
+func (c *conn) handleMknod(ctx context.Context, m *p9l.Tmknod) proto.Message {
+	fs := c.fids.get(m.DirFid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	if !validName(m.Name) {
+		return c.errorMsg(proto.EINVAL)
+	}
+
+	mknoder, ok := fs.node.(NodeMknoder)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	child, err := mknoder.Mknod(ctx, m.Name, m.Mode, m.Major, m.Minor, m.GID)
+	if err != nil {
+		return c.errorMsg(errnoFromError(err))
+	}
+
+	// Register child in parent Inode tree if both implement InodeEmbedder.
+	if parentIE, ok := fs.node.(InodeEmbedder); ok {
+		if childIE, ok := child.(InodeEmbedder); ok {
+			parentIE.EmbeddedInode().AddChild(m.Name, childIE.EmbeddedInode())
+		}
+	}
+
+	return &p9l.Rmknod{QID: nodeQID(child)}
+}
+
+// handleReadlink dispatches to NodeReadlinker.
+func (c *conn) handleReadlink(ctx context.Context, m *p9l.Treadlink) proto.Message {
+	fs := c.fids.get(m.Fid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	readlinker, ok := fs.node.(NodeReadlinker)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	target, err := readlinker.Readlink(ctx)
+	if err != nil {
+		return c.errorMsg(errnoFromError(err))
+	}
+
+	return &p9l.Rreadlink{Target: target}
+}
+
+// handleStatfs dispatches to NodeStatFSer.
+func (c *conn) handleStatfs(ctx context.Context, m *p9l.Tstatfs) proto.Message {
+	fs := c.fids.get(m.Fid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	statfser, ok := fs.node.(NodeStatFSer)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	stat, err := statfser.StatFS(ctx)
+	if err != nil {
+		return c.errorMsg(errnoFromError(err))
+	}
+
+	return &p9l.Rstatfs{Stat: stat}
+}
+
 // validName returns true if name is a valid 9P file name (no /, no NUL,
 // non-empty, not "." or "..").
 func validName(name string) bool {

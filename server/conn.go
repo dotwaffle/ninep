@@ -494,6 +494,16 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 		return &p9l.Treaddir{}, nil
 	case proto.TypeTmkdir:
 		return &p9l.Tmkdir{}, nil
+	case proto.TypeTsymlink:
+		return &p9l.Tsymlink{}, nil
+	case proto.TypeTlink:
+		return &p9l.Tlink{}, nil
+	case proto.TypeTmknod:
+		return &p9l.Tmknod{}, nil
+	case proto.TypeTreadlink:
+		return &p9l.Treadlink{}, nil
+	case proto.TypeTstatfs:
+		return &p9l.Tstatfs{}, nil
 	default:
 		return nil, fmt.Errorf("unknown message type %d", t)
 	}
