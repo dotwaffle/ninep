@@ -78,12 +78,13 @@ func newConnPair(t *testing.T, root Node, opts ...Option) *connPair {
 	srv := New(root, opts...)
 
 	client, server := net.Pipe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(func() {
+		cancel()
 		client.Close()
 		server.Close()
 	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
 	done := make(chan struct{})
 	go func() {
