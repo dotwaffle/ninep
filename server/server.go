@@ -1,7 +1,11 @@
 package server
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
+	"net"
+	"sync"
 	"time"
 )
 
@@ -30,4 +34,33 @@ func New(root Node, opts ...Option) *Server {
 		opt(s)
 	}
 	return s
+}
+
+// Serve accepts connections from ln and serves each one in a new goroutine.
+// It blocks until the context is cancelled or the listener returns an error.
+func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
+	for {
+		nc, err := ln.Accept()
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("accept: %w", err)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.ServeConn(ctx, nc)
+		}()
+	}
+}
+
+// ServeConn serves a single 9P connection. It blocks until the connection is
+// closed or the context is cancelled.
+func (s *Server) ServeConn(ctx context.Context, nc net.Conn) {
+	c := newConn(s, nc)
+	c.serve(ctx)
 }
