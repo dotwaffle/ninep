@@ -418,6 +418,13 @@ func (c *conn) handleLink(ctx context.Context, m *p9l.Tlink) proto.Message {
 		return c.errorMsg(errnoFromError(err))
 	}
 
+	// Register link in parent Inode tree if both implement InodeEmbedder.
+	if parentIE, ok := dirFS.node.(InodeEmbedder); ok {
+		if targetIE, ok := targetFS.node.(InodeEmbedder); ok {
+			parentIE.EmbeddedInode().AddChild(m.Name, targetIE.EmbeddedInode())
+		}
+	}
+
 	return &p9l.Rlink{}
 }
 
