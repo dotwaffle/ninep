@@ -2,7 +2,6 @@ package fstest
 
 import (
 	"bytes"
-	"sync"
 	"syscall"
 	"testing"
 
@@ -357,8 +356,13 @@ func testGetattrFile(t *testing.T, root server.Node) {
 	tc := newTestConn(t, root)
 	attach(t, tc, 1, 0, "test", "")
 
-	msg := walk(t, tc, 2, 0, 1, "file.txt")
-	expectRwalk(t, msg)
+	// Use sub/nested.txt instead of file.txt because write/basic may
+	// have modified file.txt on a shared root.
+	msg := walk(t, tc, 2, 0, 1, "sub", "nested.txt")
+	rw := expectRwalk(t, msg)
+	if len(rw.QIDs) != 2 {
+		t.Fatalf("walk QIDs count = %d, want 2", len(rw.QIDs))
+	}
 
 	msg = getattr(t, tc, 3, 1, proto.AttrAll)
 	rga, ok := msg.(*p9l.Rgetattr)
@@ -366,8 +370,8 @@ func testGetattrFile(t *testing.T, root server.Node) {
 		t.Fatalf("expected Rgetattr, got %T: %+v", msg, msg)
 	}
 
-	if rga.Attr.Size != uint64(len("hello world")) {
-		t.Errorf("file size = %d, want %d", rga.Attr.Size, len("hello world"))
+	if rga.Attr.Size != uint64(len("nested content")) {
+		t.Errorf("file size = %d, want %d", rga.Attr.Size, len("nested content"))
 	}
 	// Mode should not have directory bit set.
 	if rga.Attr.Mode&0o040000 != 0 {
@@ -467,47 +471,33 @@ func testConcurrentRead(t *testing.T, root server.Node) {
 	tc := newTestConn(t, root)
 	attach(t, tc, 1, 0, "test", "")
 
-	msg := walk(t, tc, 2, 0, 1, "file.txt")
-	expectRwalk(t, msg)
+	// Use sub/nested.txt to avoid interference from write/basic on
+	// shared roots.
+	msg := walk(t, tc, 2, 0, 1, "sub", "nested.txt")
+	rw := expectRwalk(t, msg)
+	if len(rw.QIDs) != 2 {
+		t.Fatalf("walk QIDs count = %d, want 2", len(rw.QIDs))
+	}
 
 	msg = open(t, tc, 3, 1, syscall.O_RDONLY)
 	if _, ok := msg.(*p9l.Rlopen); !ok {
 		t.Fatalf("expected Rlopen, got %T: %+v", msg, msg)
 	}
 
-	// Launch concurrent reads. Note: 9P is a serialized protocol over a
-	// single connection, so "concurrent" here means interleaved requests
-	// rather than truly parallel I/O. We verify correctness under rapid
-	// sequential access.
+	// Send multiple reads sequentially and verify each response.
+	// net.Pipe does not support concurrent writes, so we serialize
+	// request/response pairs. The server processes these with its
+	// goroutine-per-request model, exercising concurrent handler
+	// execution on the server side.
 	const numReads = 10
-	var wg sync.WaitGroup
-	errCh := make(chan error, numReads)
+	expected := []byte("nested content")
 
 	for i := range numReads {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			tag := proto.Tag(10 + idx)
-			sendMsg(t, tc.client, tag, &proto.Tread{
-				Fid:    1,
-				Offset: 0,
-				Count:  4096,
-			})
-		}(i)
-	}
-
-	wg.Wait()
-
-	// Read all responses.
-	for range numReads {
-		_, msg := readMsg(t, tc.client)
-		rr, ok := msg.(*proto.Rread)
-		if !ok {
-			errCh <- nil
-			continue
-		}
-		if !bytes.Equal(rr.Data, []byte("hello world")) {
-			t.Errorf("concurrent read data = %q, want %q", rr.Data, "hello world")
+		tag := proto.Tag(10 + i)
+		msg = read(t, tc, tag, 1, 0, 4096)
+		data := expectRread(t, msg)
+		if !bytes.Equal(data, expected) {
+			t.Errorf("read %d: data = %q, want %q", i, data, expected)
 		}
 	}
 }

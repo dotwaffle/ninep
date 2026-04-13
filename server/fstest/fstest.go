@@ -47,10 +47,24 @@ var ExpectedTree = map[string]string{
 }
 
 // Check runs every registered test case against root as a subtest.
+// The root node is shared across all test cases, which works for
+// implementations without destructible state (e.g., memfs). For
+// implementations with OS-level resources (e.g., passthrough), use
+// CheckFactory instead.
 func Check(t *testing.T, root server.Node) {
+	t.Helper()
+	CheckFactory(t, func(_ *testing.T) server.Node { return root })
+}
+
+// CheckFactory runs every registered test case, calling newRoot for each
+// case to obtain a fresh root node. This is necessary for filesystem
+// implementations like passthrough where the server's cleanup closes
+// OS-level resources on the root.
+func CheckFactory(t *testing.T, newRoot func(t *testing.T) server.Node) {
 	t.Helper()
 	for _, tc := range Cases {
 		t.Run(tc.Name, func(t *testing.T) {
+			root := newRoot(t)
 			tc.Run(t, root)
 		})
 	}
@@ -78,13 +92,14 @@ func newTestConn(t *testing.T, root server.Node) *testConn {
 	client, srvConn := net.Pipe()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(func() {
-		cancel()
-		client.Close()
-		srvConn.Close()
-	})
 
 	done := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		_ = client.Close()
+		_ = srvConn.Close()
+		<-done // Wait for server goroutine to finish cleanup.
+	})
 	go func() {
 		defer close(done)
 		srv.ServeConn(ctx, srvConn)
