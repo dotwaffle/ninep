@@ -128,6 +128,11 @@ func (c *conn) handleWrite(ctx context.Context, m *proto.Twrite) proto.Message {
 		}
 		// Simple interface: append data to the xattr buffer. Offset is ignored
 		// for xattr writes (data is accumulated sequentially).
+		// Reject writes that would exceed the declared xattr size.
+		if uint64(len(fs.xattrData))+uint64(len(m.Data)) > fs.xattrSize {
+			fs.mu.Unlock()
+			return c.errorMsg(proto.ENOSPC)
+		}
 		fs.xattrData = append(fs.xattrData, m.Data...)
 		fs.mu.Unlock()
 		return &proto.Rwrite{Count: uint32(len(m.Data))}
