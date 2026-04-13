@@ -283,6 +283,9 @@ func (c *conn) handleLcreate(ctx context.Context, m *p9l.Tlcreate) proto.Message
 	if fs == nil {
 		return c.errorMsg(proto.EBADF)
 	}
+	if fs.state != fidAllocated {
+		return c.errorMsg(proto.EBADF)
+	}
 
 	if !validName(m.Name) {
 		return c.errorMsg(proto.EINVAL)
