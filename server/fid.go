@@ -136,6 +136,22 @@ func (ft *fidTable) markOpenedWithHandle(fid proto.Fid, h FileHandle) bool {
 	return true
 }
 
+// updateAndOpen atomically replaces the node, transitions the fid to fidOpened,
+// and stores the FileHandle. Returns false if the fid is not present or is not
+// in fidAllocated state. Safe for concurrent use.
+func (ft *fidTable) updateAndOpen(fid proto.Fid, node Node, h FileHandle) bool {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	fs, ok := ft.fids[fid]
+	if !ok || fs.state != fidAllocated {
+		return false
+	}
+	fs.node = node
+	fs.state = fidOpened
+	fs.handle = h
+	return true
+}
+
 // len returns the number of fids in the table. Safe for concurrent use.
 func (ft *fidTable) len() int {
 	ft.mu.RLock()

@@ -302,10 +302,16 @@ func (c *conn) handleLcreate(ctx context.Context, m *p9l.Tlcreate) proto.Message
 	}
 
 	// Per 9P spec: Tlcreate creates AND opens. The fid mutates to the new child.
-	// update changes the node but preserves fidAllocated state.
-	c.fids.update(m.Fid, child)
-	// markOpenedWithHandle transitions to fidOpened and stores handle.
-	c.fids.markOpenedWithHandle(m.Fid, handle)
+	// Atomically update node and transition to fidOpened state.
+	if !c.fids.updateAndOpen(m.Fid, child, handle) {
+		// Fid was clunked during Create; release handle if present.
+		if handle != nil {
+			if rel, ok := handle.(FileReleaser); ok {
+				_ = rel.Release(ctx)
+			}
+		}
+		return c.errorMsg(proto.EBADF)
+	}
 
 	// Register child in parent Inode tree if both implement InodeEmbedder.
 	if parentIE, ok := fs.node.(InodeEmbedder); ok {
