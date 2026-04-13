@@ -408,7 +408,16 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 		)
 	}
 
-	c.fids.clunkAll()
+	// Clunk all fids and release handles/closers (matching cleanup pattern).
+	states := c.fids.clunkAll()
+	for _, fs := range states {
+		releaseHandle(context.Background(), fs, c.logger)
+		if closer, ok := fs.node.(NodeCloser); ok {
+			if err := closer.Close(context.Background()); err != nil {
+				c.logger.Debug("node close error during re-negotiation", slog.Any("error", err))
+			}
+		}
+	}
 
 	var tver proto.Tversion
 	if err := tver.DecodeFrom(bytes.NewReader(body)); err != nil {
