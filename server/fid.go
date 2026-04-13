@@ -19,6 +19,7 @@ const (
 
 // fidState holds the server-side state for a single fid.
 type fidState struct {
+	mu        sync.Mutex     // Protects state transitions, xattr, and dir fields.
 	node      Node
 	state     fidStatus
 	handle    FileHandle     // Non-nil after Open returns a handle (per API-04).

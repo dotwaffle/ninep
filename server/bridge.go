@@ -51,6 +51,7 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 	}
 
 	// Xattr fid routing: read from cached xattr buffer (per Pitfall 6, T-04-08).
+	fs.mu.Lock()
 	if fs.state == fidXattrRead {
 		maxData := c.msize - proto.HeaderSize - 4
 		if m.Count > maxData {
@@ -58,14 +59,19 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 		}
 		offset := m.Offset
 		if offset >= uint64(len(fs.xattrData)) {
+			fs.mu.Unlock()
 			return &proto.Rread{Data: nil}
 		}
 		end := offset + uint64(m.Count)
 		if end > uint64(len(fs.xattrData)) {
 			end = uint64(len(fs.xattrData))
 		}
-		return &proto.Rread{Data: fs.xattrData[offset:end]}
+		data := make([]byte, end-offset)
+		copy(data, fs.xattrData[offset:end])
+		fs.mu.Unlock()
+		return &proto.Rread{Data: data}
 	}
+	fs.mu.Unlock()
 
 	if fs.state != fidOpened {
 		return c.errorMsg(proto.EBADF)
@@ -109,9 +115,11 @@ func (c *conn) handleWrite(ctx context.Context, m *proto.Twrite) proto.Message {
 	}
 
 	// Xattr fid routing: accumulate into xattr write buffer (per Pitfall 6, T-04-08).
+	fs.mu.Lock()
 	if fs.state == fidXattrWrite {
 		// If RawXattrer is in use, delegate to the XattrWriter.
 		if fs.xattrWriter != nil {
+			fs.mu.Unlock()
 			n, err := fs.xattrWriter.Write(ctx, m.Data)
 			if err != nil {
 				return c.errorMsg(errnoFromError(err))
@@ -121,8 +129,10 @@ func (c *conn) handleWrite(ctx context.Context, m *proto.Twrite) proto.Message {
 		// Simple interface: append data to the xattr buffer. Offset is ignored
 		// for xattr writes (data is accumulated sequentially).
 		fs.xattrData = append(fs.xattrData, m.Data...)
+		fs.mu.Unlock()
 		return &proto.Rwrite{Count: uint32(len(m.Data))}
 	}
+	fs.mu.Unlock()
 
 	if fs.state != fidOpened {
 		return c.errorMsg(proto.EBADF)
@@ -250,8 +260,10 @@ type readdirProvider interface {
 // simple Readdirer implementations. Dirents are fetched once and cached on the
 // fid. Offset 0 re-fetches.
 func (c *conn) readdirSimple(ctx context.Context, fs *fidState, m *p9l.Treaddir, rd readdirProvider) proto.Message {
+	fs.mu.Lock()
 	// Re-fetch on offset 0 (client is re-reading from start) or first call.
 	if m.Offset == 0 || !fs.dirCached {
+		fs.mu.Unlock()
 		dirents, err := rd.Readdir(ctx)
 		if err != nil {
 			return c.errorMsg(errnoFromError(err))
@@ -260,6 +272,7 @@ func (c *conn) readdirSimple(ctx context.Context, fs *fidState, m *p9l.Treaddir,
 		for i := range dirents {
 			dirents[i].Offset = uint64(i + 1)
 		}
+		fs.mu.Lock()
 		fs.dirCache = dirents
 		fs.dirCached = true
 	}
@@ -272,7 +285,12 @@ func (c *conn) readdirSimple(ctx context.Context, fs *fidState, m *p9l.Treaddir,
 	}
 
 	remaining := fs.dirCache[start:]
-	data, _ := EncodeDirents(remaining, m.Count)
+	// Copy dirents under lock to avoid races on the cached slice.
+	snapshot := make([]proto.Dirent, len(remaining))
+	copy(snapshot, remaining)
+	fs.mu.Unlock()
+
+	data, _ := EncodeDirents(snapshot, m.Count)
 	return &p9l.Rreaddir{Data: data}
 }
 
@@ -786,6 +804,7 @@ func (c *conn) handleXattrcreate(ctx context.Context, m *p9l.Txattrcreate) proto
 		if err != nil {
 			return c.errorMsg(errnoFromError(err))
 		}
+		fs.mu.Lock()
 		fs.state = fidXattrWrite
 		fs.xattrNode = fs.node
 		fs.xattrName = m.Name
@@ -793,6 +812,7 @@ func (c *conn) handleXattrcreate(ctx context.Context, m *p9l.Txattrcreate) proto
 		fs.xattrFlags = m.Flags
 		fs.xattrData = nil
 		fs.xattrWriter = writer
+		fs.mu.Unlock()
 		return &p9l.Rxattrcreate{}
 	}
 
@@ -809,6 +829,7 @@ func (c *conn) handleXattrcreate(ctx context.Context, m *p9l.Txattrcreate) proto
 	}
 
 	// Mutate the fid to xattr write mode.
+	fs.mu.Lock()
 	fs.state = fidXattrWrite
 	fs.xattrNode = fs.node
 	fs.xattrName = m.Name
@@ -816,6 +837,7 @@ func (c *conn) handleXattrcreate(ctx context.Context, m *p9l.Txattrcreate) proto
 	fs.xattrFlags = m.Flags
 	fs.xattrData = nil
 	fs.xattrWriter = nil
+	fs.mu.Unlock()
 
 	return &p9l.Rxattrcreate{}
 }
