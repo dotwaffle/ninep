@@ -107,9 +107,7 @@ func (i *Inode) Children() map[string]*Inode {
 	if i.children == nil {
 		return nil
 	}
-	out := make(map[string]*Inode, len(i.children))
-	maps.Copy(out, i.children)
-	return out
+	return maps.Clone(i.children)
 }
 
 // Lookup resolves a child by name. If the child exists, it returns the

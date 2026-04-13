@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/dotwaffle/ninep/proto"
@@ -197,7 +198,7 @@ func TestDecodeUnknownType(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown message type, got nil")
 	}
-	if !containsSubstring(err.Error(), "unknown") {
+	if !strings.Contains(err.Error(), "unknown") {
 		t.Errorf("error should contain 'unknown', got: %v", err)
 	}
 }
@@ -238,18 +239,8 @@ func TestDecodeMinSize(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for undersized message, got nil")
 	}
-	if !containsSubstring(err.Error(), "too small") {
+	if !strings.Contains(err.Error(), "too small") {
 		t.Errorf("error should contain 'too small', got: %v", err)
 	}
 }
 
-// containsSubstring checks if s contains substr (simple helper to avoid
-// importing strings for one use).
-func containsSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}

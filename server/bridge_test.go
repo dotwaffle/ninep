@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"maps"
+	"slices"
 	"sync/atomic"
 	"testing"
 
@@ -273,16 +275,12 @@ func (f *xattrFile) SetXattr(_ context.Context, name string, data []byte, _ uint
 	if f.xattrs == nil {
 		f.xattrs = make(map[string][]byte)
 	}
-	f.xattrs[name] = append([]byte(nil), data...)
+	f.xattrs[name] = slices.Clone(data)
 	return nil
 }
 
 func (f *xattrFile) ListXattrs(_ context.Context) ([]string, error) {
-	names := make([]string, 0, len(f.xattrs))
-	for name := range f.xattrs {
-		names = append(names, name)
-	}
-	return names, nil
+	return slices.Collect(maps.Keys(f.xattrs)), nil
 }
 
 func (f *xattrFile) RemoveXattr(_ context.Context, name string) error {

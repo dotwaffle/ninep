@@ -10,7 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"syscall"
 	"testing"
 
@@ -179,7 +179,7 @@ func TestKernelMountReaddir(t *testing.T) {
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	want := []string{"a.txt", "b.txt", "subdir"}
 	if len(names) != len(want) {

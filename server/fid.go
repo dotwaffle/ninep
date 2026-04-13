@@ -2,6 +2,8 @@ package server
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/dotwaffle/ninep/proto"
@@ -90,11 +92,7 @@ func (ft *fidTable) clunkAll() []*fidState {
 	ft.fids = make(map[proto.Fid]*fidState)
 	ft.mu.Unlock()
 
-	states := make([]*fidState, 0, len(old))
-	for _, fs := range old {
-		states = append(states, fs)
-	}
-	return states
+	return slices.Collect(maps.Values(old))
 }
 
 // setPath updates the walked filesystem path on an existing fid. No-op if the

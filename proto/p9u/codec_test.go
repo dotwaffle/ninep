@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/dotwaffle/ninep/proto"
@@ -184,7 +185,7 @@ func TestDecodeUnknownType(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown message type, got nil")
 	}
-	if !containsSubstring(err.Error(), "unknown") {
+	if !strings.Contains(err.Error(), "unknown") {
 		t.Errorf("error should contain 'unknown', got: %v", err)
 	}
 }
@@ -212,12 +213,3 @@ func TestDecodeTruncated(t *testing.T) {
 	}
 }
 
-// containsSubstring checks if s contains substr.
-func containsSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
