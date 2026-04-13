@@ -72,18 +72,23 @@ func (i *Inode) QID() proto.QID {
 
 // Parent returns the parent Inode, or nil if this is the root.
 func (i *Inode) Parent() *Inode {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 	return i.parent
 }
 
 // AddChild adds a child inode under the given name. The child's parent
 // is set to this inode. The children map is lazily initialized.
+// Lock ordering: parent lock acquired before child lock to avoid deadlock.
 func (i *Inode) AddChild(name string, child *Inode) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if i.children == nil {
 		i.children = make(map[string]*Inode)
 	}
+	child.mu.Lock()
 	child.parent = i
+	child.mu.Unlock()
 	i.children[name] = child
 }
 

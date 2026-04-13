@@ -296,6 +296,9 @@ func (c *conn) handleLcreate(ctx context.Context, m *p9l.Tlcreate) proto.Message
 		return c.errorMsg(proto.ENOSYS)
 	}
 
+	// Save parent node reference before updateAndOpen mutates fs.node.
+	parentNode := fs.node
+
 	child, handle, _, err := creator.Create(ctx, m.Name, m.Flags, m.Mode, m.GID)
 	if err != nil {
 		return c.errorMsg(errnoFromError(err))
@@ -314,7 +317,7 @@ func (c *conn) handleLcreate(ctx context.Context, m *p9l.Tlcreate) proto.Message
 	}
 
 	// Register child in parent Inode tree if both implement InodeEmbedder.
-	if parentIE, ok := fs.node.(InodeEmbedder); ok {
+	if parentIE, ok := parentNode.(InodeEmbedder); ok {
 		if childIE, ok := child.(InodeEmbedder); ok {
 			parentIE.EmbeddedInode().AddChild(m.Name, childIE.EmbeddedInode())
 		}
