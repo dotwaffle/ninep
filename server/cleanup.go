@@ -32,6 +32,9 @@ func (c *conn) cleanup() {
 	// Step 3: Clunk all fids and release handles.
 	// Use swap-and-clear pattern: clunkAll returns all states, iterate outside lock.
 	states := c.fids.clunkAll()
+	if len(states) > 0 {
+		c.otelInst.recordFidChange(-int64(len(states)))
+	}
 	for _, fs := range states {
 		releaseHandle(context.Background(), fs, c.logger)
 		if closer, ok := fs.node.(NodeCloser); ok {

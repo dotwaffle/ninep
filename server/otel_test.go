@@ -451,6 +451,16 @@ func TestOTelMiddlewareConnectionGauge(t *testing.T) {
 	sendTversion(t, clientConn, 65536, "9P2000.L")
 	_ = readRversion(t, clientConn)
 
+	// Send a message and read the response to ensure the server goroutine
+	// has progressed past the connection gauge increment.
+	sendMessage(t, clientConn, 1, &proto.Tattach{
+		Fid:   0,
+		Afid:  proto.NoFid,
+		Uname: "test",
+		Aname: "",
+	})
+	_, _ = readResponse(t, clientConn)
+
 	// While connected, the connection gauge should be 1.
 	rm := collectMetrics(t, metricReader)
 	m := findMetric(rm, "ninep.server.connections")

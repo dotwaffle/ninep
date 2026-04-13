@@ -107,6 +107,7 @@ func (c *conn) handleAttach(ctx context.Context, ta *proto.Tattach) proto.Messag
 		return c.errorMsg(proto.EBADF)
 	}
 
+	c.otelInst.recordFidChange(1)
 	return &proto.Rattach{QID: node.QID()}
 }
 
@@ -127,6 +128,7 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 		if err := c.fids.add(tw.NewFid, fs); err != nil {
 			return c.errorMsg(proto.EBADF)
 		}
+		c.otelInst.recordFidChange(1)
 		return &proto.Rwalk{}
 	}
 
@@ -177,6 +179,7 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 			if err := c.fids.add(tw.NewFid, fs); err != nil {
 				return c.errorMsg(proto.EBADF)
 			}
+			c.otelInst.recordFidChange(1)
 		}
 	}
 
@@ -190,6 +193,7 @@ func (c *conn) handleClunk(ctx context.Context, tc *proto.Tclunk) proto.Message 
 	if fs == nil {
 		return c.errorMsg(proto.EBADF)
 	}
+	c.otelInst.recordFidChange(-1)
 
 	// Handle xattr commit/cleanup before normal clunk logic.
 	if fs.state == fidXattrWrite {

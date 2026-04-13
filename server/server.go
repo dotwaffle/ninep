@@ -7,6 +7,9 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Server serves the 9P protocol over network connections. Create with New.
@@ -16,9 +19,11 @@ type Server struct {
 	maxInflight int
 	idleTimeout time.Duration // 0 = no timeout (GO-SEC-1)
 	logger      *slog.Logger
-	anames      map[string]Node
-	attacher    Attacher
-	middlewares []Middleware
+	anames         map[string]Node
+	attacher       Attacher
+	middlewares    []Middleware
+	tracerProvider trace.TracerProvider
+	meterProvider  metric.MeterProvider
 }
 
 // New creates a Server rooted at the given Node. Options configure behavior.

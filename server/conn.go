@@ -14,6 +14,9 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9l"
 	"github.com/dotwaffle/ninep/proto/p9u"
 
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
+
 	"context"
 	"sync"
 )
@@ -92,6 +95,10 @@ type conn struct {
 	// from chain(dispatch, server.middlewares). If no middleware is configured,
 	// this is a direct call to dispatch with zero overhead.
 	handler Handler
+
+	// otelInst holds connection-level OTel gauge instruments. Nil when no
+	// MeterProvider is configured (zero overhead).
+	otelInst *connOTelInstruments
 }
 
 // newConn creates a new conn for the given server and network connection.
@@ -111,7 +118,24 @@ func newConn(s *Server, nc net.Conn) *conn {
 	inner := func(ctx context.Context, tag proto.Tag, msg proto.Message) proto.Message {
 		return c.dispatch(ctx, tag, msg)
 	}
-	c.handler = chain(inner, s.middlewares)
+
+	// If OTel providers are configured, prepend OTel middleware (outermost)
+	// and create connection-level gauge instruments.
+	mws := s.middlewares
+	if s.tracerProvider != nil || s.meterProvider != nil {
+		tp := s.tracerProvider
+		if tp == nil {
+			tp = tracenoop.NewTracerProvider()
+		}
+		mp := s.meterProvider
+		if mp == nil {
+			mp = metricnoop.NewMeterProvider()
+		}
+		mws = append([]Middleware{newOTelMiddleware(tp, mp, c)}, mws...)
+		c.otelInst = newConnOTelInstruments(s.meterProvider)
+	}
+
+	c.handler = chain(inner, mws)
 	return c
 }
 
@@ -126,6 +150,10 @@ func (c *conn) serve(ctx context.Context) {
 		c.logger.Debug("version negotiation failed", slog.Any("error", err))
 		return
 	}
+
+	// Record connection start for OTel gauge.
+	c.otelInst.recordConnChange(1)
+	defer c.otelInst.recordConnChange(-1)
 
 	// Inject connection metadata into context for node handlers.
 	ctx = withConnInfo(ctx, &ConnInfo{
@@ -423,6 +451,9 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 
 	// Clunk all fids and release handles/closers (matching cleanup pattern).
 	states := c.fids.clunkAll()
+	if len(states) > 0 {
+		c.otelInst.recordFidChange(-int64(len(states)))
+	}
 	for _, fs := range states {
 		releaseHandle(context.Background(), fs, c.logger)
 		if closer, ok := fs.node.(NodeCloser); ok {
