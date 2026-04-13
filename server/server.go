@@ -18,6 +18,7 @@ type Server struct {
 	logger      *slog.Logger
 	anames      map[string]Node
 	attacher    Attacher
+	middlewares []Middleware
 }
 
 // New creates a Server rooted at the given Node. Options configure behavior.
