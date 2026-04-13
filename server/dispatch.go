@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"path"
+	"strings"
 
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
@@ -96,7 +98,11 @@ func (c *conn) handleAttach(ctx context.Context, ta *proto.Tattach) proto.Messag
 		node = c.server.root
 	}
 
-	fs := &fidState{node: node, state: fidAllocated}
+	attachPath := "/"
+	if ta.Aname != "" {
+		attachPath = "/" + ta.Aname
+	}
+	fs := &fidState{node: node, path: attachPath, state: fidAllocated}
 	if err := c.fids.add(ta.Fid, fs); err != nil {
 		return c.errorMsg(proto.EBADF)
 	}
@@ -116,8 +122,8 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 		if tw.Fid == tw.NewFid {
 			return &proto.Rwalk{}
 		}
-		// Clone: newfid points to same node.
-		fs := &fidState{node: src.node, state: fidAllocated}
+		// Clone: newfid points to same node with same path.
+		fs := &fidState{node: src.node, path: src.path, state: fidAllocated}
 		if err := c.fids.add(tw.NewFid, fs); err != nil {
 			return c.errorMsg(proto.EBADF)
 		}
@@ -160,12 +166,14 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 		current = child
 	}
 
-	// Complete walk: assign newfid.
+	// Complete walk: assign newfid with resolved path.
 	if len(qids) == len(tw.Names) {
+		newPath := path.Clean(src.path + "/" + strings.Join(tw.Names, "/"))
 		if tw.Fid == tw.NewFid {
 			c.fids.update(tw.Fid, current)
+			c.fids.setPath(tw.Fid, newPath)
 		} else {
-			fs := &fidState{node: current, state: fidAllocated}
+			fs := &fidState{node: current, path: newPath, state: fidAllocated}
 			if err := c.fids.add(tw.NewFid, fs); err != nil {
 				return c.errorMsg(proto.EBADF)
 			}

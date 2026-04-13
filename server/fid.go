@@ -21,6 +21,7 @@ const (
 type fidState struct {
 	mu        sync.Mutex     // Protects state transitions, xattr, and dir fields.
 	node      Node
+	path      string         // Walked filesystem path, set during attach/walk for observability.
 	state     fidStatus
 	handle    FileHandle     // Non-nil after Open returns a handle (per API-04).
 	dirCache  []proto.Dirent // Cached dirents for simple Readdirer (offset tracking).
@@ -94,6 +95,16 @@ func (ft *fidTable) clunkAll() []*fidState {
 		states = append(states, fs)
 	}
 	return states
+}
+
+// setPath updates the walked filesystem path on an existing fid. No-op if the
+// fid is not present. Safe for concurrent use.
+func (ft *fidTable) setPath(fid proto.Fid, p string) {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if fs, ok := ft.fids[fid]; ok {
+		fs.path = p
+	}
 }
 
 // update replaces the node on an existing fid. Returns false if the fid is not

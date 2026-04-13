@@ -87,11 +87,16 @@ type conn struct {
 	semaphore chan struct{}
 
 	logger *slog.Logger
+
+	// handler is the middleware-wrapped dispatch chain. Built once in newConn
+	// from chain(dispatch, server.middlewares). If no middleware is configured,
+	// this is a direct call to dispatch with zero overhead.
+	handler Handler
 }
 
 // newConn creates a new conn for the given server and network connection.
 func newConn(s *Server, nc net.Conn) *conn {
-	return &conn{
+	c := &conn{
 		server:    s,
 		nc:        nc,
 		fids:      newFidTable(),
@@ -100,6 +105,14 @@ func newConn(s *Server, nc net.Conn) *conn {
 		semaphore: make(chan struct{}, s.maxInflight),
 		logger:    s.logger.With(slog.String("remote", nc.RemoteAddr().String())),
 	}
+	// Build the middleware-wrapped dispatch chain. The closure captures c so
+	// it must be created after c is initialized. If no middleware is
+	// configured, chain returns the inner handler directly (zero overhead).
+	inner := func(ctx context.Context, tag proto.Tag, msg proto.Message) proto.Message {
+		return c.dispatch(ctx, tag, msg)
+	}
+	c.handler = chain(inner, s.middlewares)
+	return c
 }
 
 // serve runs the connection lifecycle: version negotiation, then read loop.
@@ -385,7 +398,7 @@ func (c *conn) handleRequest(ctx context.Context, tag proto.Tag, msg proto.Messa
 		<-c.semaphore // Release semaphore slot.
 	}()
 
-	resp := c.dispatch(ctx, tag, msg)
+	resp := c.handler(ctx, tag, msg)
 	if resp != nil {
 		c.sendResponse(tag, resp)
 	}
