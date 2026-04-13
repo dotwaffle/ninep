@@ -104,9 +104,9 @@ func TestEncodeDirentsMaxBytesPartial(t *testing.T) {
 	t.Parallel()
 
 	dirents := []proto.Dirent{
-		{QID: proto.QID{Path: 1}, Offset: 1, Type: 0, Name: "a"},    // 25 bytes
-		{QID: proto.QID{Path: 2}, Offset: 2, Type: 0, Name: "bb"},   // 26 bytes
-		{QID: proto.QID{Path: 3}, Offset: 3, Type: 0, Name: "ccc"},  // 27 bytes
+		{QID: proto.QID{Path: 1}, Offset: 1, Type: 0, Name: "a"},   // 25 bytes
+		{QID: proto.QID{Path: 2}, Offset: 2, Type: 0, Name: "bb"},  // 26 bytes
+		{QID: proto.QID{Path: 3}, Offset: 3, Type: 0, Name: "ccc"}, // 27 bytes
 	}
 
 	// Only enough room for first two entries (25+26=51).

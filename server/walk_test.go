@@ -511,4 +511,3 @@ func TestAttach_TauthRejected(t *testing.T) {
 	_, msg := readResponse(t, cp.client)
 	isError(t, msg, proto.ENOSYS)
 }
-

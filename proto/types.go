@@ -92,7 +92,7 @@ const (
 // Attr holds the file attributes returned by Rgetattr.
 type Attr struct {
 	Valid       AttrMask
-	QID        QID
+	QID         QID
 	Mode        uint32
 	UID         uint32
 	GID         uint32
@@ -162,7 +162,7 @@ type LockFlags uint32
 
 // Lock flag constants.
 const (
-	LockFlagBlock LockFlags = 1
+	LockFlagBlock   LockFlags = 1
 	LockFlagReclaim LockFlags = 2
 )
 

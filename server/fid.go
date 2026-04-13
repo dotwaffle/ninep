@@ -21,9 +21,9 @@ const (
 
 // fidState holds the server-side state for a single fid.
 type fidState struct {
-	mu        sync.Mutex     // Protects state transitions, xattr, and dir fields.
+	mu        sync.Mutex // Protects state transitions, xattr, and dir fields.
 	node      Node
-	path      string         // Walked filesystem path, set during attach/walk for observability.
+	path      string // Walked filesystem path, set during attach/walk for observability.
 	state     fidStatus
 	handle    FileHandle     // Non-nil after Open returns a handle (per API-04).
 	dirCache  []proto.Dirent // Cached dirents for simple Readdirer (offset tracking).

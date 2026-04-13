@@ -92,7 +92,6 @@ func findMetric(rm metricdata.ResourceMetrics, name string) *metricdata.Metrics 
 	return nil
 }
 
-
 func TestOTelMiddlewareSpanCreation(t *testing.T) {
 	t.Parallel()
 

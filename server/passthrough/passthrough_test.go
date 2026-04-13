@@ -1111,11 +1111,11 @@ func TestProtocol_CreateAndRead(t *testing.T) {
 
 	// Create file.
 	sendMessage(t, cp.client, 2, &p9l.Tlcreate{
-		Fid:  0,
-		Name: "created.txt",
+		Fid:   0,
+		Name:  "created.txt",
 		Flags: syscall.O_RDWR,
-		Mode: 0644,
-		GID:  0,
+		Mode:  0644,
+		GID:   0,
 	})
 	_, msg := readResponse(t, cp.client)
 	rc, ok := msg.(*p9l.Rlcreate)

@@ -11,9 +11,9 @@ func TestQIDGeneratorNext(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		qidType proto.QIDType
-		calls   int
+		name      string
+		qidType   proto.QIDType
+		calls     int
 		wantPaths []uint64
 	}{
 		{

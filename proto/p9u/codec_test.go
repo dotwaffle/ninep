@@ -176,10 +176,10 @@ func TestDecodeUnknownType(t *testing.T) {
 
 	// Construct a message with unknown type 255: size=8, type=255, tag=0, body=0x00.
 	var buf bytes.Buffer
-	_ = binary.Write(&buf, binary.LittleEndian, uint32(8))  // size
-	buf.WriteByte(255)                                      // type (unknown)
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(8)) // size
+	buf.WriteByte(255)                                     // type (unknown)
 	_ = binary.Write(&buf, binary.LittleEndian, uint16(0)) // tag
-	buf.WriteByte(0x00)                                   // body byte
+	buf.WriteByte(0x00)                                    // body byte
 
 	_, _, err := p9u.Decode(&buf)
 	if err == nil {
@@ -212,4 +212,3 @@ func TestDecodeTruncated(t *testing.T) {
 		t.Fatal("expected error for truncated message, got nil")
 	}
 }
-
