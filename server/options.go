@@ -26,9 +26,13 @@ func WithMaxInflight(n int) Option {
 	}
 }
 
-// WithLogger sets the structured logger for the server. Default: slog.Default().
+// WithLogger sets the structured logger for the server. The handler is
+// automatically wrapped with trace ID correlation (see NewTraceHandler).
+// Default: slog.Default() with trace correlation.
 func WithLogger(logger *slog.Logger) Option {
-	return func(s *Server) { s.logger = logger }
+	return func(s *Server) {
+		s.logger = slog.New(NewTraceHandler(logger.Handler()))
+	}
 }
 
 // WithAnames sets a map of aname strings to root nodes for vhost-style

@@ -33,7 +33,7 @@ func New(root Node, opts ...Option) *Server {
 		root:        root,
 		maxMsize:    131072, // 128KB default
 		maxInflight: 64,
-		logger:      slog.Default(),
+		logger:      slog.New(NewTraceHandler(slog.Default().Handler())),
 		// idleTimeout: 0 (zero value = no timeout)
 	}
 	for _, opt := range opts {
