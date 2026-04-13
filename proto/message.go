@@ -1,5 +1,3 @@
-// Package proto defines the shared types, constants, and encoding helpers for
-// the 9P2000.L and 9P2000.u wire protocols.
 package proto
 
 import (

@@ -1,5 +1,3 @@
-// Package p9u implements the 9P2000.u-specific message types and top-level
-// Encode/Decode framing for the 9P2000.u wire protocol.
 package p9u
 
 import (

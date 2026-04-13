@@ -1,5 +1,3 @@
-// Package p9l implements the 9P2000.L-specific message types and top-level
-// Encode/Decode framing for the 9P2000.L wire protocol.
 package p9l
 
 import (
