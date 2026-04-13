@@ -459,3 +459,319 @@ func TestStaticFileWriteReturnsENOSYS(t *testing.T) {
 		t.Errorf("Write err = %v, want ENOSYS", err)
 	}
 }
+
+// --- Builder Tests ---
+
+func TestBuilderNewDir(t *testing.T) {
+	t.Parallel()
+	gen := newGen()
+	root := NewDir(gen)
+
+	if root == nil {
+		t.Fatal("NewDir returned nil")
+	}
+	qid := root.EmbeddedInode().QID()
+	if qid.Type != proto.QTDIR {
+		t.Errorf("QID Type = %d, want QTDIR (%d)", qid.Type, proto.QTDIR)
+	}
+}
+
+func TestBuilderAddFile(t *testing.T) {
+	t.Parallel()
+	gen := newGen()
+	root := NewDir(gen)
+	ret := root.AddFile("hello.txt", []byte("hello"))
+
+	// Returns same dir for chaining.
+	if ret != root {
+		t.Error("AddFile did not return parent dir")
+	}
+
+	// Child exists and is readable.
+	child, err := root.Lookup(context.Background(), "hello.txt")
+	if err != nil {
+		t.Fatalf("Lookup error: %v", err)
+	}
+	r, ok := child.(server.NodeReader)
+	if !ok {
+		t.Fatal("child does not implement NodeReader")
+	}
+	data, err := r.Read(context.Background(), 0, 100)
+	if err != nil {
+		t.Fatalf("Read error: %v", err)
+	}
+	if string(data) != "hello" {
+		t.Errorf("Read = %q, want %q", data, "hello")
+	}
+}
+
+func TestBuilderAddStaticFile(t *testing.T) {
+	t.Parallel()
+	gen := newGen()
+	root := NewDir(gen)
+	ret := root.AddStaticFile("readme.txt", "static content")
+
+	if ret != root {
+		t.Error("AddStaticFile did not return parent dir")
+	}
+
+	child, err := root.Lookup(context.Background(), "readme.txt")
+	if err != nil {
+		t.Fatalf("Lookup error: %v", err)
+	}
+	r, ok := child.(server.NodeReader)
+	if !ok {
+		t.Fatal("child does not implement NodeReader")
+	}
+	data, err := r.Read(context.Background(), 0, 100)
+	if err != nil {
+		t.Fatalf("Read error: %v", err)
+	}
+	if string(data) != "static content" {
+		t.Errorf("Read = %q, want %q", data, "static content")
+	}
+}
+
+func TestBuilderAddDir(t *testing.T) {
+	t.Parallel()
+	gen := newGen()
+	root := NewDir(gen)
+	ret := root.AddDir("subdir")
+
+	// Returns parent for chaining (not the child).
+	if ret != root {
+		t.Error("AddDir did not return parent dir")
+	}
+
+	child, err := root.Lookup(context.Background(), "subdir")
+	if err != nil {
+		t.Fatalf("Lookup error: %v", err)
+	}
+	ie, ok := child.(server.InodeEmbedder)
+	if !ok {
+		t.Fatal("child does not implement InodeEmbedder")
+	}
+	qid := ie.EmbeddedInode().QID()
+	if qid.Type != proto.QTDIR {
+		t.Errorf("child QID Type = %d, want QTDIR (%d)", qid.Type, proto.QTDIR)
+	}
+}
+
+func TestBuilderSubDir(t *testing.T) {
+	t.Parallel()
+	gen := newGen()
+	root := NewDir(gen)
+	root.AddDir("sub")
+
+	sub := root.SubDir("sub")
+	if sub == nil {
+		t.Fatal("SubDir returned nil")
+	}
+	sub.AddFile("nested.txt", []byte("nested"))
+
+	// Verify nested file is walkable.
+	child, err := root.Lookup(context.Background(), "sub")
+	if err != nil {
+		t.Fatalf("Lookup sub: %v", err)
+	}
+	l, ok := child.(server.NodeLookuper)
+	if !ok {
+		t.Fatal("sub dir does not implement NodeLookuper")
+	}
+	nested, err := l.Lookup(context.Background(), "nested.txt")
+	if err != nil {
+		t.Fatalf("Lookup nested.txt: %v", err)
+	}
+	r, ok := nested.(server.NodeReader)
+	if !ok {
+		t.Fatal("nested file does not implement NodeReader")
+	}
+	data, err := r.Read(context.Background(), 0, 100)
+	if err != nil {
+		t.Fatalf("Read error: %v", err)
+	}
+	if string(data) != "nested" {
+		t.Errorf("Read = %q, want %q", data, "nested")
+	}
+}
+
+func TestBuilderSubDirPanicsOnMissing(t *testing.T) {
+	t.Parallel()
+	gen := newGen()
+	root := NewDir(gen)
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("SubDir on missing name did not panic")
+		}
+	}()
+	root.SubDir("nonexistent")
+}
+
+func TestBuilderWithDir(t *testing.T) {
+	t.Parallel()
+	gen := newGen()
+	root := NewDir(gen)
+	ret := root.WithDir("sub", func(d *MemDir) {
+		d.AddFile("inner.txt", []byte("inside"))
+	})
+
+	// Returns parent for chaining.
+	if ret != root {
+		t.Error("WithDir did not return parent dir")
+	}
+
+	// Verify nested construction.
+	child, err := root.Lookup(context.Background(), "sub")
+	if err != nil {
+		t.Fatalf("Lookup sub: %v", err)
+	}
+	l, ok := child.(server.NodeLookuper)
+	if !ok {
+		t.Fatal("sub does not implement NodeLookuper")
+	}
+	inner, err := l.Lookup(context.Background(), "inner.txt")
+	if err != nil {
+		t.Fatalf("Lookup inner.txt: %v", err)
+	}
+	r, ok := inner.(server.NodeReader)
+	if !ok {
+		t.Fatal("inner does not implement NodeReader")
+	}
+	data, err := r.Read(context.Background(), 0, 100)
+	if err != nil {
+		t.Fatalf("Read error: %v", err)
+	}
+	if string(data) != "inside" {
+		t.Errorf("Read = %q, want %q", data, "inside")
+	}
+}
+
+func TestBuilderChaining(t *testing.T) {
+	t.Parallel()
+	gen := newGen()
+	root := NewDir(gen).
+		AddFile("a.txt", []byte("aaa")).
+		AddFile("b.txt", []byte("bbb")).
+		AddStaticFile("c.txt", "ccc").
+		AddDir("sub")
+
+	// Verify all children exist.
+	for _, name := range []string{"a.txt", "b.txt", "c.txt", "sub"} {
+		_, err := root.Lookup(context.Background(), name)
+		if err != nil {
+			t.Errorf("Lookup %q: %v", name, err)
+		}
+	}
+}
+
+func TestBuilderFreshNodes(t *testing.T) {
+	t.Parallel()
+	gen := newGen()
+	data := []byte("same")
+	root := NewDir(gen).
+		AddFile("file1", data).
+		AddFile("file2", data)
+
+	// Each AddFile creates a distinct node (Pitfall 8).
+	child1, err := root.Lookup(context.Background(), "file1")
+	if err != nil {
+		t.Fatalf("Lookup file1: %v", err)
+	}
+	child2, err := root.Lookup(context.Background(), "file2")
+	if err != nil {
+		t.Fatalf("Lookup file2: %v", err)
+	}
+	ie1 := child1.(server.InodeEmbedder)
+	ie2 := child2.(server.InodeEmbedder)
+	if ie1.EmbeddedInode() == ie2.EmbeddedInode() {
+		t.Error("file1 and file2 share the same Inode (node reuse detected)")
+	}
+	q1 := ie1.EmbeddedInode().QID()
+	q2 := ie2.EmbeddedInode().QID()
+	if q1.Path == q2.Path {
+		t.Error("file1 and file2 have the same QID Path")
+	}
+}
+
+func TestBuilderAddSymlink(t *testing.T) {
+	t.Parallel()
+	gen := newGen()
+	root := NewDir(gen).
+		AddSymlink("link", "/target/path")
+
+	child, err := root.Lookup(context.Background(), "link")
+	if err != nil {
+		t.Fatalf("Lookup link: %v", err)
+	}
+	rl, ok := child.(server.NodeReadlinker)
+	if !ok {
+		t.Fatal("symlink does not implement NodeReadlinker")
+	}
+	target, err := rl.Readlink(context.Background())
+	if err != nil {
+		t.Fatalf("Readlink error: %v", err)
+	}
+	if target != "/target/path" {
+		t.Errorf("Readlink = %q, want %q", target, "/target/path")
+	}
+}
+
+func TestBuilderAddFileWithMode(t *testing.T) {
+	t.Parallel()
+	gen := newGen()
+	root := NewDir(gen).
+		AddFileWithMode("exec.sh", []byte("#!/bin/sh"), 0o755)
+
+	child, err := root.Lookup(context.Background(), "exec.sh")
+	if err != nil {
+		t.Fatalf("Lookup error: %v", err)
+	}
+	g, ok := child.(server.NodeGetattrer)
+	if !ok {
+		t.Fatal("child does not implement NodeGetattrer")
+	}
+	attr, err := g.Getattr(context.Background(), proto.AttrAll)
+	if err != nil {
+		t.Fatalf("Getattr error: %v", err)
+	}
+	if attr.Mode != 0o755 {
+		t.Errorf("Mode = %#o, want %#o", attr.Mode, 0o755)
+	}
+}
+
+func TestBuilderTreeWalkability(t *testing.T) {
+	t.Parallel()
+	gen := newGen()
+	root := NewDir(gen).
+		AddFile("top.txt", []byte("top")).
+		WithDir("level1", func(d *MemDir) {
+			d.AddFile("mid.txt", []byte("mid")).
+				WithDir("level2", func(d2 *MemDir) {
+					d2.AddFile("bottom.txt", []byte("bottom"))
+				})
+		})
+
+	// Walk root -> level1 -> level2 -> bottom.txt.
+	ctx := context.Background()
+
+	l1, err := root.Lookup(ctx, "level1")
+	if err != nil {
+		t.Fatalf("Lookup level1: %v", err)
+	}
+	l2, err := l1.(server.NodeLookuper).Lookup(ctx, "level2")
+	if err != nil {
+		t.Fatalf("Lookup level2: %v", err)
+	}
+	bottom, err := l2.(server.NodeLookuper).Lookup(ctx, "bottom.txt")
+	if err != nil {
+		t.Fatalf("Lookup bottom.txt: %v", err)
+	}
+	data, err := bottom.(server.NodeReader).Read(ctx, 0, 100)
+	if err != nil {
+		t.Fatalf("Read bottom.txt: %v", err)
+	}
+	if string(data) != "bottom" {
+		t.Errorf("Read = %q, want %q", data, "bottom")
+	}
+}
