@@ -68,10 +68,7 @@ func (f *MemFile) Read(_ context.Context, offset uint64, count uint32) ([]byte, 
 	if offset >= size {
 		return nil, nil
 	}
-	end := offset + uint64(count)
-	if end > size {
-		end = size
-	}
+	end := min(offset+uint64(count), size)
 	// Return a copy to avoid exposing internal state.
 	out := make([]byte, end-offset)
 	copy(out, f.Data[offset:end])
@@ -229,10 +226,7 @@ func (f *StaticFile) Read(_ context.Context, offset uint64, count uint32) ([]byt
 	if offset >= size {
 		return nil, nil
 	}
-	end := offset + uint64(count)
-	if end > size {
-		end = size
-	}
+	end := min(offset+uint64(count), size)
 	out := make([]byte, end-offset)
 	copy(out, data[offset:end])
 	return out, nil

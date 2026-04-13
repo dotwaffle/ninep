@@ -424,10 +424,7 @@ func (f *testFile) Read(_ context.Context, offset uint64, count uint32) ([]byte,
 	if offset >= size {
 		return nil, nil
 	}
-	end := offset + uint64(count)
-	if end > size {
-		end = size
-	}
+	end := min(offset+uint64(count), size)
 	out := make([]byte, end-offset)
 	copy(out, f.data[offset:end])
 	return out, nil

@@ -162,7 +162,7 @@ func TestNodeQID(t *testing.T) {
 			name: "InodeEmbedder fallback",
 			node: func() Node {
 				n := &testInodeNode{}
-				n.Inode.Init(wantQID, n)
+				n.Init(wantQID, n)
 				return n
 			}(),
 			wantQID: wantQID,

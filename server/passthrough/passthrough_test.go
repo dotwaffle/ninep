@@ -25,7 +25,7 @@ func TestNewRoot_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRoot(%q): %v", dir, err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { _ = root.Close(context.Background()) })
 
 	qid := root.QID()
 	if qid.Type != proto.QTDIR {
@@ -59,7 +59,7 @@ func TestStatToAttr(t *testing.T) {
 	if _, err := f.WriteString("hello world"); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	var st syscall.Stat_t
 	if err := syscall.Stat(f.Name(), &st); err != nil {
@@ -314,7 +314,7 @@ func TestRoot_Getattr(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { _ = root.Close(context.Background()) })
 
 	ctx := context.Background()
 	attr, err := root.Getattr(ctx, proto.AttrAll)
@@ -359,14 +359,14 @@ func TestRoot_Setattr_Mode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { _ = root.Close(context.Background()) })
 
 	node := &Node{fd: fd, root: root}
 	var st syscall.Stat_t
 	if err := syscall.Fstat(fd, &st); err != nil {
 		t.Fatal(err)
 	}
-	node.Inode.Init(statToQID(&st), node)
+	node.Init(statToQID(&st), node)
 
 	ctx := context.Background()
 	err = node.Setattr(ctx, proto.SetAttr{
@@ -386,7 +386,7 @@ func TestRoot_Setattr_Mode(t *testing.T) {
 		t.Errorf("mode after Setattr = %o, want 0600", st2.Mode&0777)
 	}
 
-	syscall.Close(fd)
+	_ = syscall.Close(fd)
 }
 
 func TestRoot_Setattr_Size(t *testing.T) {
@@ -406,14 +406,14 @@ func TestRoot_Setattr_Size(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { _ = root.Close(context.Background()) })
 
 	node := &Node{fd: fd, root: root}
 	var st syscall.Stat_t
 	if err := syscall.Fstat(fd, &st); err != nil {
 		t.Fatal(err)
 	}
-	node.Inode.Init(statToQID(&st), node)
+	node.Init(statToQID(&st), node)
 
 	ctx := context.Background()
 	err = node.Setattr(ctx, proto.SetAttr{
@@ -433,7 +433,7 @@ func TestRoot_Setattr_Size(t *testing.T) {
 		t.Errorf("size after Setattr = %d, want 5", st2.Size)
 	}
 
-	syscall.Close(fd)
+	_ = syscall.Close(fd)
 }
 
 func TestRoot_Close(t *testing.T) {
@@ -498,7 +498,7 @@ func TestLookup_ExistingChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { _ = root.Close(context.Background()) })
 
 	ctx := context.Background()
 	child, err := root.Lookup(ctx, "child.txt")
@@ -518,7 +518,7 @@ func TestLookup_Nonexistent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { _ = root.Close(context.Background()) })
 
 	_, err = root.Lookup(context.Background(), "nonexistent")
 	if err == nil {
@@ -541,7 +541,7 @@ func TestCreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { _ = root.Close(context.Background()) })
 
 	ctx := context.Background()
 	child, fh, _, err := root.Create(ctx, "newfile.txt", syscall.O_RDWR, 0644, 0)
@@ -586,7 +586,7 @@ func TestMkdir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { _ = root.Close(context.Background()) })
 
 	ctx := context.Background()
 	child, err := root.Mkdir(ctx, "subdir", 0755, 0)
@@ -618,7 +618,7 @@ func TestSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { _ = root.Close(context.Background()) })
 
 	ctx := context.Background()
 	child, err := root.Symlink(ctx, "link", "target.txt", 0)
@@ -651,7 +651,7 @@ func TestUnlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { _ = root.Close(context.Background()) })
 
 	ctx := context.Background()
 	if err := root.Unlink(ctx, "todelete.txt", 0); err != nil {
@@ -674,7 +674,7 @@ func TestRename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { _ = root.Close(context.Background()) })
 
 	ctx := context.Background()
 	if err := root.Rename(ctx, "old.txt", root, "new.txt"); err != nil {
@@ -712,7 +712,7 @@ func TestReaddir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { _ = root.Close(context.Background()) })
 
 	ctx := context.Background()
 	entries, err := root.Readdir(ctx)
@@ -748,20 +748,20 @@ func TestLock_NonBlocking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer syscall.Close(fd)
+	defer func() { _ = syscall.Close(fd) }()
 
 	root, err := NewRoot(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { _ = root.Close(context.Background()) })
 
 	node := &Node{fd: fd, root: root}
 	var st syscall.Stat_t
 	if err := syscall.Fstat(fd, &st); err != nil {
 		t.Fatal(err)
 	}
-	node.Inode.Init(statToQID(&st), node)
+	node.Init(statToQID(&st), node)
 
 	ctx := context.Background()
 	status, err := node.Lock(ctx, proto.LockTypeWrLck, 0, 0, 0, 1, "test")
@@ -794,20 +794,20 @@ func TestGetLock_NoConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer syscall.Close(fd)
+	defer func() { _ = syscall.Close(fd) }()
 
 	root, err := NewRoot(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { _ = root.Close(context.Background()) })
 
 	node := &Node{fd: fd, root: root}
 	var st syscall.Stat_t
 	if err := syscall.Fstat(fd, &st); err != nil {
 		t.Fatal(err)
 	}
-	node.Inode.Init(statToQID(&st), node)
+	node.Init(statToQID(&st), node)
 
 	ctx := context.Background()
 	lt, _, _, _, _, err := node.GetLock(ctx, proto.LockTypeWrLck, 0, 0, 1, "test")
@@ -843,8 +843,8 @@ func newConnPair(t *testing.T, root server.Node) *connPair {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(func() {
 		cancel()
-		client.Close()
-		srv2.Close()
+		_ = client.Close()
+		_ = srv2.Close()
 	})
 
 	done := make(chan struct{})
@@ -865,7 +865,7 @@ func newConnPair(t *testing.T, root server.Node) *connPair {
 
 func (cp *connPair) close(t *testing.T) {
 	t.Helper()
-	cp.client.Close()
+	_ = cp.client.Close()
 	<-cp.done
 	cp.cancel()
 }

@@ -276,7 +276,7 @@ func TestFlush_CancelsContext(t *testing.T) {
 	// Read responses. We should get an Rflush for tag 11.
 	// We may also get an error response for tag 10 (because its context was cancelled).
 	gotFlush := false
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		tag, msg := readResponse(t, cp.client)
 		switch tag {
 		case 11:
@@ -347,8 +347,8 @@ func TestFlush_TagReuse(t *testing.T) {
 	sendMessage(t, cp.client, 11, &proto.Tflush{OldTag: 10})
 
 	// Drain responses for tags 10 and 11.
-	for i := 0; i < 2; i++ {
-		cp.client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	for range 2 {
+		_ = cp.client.SetReadDeadline(time.Now().Add(2 * time.Second))
 		_, _ = readResponse(t, cp.client)
 	}
 
@@ -439,7 +439,7 @@ func TestMaxInflight(t *testing.T) {
 
 	// Read all 3 responses.
 	for range 3 {
-		cp.client.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_ = cp.client.SetReadDeadline(time.Now().Add(2 * time.Second))
 		readResponse(t, cp.client)
 	}
 }
@@ -476,7 +476,7 @@ func TestConcurrentDispatch(t *testing.T) {
 	// Read all responses. Verify each tag is received exactly once.
 	seen := make(map[proto.Tag]bool)
 	for range numRequests {
-		cp.client.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_ = cp.client.SetReadDeadline(time.Now().Add(2 * time.Second))
 		tag, _ := readResponse(t, cp.client)
 		if seen[tag] {
 			t.Fatalf("duplicate response for tag %d", tag)

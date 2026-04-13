@@ -14,11 +14,11 @@ import (
 
 // Server serves the 9P protocol over network connections. Create with New.
 type Server struct {
-	root        Node
-	maxMsize    uint32
-	maxInflight int
-	idleTimeout time.Duration // 0 = no timeout (GO-SEC-1)
-	logger      *slog.Logger
+	root           Node
+	maxMsize       uint32
+	maxInflight    int
+	idleTimeout    time.Duration // 0 = no timeout (GO-SEC-1)
+	logger         *slog.Logger
 	anames         map[string]Node
 	attacher       Attacher
 	middlewares    []Middleware
@@ -56,11 +56,9 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 			}
 			return fmt.Errorf("accept: %w", err)
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			s.ServeConn(ctx, nc)
-		}()
+		})
 	}
 }
 

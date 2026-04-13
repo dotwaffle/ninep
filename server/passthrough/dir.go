@@ -51,7 +51,7 @@ func (n *Node) Lookup(_ context.Context, name string) (server.Node, error) {
 
 	sst := syscallStatFrom(st)
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
-	child.Inode.Init(statToQID(&sst), child)
+	child.Init(statToQID(&sst), child)
 	n.EmbeddedInode().AddChild(name, child.EmbeddedInode())
 
 	return child, nil
@@ -71,19 +71,19 @@ func (n *Node) Create(_ context.Context, name string, flags uint32, mode proto.F
 
 	var st syscall.Stat_t
 	if err := syscall.Fstat(fd, &st); err != nil {
-		syscall.Close(fd)
+		_ = syscall.Close(fd)
 		return nil, nil, 0, toProtoErr(err)
 	}
 
 	// Open an O_PATH fd for the node reference, use the real fd for the handle.
 	pathFd, err := unix.Openat(n.fd, name, unix.O_PATH|syscall.O_NOFOLLOW, 0)
 	if err != nil {
-		syscall.Close(fd)
+		_ = syscall.Close(fd)
 		return nil, nil, 0, toProtoErr(err)
 	}
 
 	child := &Node{fd: pathFd, root: n.root}
-	child.Inode.Init(statToQID(&st), child)
+	child.Init(statToQID(&st), child)
 
 	return child, &fileHandle{fd: fd}, 0, nil
 }
@@ -105,12 +105,12 @@ func (n *Node) Mkdir(_ context.Context, name string, mode proto.FileMode, _ uint
 
 	var st syscall.Stat_t
 	if err := syscall.Fstat(fd, &st); err != nil {
-		syscall.Close(fd)
+		_ = syscall.Close(fd)
 		return nil, toProtoErr(err)
 	}
 
 	child := &Node{fd: fd, root: n.root}
-	child.Inode.Init(statToQID(&st), child)
+	child.Init(statToQID(&st), child)
 
 	return child, nil
 }
@@ -132,13 +132,13 @@ func (n *Node) Symlink(_ context.Context, name, target string, _ uint32) (server
 
 	var st unix.Stat_t
 	if err := unix.Fstatat(n.fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		syscall.Close(fd)
+		_ = syscall.Close(fd)
 		return nil, toProtoErr(err)
 	}
 
 	sst := syscallStatFrom(st)
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
-	child.Inode.Init(statToQID(&sst), child)
+	child.Init(statToQID(&sst), child)
 
 	return child, nil
 }
@@ -186,13 +186,13 @@ func (n *Node) Mknod(_ context.Context, name string, mode proto.FileMode, major,
 
 	var st unix.Stat_t
 	if err := unix.Fstatat(n.fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		syscall.Close(fd)
+		_ = syscall.Close(fd)
 		return nil, toProtoErr(err)
 	}
 
 	sst := syscallStatFrom(st)
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
-	child.Inode.Init(statToQID(&sst), child)
+	child.Init(statToQID(&sst), child)
 
 	return child, nil
 }
@@ -238,7 +238,7 @@ func (n *Node) Rename(_ context.Context, oldName string, newDir server.Node, new
 	case *Node:
 		newDirFd = d.fd
 	case *Root:
-		newDirFd = d.Node.fd
+		newDirFd = d.fd
 	default:
 		return proto.EINVAL
 	}
@@ -262,7 +262,7 @@ func (n *Node) Readdir(_ context.Context) ([]proto.Dirent, error) {
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
-	defer syscall.Close(fd)
+	defer func() { _ = syscall.Close(fd) }()
 
 	var dirents []proto.Dirent
 	buf := make([]byte, 8192)
@@ -306,10 +306,10 @@ func parseDirents(buf []byte) []proto.Dirent {
 
 		// Name is null-terminated starting at offset 19.
 		nameBytes := buf[19:reclen]
-		nameEnd := bytes.IndexByte(nameBytes, 0)
+		before, _, ok := bytes.Cut(nameBytes, []byte{0})
 		var name string
-		if nameEnd >= 0 {
-			name = string(nameBytes[:nameEnd])
+		if ok {
+			name = string(before)
 		} else {
 			name = string(nameBytes)
 		}

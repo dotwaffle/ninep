@@ -54,7 +54,7 @@ func NewRoot(hostPath string, opts ...Option) (*Root, error) {
 
 	var st syscall.Stat_t
 	if err := syscall.Fstat(fd, &st); err != nil {
-		syscall.Close(fd)
+		_ = syscall.Close(fd)
 		return nil, fmt.Errorf("stat root %s: %w", hostPath, err)
 	}
 
@@ -67,8 +67,8 @@ func NewRoot(hostPath string, opts ...Option) (*Root, error) {
 		opt(r)
 	}
 
-	r.Node.root = r
-	r.Node.Inode.Init(statToQID(&st), r)
+	r.root = r
+	r.Init(statToQID(&st), r)
 
 	return r, nil
 }

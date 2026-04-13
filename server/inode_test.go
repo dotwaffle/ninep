@@ -265,7 +265,7 @@ func TestInodeAddChildAndLookup(t *testing.T) {
 	parent.Init(proto.QID{Type: proto.QTDIR, Path: 1}, nil)
 
 	child := &testInodeNode{}
-	child.Inode.Init(proto.QID{Type: proto.QTFILE, Path: 2}, child)
+	child.Init(proto.QID{Type: proto.QTFILE, Path: 2}, child)
 
 	parent.AddChild("readme.txt", &child.Inode)
 

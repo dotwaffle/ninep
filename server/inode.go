@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"maps"
 	"sync"
 
 	"github.com/dotwaffle/ninep/proto"
@@ -23,24 +24,24 @@ type Inode struct {
 
 // Compile-time assertions that *Inode implements all capability interfaces.
 var (
-	_ InodeEmbedder = (*Inode)(nil)
-	_ NodeOpener    = (*Inode)(nil)
-	_ NodeReader    = (*Inode)(nil)
-	_ NodeWriter    = (*Inode)(nil)
-	_ NodeGetattrer = (*Inode)(nil)
-	_ NodeSetattrer = (*Inode)(nil)
-	_ NodeReaddirer = (*Inode)(nil)
-	_ NodeCreater   = (*Inode)(nil)
-	_ NodeMkdirer   = (*Inode)(nil)
-	_ NodeCloser     = (*Inode)(nil)
-	_ NodeLookuper   = (*Inode)(nil)
-	_ NodeSymlinker  = (*Inode)(nil)
-	_ NodeLinker     = (*Inode)(nil)
-	_ NodeMknoder    = (*Inode)(nil)
-	_ NodeReadlinker = (*Inode)(nil)
-	_ NodeUnlinker   = (*Inode)(nil)
-	_ NodeRenamer    = (*Inode)(nil)
-	_ NodeStatFSer   = (*Inode)(nil)
+	_ InodeEmbedder    = (*Inode)(nil)
+	_ NodeOpener       = (*Inode)(nil)
+	_ NodeReader       = (*Inode)(nil)
+	_ NodeWriter       = (*Inode)(nil)
+	_ NodeGetattrer    = (*Inode)(nil)
+	_ NodeSetattrer    = (*Inode)(nil)
+	_ NodeReaddirer    = (*Inode)(nil)
+	_ NodeCreater      = (*Inode)(nil)
+	_ NodeMkdirer      = (*Inode)(nil)
+	_ NodeCloser       = (*Inode)(nil)
+	_ NodeLookuper     = (*Inode)(nil)
+	_ NodeSymlinker    = (*Inode)(nil)
+	_ NodeLinker       = (*Inode)(nil)
+	_ NodeMknoder      = (*Inode)(nil)
+	_ NodeReadlinker   = (*Inode)(nil)
+	_ NodeUnlinker     = (*Inode)(nil)
+	_ NodeRenamer      = (*Inode)(nil)
+	_ NodeStatFSer     = (*Inode)(nil)
 	_ NodeLocker       = (*Inode)(nil)
 	_ NodeXattrGetter  = (*Inode)(nil)
 	_ NodeXattrSetter  = (*Inode)(nil)
@@ -107,9 +108,7 @@ func (i *Inode) Children() map[string]*Inode {
 		return nil
 	}
 	out := make(map[string]*Inode, len(i.children))
-	for k, v := range i.children {
-		out[k] = v
-	}
+	maps.Copy(out, i.children)
 	return out
 }
 

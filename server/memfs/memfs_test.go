@@ -454,7 +454,7 @@ func TestStaticFileWriteReturnsENOSYS(t *testing.T) {
 	f.Init(gen.Next(proto.QTFILE), f)
 
 	// StaticFile does not implement NodeWriter, so Write comes from Inode.
-	_, err := f.Inode.Write(context.Background(), []byte("x"), 0)
+	_, err := f.Write(context.Background(), []byte("x"), 0)
 	if err != proto.ENOSYS {
 		t.Errorf("Write err = %v, want ENOSYS", err)
 	}

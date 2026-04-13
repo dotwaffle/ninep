@@ -34,43 +34,43 @@ func TestEncodeDirentsSingle(t *testing.T) {
 
 	// QID: type[1] + version[4] + path[8]
 	var qidType uint8
-	binary.Read(r, binary.LittleEndian, &qidType)
+	_ = binary.Read(r, binary.LittleEndian, &qidType)
 	if qidType != uint8(proto.QTFILE) {
 		t.Errorf("qid type = %d, want %d", qidType, proto.QTFILE)
 	}
 	var qidVersion uint32
-	binary.Read(r, binary.LittleEndian, &qidVersion)
+	_ = binary.Read(r, binary.LittleEndian, &qidVersion)
 	if qidVersion != 1 {
 		t.Errorf("qid version = %d, want 1", qidVersion)
 	}
 	var qidPath uint64
-	binary.Read(r, binary.LittleEndian, &qidPath)
+	_ = binary.Read(r, binary.LittleEndian, &qidPath)
 	if qidPath != 42 {
 		t.Errorf("qid path = %d, want 42", qidPath)
 	}
 
 	// Offset.
 	var offset uint64
-	binary.Read(r, binary.LittleEndian, &offset)
+	_ = binary.Read(r, binary.LittleEndian, &offset)
 	if offset != 1 {
 		t.Errorf("offset = %d, want 1", offset)
 	}
 
 	// Type.
 	var dtype uint8
-	binary.Read(r, binary.LittleEndian, &dtype)
+	_ = binary.Read(r, binary.LittleEndian, &dtype)
 	if dtype != 0 {
 		t.Errorf("type = %d, want 0", dtype)
 	}
 
 	// Name: len[2] + bytes.
 	var nameLen uint16
-	binary.Read(r, binary.LittleEndian, &nameLen)
+	_ = binary.Read(r, binary.LittleEndian, &nameLen)
 	if nameLen != 5 {
 		t.Errorf("name len = %d, want 5", nameLen)
 	}
 	nameBytes := make([]byte, nameLen)
-	r.Read(nameBytes)
+	_, _ = r.Read(nameBytes)
 	if string(nameBytes) != "hello" {
 		t.Errorf("name = %q, want %q", string(nameBytes), "hello")
 	}
@@ -154,15 +154,15 @@ func TestEncodeDirentsRoundTrip(t *testing.T) {
 		var dtype uint8
 		var nameLen uint16
 
-		binary.Read(r, binary.LittleEndian, &qidType)
-		binary.Read(r, binary.LittleEndian, &qidVersion)
-		binary.Read(r, binary.LittleEndian, &qidPath)
-		binary.Read(r, binary.LittleEndian, &offset)
-		binary.Read(r, binary.LittleEndian, &dtype)
-		binary.Read(r, binary.LittleEndian, &nameLen)
+		_ = binary.Read(r, binary.LittleEndian, &qidType)
+		_ = binary.Read(r, binary.LittleEndian, &qidVersion)
+		_ = binary.Read(r, binary.LittleEndian, &qidPath)
+		_ = binary.Read(r, binary.LittleEndian, &offset)
+		_ = binary.Read(r, binary.LittleEndian, &dtype)
+		_ = binary.Read(r, binary.LittleEndian, &nameLen)
 
 		nameBytes := make([]byte, nameLen)
-		r.Read(nameBytes)
+		_, _ = r.Read(nameBytes)
 
 		d := dirents[i]
 		if qidType != uint8(d.QID.Type) {

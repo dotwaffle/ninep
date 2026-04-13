@@ -8,7 +8,7 @@ import (
 
 // FileHandle is a marker interface for per-open state returned by NodeOpener.Open.
 // Implement FileReader, FileWriter, FileReleaser, or FileReaddirer as needed.
-type FileHandle interface{}
+type FileHandle any
 
 // FileReader is implemented by file handles that support reading.
 type FileReader interface {

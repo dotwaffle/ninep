@@ -175,9 +175,9 @@ func TestDecodeUnknownType(t *testing.T) {
 
 	// Construct a message with unknown type 255: size=8, type=255, tag=0, body=0x00.
 	var buf bytes.Buffer
-	binary.Write(&buf, binary.LittleEndian, uint32(8))  // size
-	buf.WriteByte(255)                                    // type (unknown)
-	binary.Write(&buf, binary.LittleEndian, uint16(0))   // tag
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(8))  // size
+	buf.WriteByte(255)                                      // type (unknown)
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(0)) // tag
 	buf.WriteByte(0x00)                                   // body byte
 
 	_, _, err := p9u.Decode(&buf)

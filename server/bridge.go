@@ -62,10 +62,7 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 			fs.mu.Unlock()
 			return &proto.Rread{Data: nil}
 		}
-		end := offset + uint64(m.Count)
-		if end > uint64(len(fs.xattrData)) {
-			end = uint64(len(fs.xattrData))
-		}
+		end := min(offset+uint64(m.Count), uint64(len(fs.xattrData)))
 		data := make([]byte, end-offset)
 		copy(data, fs.xattrData[offset:end])
 		fs.mu.Unlock()
@@ -284,10 +281,7 @@ func (c *conn) readdirSimple(ctx context.Context, fs *fidState, m *p9l.Treaddir,
 
 	// Find starting entry. Offset N means "entries after the one with cookie N",
 	// so start from index N (since cookie = index+1).
-	start := int(m.Offset)
-	if start > len(fs.dirCache) {
-		start = len(fs.dirCache)
-	}
+	start := min(int(m.Offset), len(fs.dirCache))
 
 	remaining := fs.dirCache[start:]
 	// Copy dirents under lock to avoid races on the cached slice.

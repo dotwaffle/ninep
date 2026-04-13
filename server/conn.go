@@ -26,8 +26,8 @@ type protocol uint8
 
 const (
 	protocolNone protocol = iota
-	protocolL    // 9P2000.L
-	protocolU    // 9P2000.u
+	protocolL             // 9P2000.L
+	protocolU             // 9P2000.u
 )
 
 // String returns the version string for the protocol.
@@ -144,7 +144,7 @@ func newConn(s *Server, nc net.Conn) *conn {
 func (c *conn) serve(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	defer c.nc.Close()
+	defer func() { _ = c.nc.Close() }()
 
 	if err := c.negotiateVersion(ctx); err != nil {
 		c.logger.Debug("version negotiation failed", slog.Any("error", err))
@@ -165,7 +165,7 @@ func (c *conn) serve(ctx context.Context) {
 	// Close the net.Conn when context is cancelled to unblock reads (GO-CC-2).
 	go func() {
 		<-ctx.Done()
-		c.nc.Close()
+		_ = c.nc.Close()
 	}()
 
 	// Start writer goroutine. writeLoop exits when c.responses is closed
@@ -228,10 +228,7 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 	}
 
 	// Negotiate msize: min(client, server).
-	negotiated := tver.Msize
-	if negotiated > c.server.maxMsize {
-		negotiated = c.server.maxMsize
-	}
+	negotiated := min(tver.Msize, c.server.maxMsize)
 	if negotiated < minMsize {
 		return ErrMsizeTooSmall
 	}
@@ -469,10 +466,7 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 		return
 	}
 
-	negotiated := tver.Msize
-	if negotiated > c.server.maxMsize {
-		negotiated = c.server.maxMsize
-	}
+	negotiated := min(tver.Msize, c.server.maxMsize)
 	if negotiated < minMsize {
 		c.logger.Warn("re-negotiation msize too small", slog.Uint64("msize", uint64(negotiated)))
 		return

@@ -21,8 +21,8 @@ func otelConnPair(t *testing.T) (client, server net.Conn) {
 	t.Helper()
 	client, server = net.Pipe()
 	t.Cleanup(func() {
-		client.Close()
-		server.Close()
+		_ = client.Close()
+		_ = server.Close()
 	})
 	return client, server
 }
@@ -36,11 +36,11 @@ func setupOTelTest(t *testing.T) (client net.Conn, spanExporter *tracetest.InMem
 
 	spanExporter = tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(spanExporter))
-	t.Cleanup(func() { tp.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 
 	metricReader = sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(metricReader))
-	t.Cleanup(func() { mp.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
@@ -115,7 +115,7 @@ func TestOTelMiddlewareSpanCreation(t *testing.T) {
 	}
 
 	// Close client so server finishes and flushes spans.
-	client.Close()
+	_ = client.Close()
 	time.Sleep(100 * time.Millisecond)
 
 	spans := spanExporter.GetSpans()
@@ -153,7 +153,7 @@ func TestOTelMiddlewareSpanAttributes(t *testing.T) {
 	})
 	_, _ = readResponse(t, client)
 
-	client.Close()
+	_ = client.Close()
 	time.Sleep(100 * time.Millisecond)
 
 	spans := spanExporter.GetSpans()
@@ -211,7 +211,7 @@ func TestOTelMiddlewareFidAndPathAttributes(t *testing.T) {
 	sendMessage(t, client, 2, &proto.Tclunk{Fid: 42})
 	_, _ = readResponse(t, client)
 
-	client.Close()
+	_ = client.Close()
 	time.Sleep(100 * time.Millisecond)
 
 	spans := spanExporter.GetSpans()
@@ -274,7 +274,7 @@ func TestOTelMiddlewareErrorSpanStatus(t *testing.T) {
 		t.Fatalf("expected Rlerror, got %T", msg)
 	}
 
-	client.Close()
+	_ = client.Close()
 	time.Sleep(100 * time.Millisecond)
 
 	spans := spanExporter.GetSpans()
@@ -316,7 +316,7 @@ func TestOTelMiddlewareNonErrorSpanStatus(t *testing.T) {
 		t.Fatalf("expected Rattach, got %T", msg)
 	}
 
-	client.Close()
+	_ = client.Close()
 	time.Sleep(100 * time.Millisecond)
 
 	spans := spanExporter.GetSpans()
@@ -353,7 +353,7 @@ func TestOTelMiddlewareDurationMetric(t *testing.T) {
 	})
 	_, _ = readResponse(t, client)
 
-	client.Close()
+	_ = client.Close()
 	time.Sleep(100 * time.Millisecond)
 
 	rm := collectMetrics(t, metricReader)
@@ -394,7 +394,7 @@ func TestOTelMiddlewareActiveRequestsGauge(t *testing.T) {
 	sendMessage(t, client, 2, &proto.Tclunk{Fid: 0})
 	_, _ = readResponse(t, client)
 
-	client.Close()
+	_ = client.Close()
 	time.Sleep(100 * time.Millisecond)
 
 	rm := collectMetrics(t, metricReader)
@@ -422,11 +422,11 @@ func TestOTelMiddlewareConnectionGauge(t *testing.T) {
 
 	spanExporter := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(spanExporter))
-	t.Cleanup(func() { tp.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 
 	metricReader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(metricReader))
-	t.Cleanup(func() { mp.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
@@ -480,7 +480,7 @@ func TestOTelMiddlewareConnectionGauge(t *testing.T) {
 	}
 
 	// Close connection and verify gauge decrements.
-	clientConn.Close()
+	_ = clientConn.Close()
 	<-done
 
 	rm2 := collectMetrics(t, metricReader)
@@ -589,7 +589,7 @@ func TestOTelMiddlewareRequestResponseSize(t *testing.T) {
 	})
 	_, _ = readResponse(t, client)
 
-	client.Close()
+	_ = client.Close()
 	time.Sleep(100 * time.Millisecond)
 
 	rm := collectMetrics(t, metricReader)
@@ -609,10 +609,10 @@ func TestWithTracerAndWithMeterOptions(t *testing.T) {
 	t.Parallel()
 
 	tp := sdktrace.NewTracerProvider()
-	t.Cleanup(func() { tp.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 
 	mp := sdkmetric.NewMeterProvider()
-	t.Cleanup(func() { mp.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)

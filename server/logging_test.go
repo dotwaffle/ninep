@@ -66,7 +66,7 @@ func TestTraceHandlerHandleWithValidSpan(t *testing.T) {
 	// Use the OTel SDK test tracer to create real spans with valid IDs.
 	exporter := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	t.Cleanup(func() { tp.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 
 	ctx, span := tp.Tracer("test").Start(context.Background(), "test-op")
 	defer span.End()

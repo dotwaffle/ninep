@@ -27,10 +27,7 @@ func (f *bridgeFile) Read(_ context.Context, offset uint64, count uint32) ([]byt
 	if offset >= uint64(len(f.content)) {
 		return nil, nil
 	}
-	end := offset + uint64(count)
-	if end > uint64(len(f.content)) {
-		end = uint64(len(f.content))
-	}
+	end := min(offset+uint64(count), uint64(len(f.content)))
 	return f.content[offset:end], nil
 }
 
@@ -114,10 +111,7 @@ func (h *testHandle) Read(_ context.Context, offset uint64, count uint32) ([]byt
 	if offset >= uint64(len(h.content)) {
 		return nil, nil
 	}
-	end := offset + uint64(count)
-	if end > uint64(len(h.content)) {
-		end = uint64(len(h.content))
-	}
+	end := min(offset+uint64(count), uint64(len(h.content)))
 	return h.content[offset:end], nil
 }
 
@@ -141,10 +135,7 @@ func (f *readOnlyTestFile) Read(_ context.Context, offset uint64, count uint32) 
 	if offset >= uint64(len(f.content)) {
 		return nil, nil
 	}
-	end := offset + uint64(count)
-	if end > uint64(len(f.content)) {
-		end = uint64(len(f.content))
-	}
+	end := min(offset+uint64(count), uint64(len(f.content)))
 	return f.content[offset:end], nil
 }
 
@@ -355,24 +346,24 @@ func (w *testXattrWriter) Commit(_ context.Context) error {
 
 // Compile-time checks for Phase 4 test types.
 var (
-	_ NodeSymlinker    = (*symlinkDir)(nil)
-	_ NodeLinker       = (*symlinkDir)(nil)
-	_ NodeMknoder      = (*symlinkDir)(nil)
-	_ NodeUnlinker     = (*symlinkDir)(nil)
-	_ NodeRenamer      = (*symlinkDir)(nil)
-	_ NodeOpener       = (*symlinkDir)(nil)
-	_ NodeLookuper     = (*symlinkDir)(nil)
-	_ InodeEmbedder    = (*symlinkDir)(nil)
+	_ NodeSymlinker = (*symlinkDir)(nil)
+	_ NodeLinker    = (*symlinkDir)(nil)
+	_ NodeMknoder   = (*symlinkDir)(nil)
+	_ NodeUnlinker  = (*symlinkDir)(nil)
+	_ NodeRenamer   = (*symlinkDir)(nil)
+	_ NodeOpener    = (*symlinkDir)(nil)
+	_ NodeLookuper  = (*symlinkDir)(nil)
+	_ InodeEmbedder = (*symlinkDir)(nil)
 
-	_ NodeReadlinker   = (*symlinkNode)(nil)
-	_ InodeEmbedder    = (*symlinkNode)(nil)
+	_ NodeReadlinker = (*symlinkNode)(nil)
+	_ InodeEmbedder  = (*symlinkNode)(nil)
 
-	_ NodeStatFSer     = (*statfsNode)(nil)
-	_ InodeEmbedder    = (*statfsNode)(nil)
+	_ NodeStatFSer  = (*statfsNode)(nil)
+	_ InodeEmbedder = (*statfsNode)(nil)
 
-	_ NodeOpener       = (*lockableFile)(nil)
-	_ NodeLocker       = (*lockableFile)(nil)
-	_ InodeEmbedder    = (*lockableFile)(nil)
+	_ NodeOpener    = (*lockableFile)(nil)
+	_ NodeLocker    = (*lockableFile)(nil)
+	_ InodeEmbedder = (*lockableFile)(nil)
 
 	_ NodeOpener       = (*xattrFile)(nil)
 	_ NodeXattrGetter  = (*xattrFile)(nil)
@@ -381,11 +372,11 @@ var (
 	_ NodeXattrRemover = (*xattrFile)(nil)
 	_ InodeEmbedder    = (*xattrFile)(nil)
 
-	_ NodeOpener       = (*rawXattrFile)(nil)
-	_ RawXattrer       = (*rawXattrFile)(nil)
-	_ InodeEmbedder    = (*rawXattrFile)(nil)
+	_ NodeOpener    = (*rawXattrFile)(nil)
+	_ RawXattrer    = (*rawXattrFile)(nil)
+	_ InodeEmbedder = (*rawXattrFile)(nil)
 
-	_ XattrWriter      = (*testXattrWriter)(nil)
+	_ XattrWriter = (*testXattrWriter)(nil)
 )
 
 // --- Bridge test helpers ---

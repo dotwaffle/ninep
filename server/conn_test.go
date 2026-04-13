@@ -147,8 +147,8 @@ func TestVersionNegotiation(t *testing.T) {
 			srv := New(root, WithMaxMsize(tt.serverMsize))
 
 			client, server := net.Pipe()
-			defer client.Close()
-			defer server.Close()
+			defer func() { _ = client.Close() }()
+			defer func() { _ = server.Close() }()
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
@@ -165,13 +165,11 @@ func TestVersionNegotiation(t *testing.T) {
 				// Msize too small: server should close the connection without
 				// a valid Rversion. Read should fail.
 				buf := make([]byte, 128)
-				client.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-				n, err := client.Read(buf)
-				if err == nil && n > 0 {
-					// The server might close before or after sending.
-					// If it did send, it is acceptable as an implementation
-					// choice. Just verify connection closes.
-				}
+				_ = client.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+				_, _ = client.Read(buf)
+				// The server might close before or after sending.
+				// If it did send, it is acceptable as an implementation
+				// choice. Just verify connection closes.
 				cancel()
 				<-done
 				return
@@ -188,7 +186,7 @@ func TestVersionNegotiation(t *testing.T) {
 			if tt.wantClose {
 				// Connection should close after unknown version.
 				buf := make([]byte, 1)
-				client.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+				_ = client.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 				_, err := client.Read(buf)
 				if err == nil {
 					t.Error("expected connection to close after unknown version")
@@ -209,13 +207,13 @@ func TestProtocolAutoDetect(t *testing.T) {
 
 	// Connection 1: 9P2000.L
 	c1client, c1server := net.Pipe()
-	defer c1client.Close()
-	defer c1server.Close()
+	defer func() { _ = c1client.Close() }()
+	defer func() { _ = c1server.Close() }()
 
 	// Connection 2: 9P2000.u
 	c2client, c2server := net.Pipe()
-	defer c2client.Close()
-	defer c2server.Close()
+	defer func() { _ = c2client.Close() }()
+	defer func() { _ = c2server.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -290,8 +288,8 @@ func TestServeConn(t *testing.T) {
 	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
 	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	defer func() { _ = client.Close() }()
+	defer func() { _ = server.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -339,7 +337,7 @@ func TestServeConn(t *testing.T) {
 	}
 
 	// Close client side first to let the server drain cleanly, then cancel.
-	client.Close()
+	_ = client.Close()
 	<-done
 	cancel()
 }
@@ -354,7 +352,7 @@ func TestServeListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -369,7 +367,7 @@ func TestServeListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	sendTversion(t, conn, 8192, "9P2000.L")
 	rv := readRversion(t, conn)
@@ -380,9 +378,9 @@ func TestServeListener(t *testing.T) {
 		t.Errorf("msize = %d, want 8192", rv.Msize)
 	}
 
-	conn.Close()
+	_ = conn.Close()
 	cancel()
-	ln.Close()
+	_ = ln.Close()
 
 	// Serve should return context.Canceled or accept error.
 	serveErr := <-errCh
@@ -402,8 +400,8 @@ func TestIdleTimeout(t *testing.T) {
 	)
 
 	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	defer func() { _ = client.Close() }()
+	defer func() { _ = server.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -421,7 +419,7 @@ func TestIdleTimeout(t *testing.T) {
 	// Do NOT send any more messages. The idle timeout should close the
 	// connection.
 	buf := make([]byte, 1)
-	client.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	_ = client.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 	_, err := client.Read(buf)
 	if err == nil {
 		t.Error("expected connection to close due to idle timeout")
@@ -441,8 +439,8 @@ func TestIdleTimeout_ResetOnActivity(t *testing.T) {
 	)
 
 	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	defer func() { _ = client.Close() }()
+	defer func() { _ = server.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -476,7 +474,7 @@ func TestIdleTimeout_ResetOnActivity(t *testing.T) {
 
 	// Now stop sending. The connection should close after the idle period.
 	buf := make([]byte, 1)
-	client.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	_ = client.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 	_, err := client.Read(buf)
 	if err == nil {
 		t.Error("expected connection to close after idle period")

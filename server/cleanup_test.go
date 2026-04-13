@@ -61,7 +61,7 @@ func TestDisconnectCleanup_ClunksAllFids(t *testing.T) {
 	root.Init(rootQID, root)
 
 	client, server := net.Pipe()
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 
 	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
@@ -101,7 +101,7 @@ func TestDisconnectCleanup_ClunksAllFids(t *testing.T) {
 	}
 
 	// Close client side to trigger disconnect.
-	client.Close()
+	_ = client.Close()
 
 	// Wait for serve to exit.
 	select {
@@ -142,7 +142,7 @@ func TestDisconnectCleanup_CancelsInflight(t *testing.T) {
 	}
 
 	// Close client side. This should cancel the inflight request's context.
-	cp.client.Close()
+	_ = cp.client.Close()
 
 	// Wait for serve to exit.
 	select {
@@ -159,7 +159,7 @@ func TestDisconnectCleanup_DrainDeadline(t *testing.T) {
 	root := newStuckNode(rootQID)
 
 	client, server := net.Pipe()
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 
 	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
@@ -199,7 +199,7 @@ func TestDisconnectCleanup_DrainDeadline(t *testing.T) {
 	}
 
 	// Close client side.
-	client.Close()
+	_ = client.Close()
 
 	// Cleanup should complete within cleanupDeadline + margin.
 	// The stuck handler ignores context cancellation, so cleanup uses the deadline.
@@ -247,13 +247,13 @@ func TestServerSurvivesDisconnect(t *testing.T) {
 		Uname: "user1",
 	})
 	readResponse(t, c1client)
-	c1client.Close()
+	_ = c1client.Close()
 	<-done1
 
 	// Connection 2: should work fine after connection 1 disconnected.
 	c2client, c2server := net.Pipe()
-	defer c2client.Close()
-	defer c2server.Close()
+	defer func() { _ = c2client.Close() }()
+	defer func() { _ = c2server.Close() }()
 	done2 := make(chan struct{})
 	go func() {
 		defer close(done2)
@@ -279,7 +279,7 @@ func TestServerSurvivesDisconnect(t *testing.T) {
 		t.Fatalf("expected Rattach on conn2, got %T", msg)
 	}
 
-	c2client.Close()
+	_ = c2client.Close()
 	<-done2
 }
 
@@ -325,9 +325,9 @@ func TestRapidConnectDisconnect(t *testing.T) {
 			})
 			readResponse(t, client)
 
-			client.Close()
+			_ = client.Close()
 			<-done
-			server.Close()
+			_ = server.Close()
 		}(i)
 	}
 
