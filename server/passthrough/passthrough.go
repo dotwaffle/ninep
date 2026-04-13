@@ -16,10 +16,15 @@ import (
 // syscalls. For directories, the fd is opened with O_RDONLY|O_DIRECTORY. For
 // other files, the fd is opened with O_PATH (reopened via /proc/self/fd/N
 // for actual I/O).
+//
+// parentFd and name are stored for symlink nodes so Readlink can use
+// Readlinkat(parentFd, name) to read the symlink target.
 type Node struct {
 	server.Inode
-	fd   int
-	root *Root
+	fd       int
+	root     *Root
+	parentFd int    // parent directory fd, for readlinkat
+	name     string // entry name in parent, for readlinkat
 }
 
 // Root is the top-level node of a passthrough filesystem. It wraps a Node
