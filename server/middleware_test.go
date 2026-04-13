@@ -31,7 +31,7 @@ func TestMiddlewareChainIdentity(t *testing.T) {
 	}
 
 	h := chain(inner, nil)
-	resp := h(context.Background(), 0, &proto.Tversion{})
+	resp := h(t.Context(), 0, &proto.Tversion{})
 	rv, ok := resp.(*proto.Rversion)
 	if !ok {
 		t.Fatalf("expected *proto.Rversion, got %T", resp)
@@ -53,7 +53,7 @@ func TestMiddlewareChainSingle(t *testing.T) {
 
 	mw := orderMiddleware("A", &order)
 	h := chain(inner, []Middleware{mw})
-	resp := h(context.Background(), 0, &proto.Tversion{})
+	resp := h(t.Context(), 0, &proto.Tversion{})
 
 	want := []string{"A-before", "inner", "A-after"}
 	if len(order) != len(want) {
@@ -86,7 +86,7 @@ func TestMiddlewareChainOrdering(t *testing.T) {
 	mwB := orderMiddleware("B", &order)
 
 	h := chain(inner, []Middleware{mwA, mwB})
-	h(context.Background(), 0, &proto.Tversion{})
+	h(t.Context(), 0, &proto.Tversion{})
 
 	// A is outermost (first added), B is inner.
 	// Execution: A-before -> B-before -> inner -> B-after -> A-after
@@ -118,7 +118,7 @@ func TestMiddlewareChainShortCircuit(t *testing.T) {
 	}
 
 	h := chain(inner, []Middleware{shortCircuit})
-	resp := h(context.Background(), 0, &proto.Tversion{})
+	resp := h(t.Context(), 0, &proto.Tversion{})
 
 	if innerCalled {
 		t.Fatal("inner should not have been called")
@@ -155,7 +155,7 @@ func TestMiddlewareChainPanicRecovery(t *testing.T) {
 		}
 	}()
 
-	h(context.Background(), 0, &proto.Tversion{})
+	h(t.Context(), 0, &proto.Tversion{})
 }
 
 func TestIsErrorResponse(t *testing.T) {

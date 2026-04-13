@@ -70,7 +70,7 @@ func newConnPair(t *testing.T, root Node, opts ...Option) *connPair {
 
 	client, server := net.Pipe()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(func() {
 		cancel()
 		_ = client.Close()

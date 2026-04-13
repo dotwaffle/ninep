@@ -19,7 +19,7 @@ func TestInflightMap_StartFinish(t *testing.T) {
 	t.Parallel()
 
 	im := newInflightMap()
-	_, cancel := context.WithCancel(context.Background())
+	_, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	im.start(1, cancel)
@@ -37,7 +37,7 @@ func TestInflightMap_FlushCancelsContext(t *testing.T) {
 	t.Parallel()
 
 	im := newInflightMap()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	im.start(1, cancel)
@@ -79,7 +79,7 @@ func TestInflightMap_CancelAll(t *testing.T) {
 
 	ctxs := make([]context.Context, 3)
 	for i := range 3 {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		ctxs[i] = ctx
 		im.start(proto.Tag(i), cancel)
 	}
@@ -109,7 +109,7 @@ func TestInflightMap_Wait(t *testing.T) {
 	t.Parallel()
 
 	im := newInflightMap()
-	_, cancel := context.WithCancel(context.Background())
+	_, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	im.start(1, cancel)
@@ -142,12 +142,12 @@ func TestInflightMap_WaitWithDeadline(t *testing.T) {
 	t.Parallel()
 
 	im := newInflightMap()
-	_, cancel := context.WithCancel(context.Background())
+	_, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	im.start(1, cancel)
 
-	deadlineCtx, deadlineCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	deadlineCtx, deadlineCancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer deadlineCancel()
 
 	err := im.waitWithDeadline(deadlineCtx)

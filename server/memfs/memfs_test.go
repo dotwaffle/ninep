@@ -1,7 +1,6 @@
 package memfs
 
 import (
-	"context"
 	"sync"
 	"testing"
 
@@ -39,7 +38,7 @@ func TestMemFileRead(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := f.Read(context.Background(), tt.offset, tt.count)
+			got, err := f.Read(t.Context(), tt.offset, tt.count)
 			if err != nil {
 				t.Fatalf("Read(%d, %d) error: %v", tt.offset, tt.count, err)
 			}
@@ -59,7 +58,7 @@ func TestMemFileWrite(t *testing.T) {
 		f := &MemFile{Data: []byte("hello")}
 		f.Init(gen.Next(proto.QTFILE), f)
 
-		n, err := f.Write(context.Background(), []byte("world"), 0)
+		n, err := f.Write(t.Context(), []byte("world"), 0)
 		if err != nil {
 			t.Fatalf("Write error: %v", err)
 		}
@@ -76,7 +75,7 @@ func TestMemFileWrite(t *testing.T) {
 		f := &MemFile{Data: []byte("hi")}
 		f.Init(gen.Next(proto.QTFILE), f)
 
-		n, err := f.Write(context.Background(), []byte("hello"), 0)
+		n, err := f.Write(t.Context(), []byte("hello"), 0)
 		if err != nil {
 			t.Fatalf("Write error: %v", err)
 		}
@@ -93,7 +92,7 @@ func TestMemFileWrite(t *testing.T) {
 		f := &MemFile{Data: []byte("hello")}
 		f.Init(gen.Next(proto.QTFILE), f)
 
-		n, err := f.Write(context.Background(), []byte(" world"), 5)
+		n, err := f.Write(t.Context(), []byte(" world"), 5)
 		if err != nil {
 			t.Fatalf("Write error: %v", err)
 		}
@@ -110,7 +109,7 @@ func TestMemFileWrite(t *testing.T) {
 		f := &MemFile{Data: []byte("hi")}
 		f.Init(gen.Next(proto.QTFILE), f)
 
-		n, err := f.Write(context.Background(), []byte("!"), 5)
+		n, err := f.Write(t.Context(), []byte("!"), 5)
 		if err != nil {
 			t.Fatalf("Write error: %v", err)
 		}
@@ -135,7 +134,7 @@ func TestMemFileGetattr(t *testing.T) {
 		f := &MemFile{Data: []byte("test")}
 		f.Init(gen.Next(proto.QTFILE), f)
 
-		attr, err := f.Getattr(context.Background(), proto.AttrAll)
+		attr, err := f.Getattr(t.Context(), proto.AttrAll)
 		if err != nil {
 			t.Fatalf("Getattr error: %v", err)
 		}
@@ -155,7 +154,7 @@ func TestMemFileGetattr(t *testing.T) {
 		f := &MemFile{Data: []byte("test"), Mode: 0o600}
 		f.Init(gen.Next(proto.QTFILE), f)
 
-		attr, err := f.Getattr(context.Background(), proto.AttrAll)
+		attr, err := f.Getattr(t.Context(), proto.AttrAll)
 		if err != nil {
 			t.Fatalf("Getattr error: %v", err)
 		}
@@ -171,7 +170,7 @@ func TestMemFileOpen(t *testing.T) {
 	f := &MemFile{}
 	f.Init(gen.Next(proto.QTFILE), f)
 
-	fh, flags, err := f.Open(context.Background(), 0)
+	fh, flags, err := f.Open(t.Context(), 0)
 	if err != nil {
 		t.Fatalf("Open error: %v", err)
 	}
@@ -194,7 +193,7 @@ func TestMemFileConcurrent(t *testing.T) {
 		wg.Add(2)
 		go func(i int) {
 			defer wg.Done()
-			_, _ = f.Read(context.Background(), uint64(i*10), 10)
+			_, _ = f.Read(t.Context(), uint64(i*10), 10)
 		}(i)
 		go func(i int) {
 			defer wg.Done()
@@ -202,7 +201,7 @@ func TestMemFileConcurrent(t *testing.T) {
 			for j := range data {
 				data[j] = byte(i)
 			}
-			_, _ = f.Write(context.Background(), data, uint64(i*10))
+			_, _ = f.Write(t.Context(), data, uint64(i*10))
 		}(i)
 	}
 	wg.Wait()
@@ -225,7 +224,7 @@ func TestMemDirReaddir(t *testing.T) {
 	f2.Init(gen.Next(proto.QTFILE), f2)
 	dir.AddChild("file2", f2.EmbeddedInode())
 
-	entries, err := dir.Readdir(context.Background())
+	entries, err := dir.Readdir(t.Context())
 	if err != nil {
 		t.Fatalf("Readdir error: %v", err)
 	}
@@ -251,7 +250,7 @@ func TestMemDirOpen(t *testing.T) {
 	dir := &MemDir{gen: gen}
 	dir.Init(gen.Next(proto.QTDIR), dir)
 
-	fh, flags, err := dir.Open(context.Background(), 0)
+	fh, flags, err := dir.Open(t.Context(), 0)
 	if err != nil {
 		t.Fatalf("Open error: %v", err)
 	}
@@ -274,7 +273,7 @@ func TestMemDirGetattr(t *testing.T) {
 	f.Init(gen.Next(proto.QTFILE), f)
 	dir.AddChild("file", f.EmbeddedInode())
 
-	attr, err := dir.Getattr(context.Background(), proto.AttrAll)
+	attr, err := dir.Getattr(t.Context(), proto.AttrAll)
 	if err != nil {
 		t.Fatalf("Getattr error: %v", err)
 	}
@@ -295,7 +294,7 @@ func TestMemDirCreate(t *testing.T) {
 	dir := &MemDir{gen: gen}
 	dir.Init(gen.Next(proto.QTDIR), dir)
 
-	node, fh, flags, err := dir.Create(context.Background(), "newfile", 0, 0o644, 0)
+	node, fh, flags, err := dir.Create(t.Context(), "newfile", 0, 0o644, 0)
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
 	}
@@ -310,7 +309,7 @@ func TestMemDirCreate(t *testing.T) {
 	}
 
 	// Verify child is in tree.
-	child, err := dir.Lookup(context.Background(), "newfile")
+	child, err := dir.Lookup(t.Context(), "newfile")
 	if err != nil {
 		t.Fatalf("Lookup after Create: %v", err)
 	}
@@ -325,7 +324,7 @@ func TestMemDirMkdir(t *testing.T) {
 	dir := &MemDir{gen: gen}
 	dir.Init(gen.Next(proto.QTDIR), dir)
 
-	node, err := dir.Mkdir(context.Background(), "subdir", 0o755, 0)
+	node, err := dir.Mkdir(t.Context(), "subdir", 0o755, 0)
 	if err != nil {
 		t.Fatalf("Mkdir error: %v", err)
 	}
@@ -334,7 +333,7 @@ func TestMemDirMkdir(t *testing.T) {
 	}
 
 	// Verify child is in tree.
-	child, err := dir.Lookup(context.Background(), "subdir")
+	child, err := dir.Lookup(t.Context(), "subdir")
 	if err != nil {
 		t.Fatalf("Lookup after Mkdir: %v", err)
 	}
@@ -379,7 +378,7 @@ func TestStaticFileRead(t *testing.T) {
 			f := &StaticFile{Content: tt.content}
 			f.Init(gen.Next(proto.QTFILE), f)
 
-			got, err := f.Read(context.Background(), tt.offset, tt.count)
+			got, err := f.Read(t.Context(), tt.offset, tt.count)
 			if err != nil {
 				t.Fatalf("Read error: %v", err)
 			}
@@ -399,7 +398,7 @@ func TestStaticFileGetattr(t *testing.T) {
 		f := &StaticFile{Content: "test data"}
 		f.Init(gen.Next(proto.QTFILE), f)
 
-		attr, err := f.Getattr(context.Background(), proto.AttrAll)
+		attr, err := f.Getattr(t.Context(), proto.AttrAll)
 		if err != nil {
 			t.Fatalf("Getattr error: %v", err)
 		}
@@ -419,7 +418,7 @@ func TestStaticFileGetattr(t *testing.T) {
 		f := &StaticFile{Content: "x", Mode: 0o400}
 		f.Init(gen.Next(proto.QTFILE), f)
 
-		attr, err := f.Getattr(context.Background(), proto.AttrAll)
+		attr, err := f.Getattr(t.Context(), proto.AttrAll)
 		if err != nil {
 			t.Fatalf("Getattr error: %v", err)
 		}
@@ -435,7 +434,7 @@ func TestStaticFileOpen(t *testing.T) {
 	f := &StaticFile{Content: "data"}
 	f.Init(gen.Next(proto.QTFILE), f)
 
-	fh, flags, err := f.Open(context.Background(), 0)
+	fh, flags, err := f.Open(t.Context(), 0)
 	if err != nil {
 		t.Fatalf("Open error: %v", err)
 	}
@@ -454,7 +453,7 @@ func TestStaticFileWriteReturnsENOSYS(t *testing.T) {
 	f.Init(gen.Next(proto.QTFILE), f)
 
 	// StaticFile does not implement NodeWriter, so Write comes from Inode.
-	_, err := f.Write(context.Background(), []byte("x"), 0)
+	_, err := f.Write(t.Context(), []byte("x"), 0)
 	if err != proto.ENOSYS {
 		t.Errorf("Write err = %v, want ENOSYS", err)
 	}
@@ -488,7 +487,7 @@ func TestBuilderAddFile(t *testing.T) {
 	}
 
 	// Child exists and is readable.
-	child, err := root.Lookup(context.Background(), "hello.txt")
+	child, err := root.Lookup(t.Context(), "hello.txt")
 	if err != nil {
 		t.Fatalf("Lookup error: %v", err)
 	}
@@ -496,7 +495,7 @@ func TestBuilderAddFile(t *testing.T) {
 	if !ok {
 		t.Fatal("child does not implement NodeReader")
 	}
-	data, err := r.Read(context.Background(), 0, 100)
+	data, err := r.Read(t.Context(), 0, 100)
 	if err != nil {
 		t.Fatalf("Read error: %v", err)
 	}
@@ -515,7 +514,7 @@ func TestBuilderAddStaticFile(t *testing.T) {
 		t.Error("AddStaticFile did not return parent dir")
 	}
 
-	child, err := root.Lookup(context.Background(), "readme.txt")
+	child, err := root.Lookup(t.Context(), "readme.txt")
 	if err != nil {
 		t.Fatalf("Lookup error: %v", err)
 	}
@@ -523,7 +522,7 @@ func TestBuilderAddStaticFile(t *testing.T) {
 	if !ok {
 		t.Fatal("child does not implement NodeReader")
 	}
-	data, err := r.Read(context.Background(), 0, 100)
+	data, err := r.Read(t.Context(), 0, 100)
 	if err != nil {
 		t.Fatalf("Read error: %v", err)
 	}
@@ -543,7 +542,7 @@ func TestBuilderAddDir(t *testing.T) {
 		t.Error("AddDir did not return parent dir")
 	}
 
-	child, err := root.Lookup(context.Background(), "subdir")
+	child, err := root.Lookup(t.Context(), "subdir")
 	if err != nil {
 		t.Fatalf("Lookup error: %v", err)
 	}
@@ -570,7 +569,7 @@ func TestBuilderSubDir(t *testing.T) {
 	sub.AddFile("nested.txt", []byte("nested"))
 
 	// Verify nested file is walkable.
-	child, err := root.Lookup(context.Background(), "sub")
+	child, err := root.Lookup(t.Context(), "sub")
 	if err != nil {
 		t.Fatalf("Lookup sub: %v", err)
 	}
@@ -578,7 +577,7 @@ func TestBuilderSubDir(t *testing.T) {
 	if !ok {
 		t.Fatal("sub dir does not implement NodeLookuper")
 	}
-	nested, err := l.Lookup(context.Background(), "nested.txt")
+	nested, err := l.Lookup(t.Context(), "nested.txt")
 	if err != nil {
 		t.Fatalf("Lookup nested.txt: %v", err)
 	}
@@ -586,7 +585,7 @@ func TestBuilderSubDir(t *testing.T) {
 	if !ok {
 		t.Fatal("nested file does not implement NodeReader")
 	}
-	data, err := r.Read(context.Background(), 0, 100)
+	data, err := r.Read(t.Context(), 0, 100)
 	if err != nil {
 		t.Fatalf("Read error: %v", err)
 	}
@@ -622,7 +621,7 @@ func TestBuilderWithDir(t *testing.T) {
 	}
 
 	// Verify nested construction.
-	child, err := root.Lookup(context.Background(), "sub")
+	child, err := root.Lookup(t.Context(), "sub")
 	if err != nil {
 		t.Fatalf("Lookup sub: %v", err)
 	}
@@ -630,7 +629,7 @@ func TestBuilderWithDir(t *testing.T) {
 	if !ok {
 		t.Fatal("sub does not implement NodeLookuper")
 	}
-	inner, err := l.Lookup(context.Background(), "inner.txt")
+	inner, err := l.Lookup(t.Context(), "inner.txt")
 	if err != nil {
 		t.Fatalf("Lookup inner.txt: %v", err)
 	}
@@ -638,7 +637,7 @@ func TestBuilderWithDir(t *testing.T) {
 	if !ok {
 		t.Fatal("inner does not implement NodeReader")
 	}
-	data, err := r.Read(context.Background(), 0, 100)
+	data, err := r.Read(t.Context(), 0, 100)
 	if err != nil {
 		t.Fatalf("Read error: %v", err)
 	}
@@ -658,7 +657,7 @@ func TestBuilderChaining(t *testing.T) {
 
 	// Verify all children exist.
 	for _, name := range []string{"a.txt", "b.txt", "c.txt", "sub"} {
-		_, err := root.Lookup(context.Background(), name)
+		_, err := root.Lookup(t.Context(), name)
 		if err != nil {
 			t.Errorf("Lookup %q: %v", name, err)
 		}
@@ -674,11 +673,11 @@ func TestBuilderFreshNodes(t *testing.T) {
 		AddFile("file2", data)
 
 	// Each AddFile creates a distinct node (Pitfall 8).
-	child1, err := root.Lookup(context.Background(), "file1")
+	child1, err := root.Lookup(t.Context(), "file1")
 	if err != nil {
 		t.Fatalf("Lookup file1: %v", err)
 	}
-	child2, err := root.Lookup(context.Background(), "file2")
+	child2, err := root.Lookup(t.Context(), "file2")
 	if err != nil {
 		t.Fatalf("Lookup file2: %v", err)
 	}
@@ -700,7 +699,7 @@ func TestBuilderAddSymlink(t *testing.T) {
 	root := NewDir(gen).
 		AddSymlink("link", "/target/path")
 
-	child, err := root.Lookup(context.Background(), "link")
+	child, err := root.Lookup(t.Context(), "link")
 	if err != nil {
 		t.Fatalf("Lookup link: %v", err)
 	}
@@ -708,7 +707,7 @@ func TestBuilderAddSymlink(t *testing.T) {
 	if !ok {
 		t.Fatal("symlink does not implement NodeReadlinker")
 	}
-	target, err := rl.Readlink(context.Background())
+	target, err := rl.Readlink(t.Context())
 	if err != nil {
 		t.Fatalf("Readlink error: %v", err)
 	}
@@ -723,7 +722,7 @@ func TestBuilderAddFileWithMode(t *testing.T) {
 	root := NewDir(gen).
 		AddFileWithMode("exec.sh", []byte("#!/bin/sh"), 0o755)
 
-	child, err := root.Lookup(context.Background(), "exec.sh")
+	child, err := root.Lookup(t.Context(), "exec.sh")
 	if err != nil {
 		t.Fatalf("Lookup error: %v", err)
 	}
@@ -731,7 +730,7 @@ func TestBuilderAddFileWithMode(t *testing.T) {
 	if !ok {
 		t.Fatal("child does not implement NodeGetattrer")
 	}
-	attr, err := g.Getattr(context.Background(), proto.AttrAll)
+	attr, err := g.Getattr(t.Context(), proto.AttrAll)
 	if err != nil {
 		t.Fatalf("Getattr error: %v", err)
 	}
@@ -753,7 +752,7 @@ func TestBuilderTreeWalkability(t *testing.T) {
 		})
 
 	// Walk root -> level1 -> level2 -> bottom.txt.
-	ctx := context.Background()
+	ctx := t.Context()
 
 	l1, err := root.Lookup(ctx, "level1")
 	if err != nil {

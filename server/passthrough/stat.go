@@ -59,8 +59,7 @@ func toProtoErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	var errno syscall.Errno
-	if errors.As(err, &errno) {
+	if errno, ok := errors.AsType[syscall.Errno](err); ok {
 		return proto.Errno(errno)
 	}
 	return proto.EIO

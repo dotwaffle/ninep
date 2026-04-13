@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -20,7 +19,7 @@ func TestInodeEmbeddedInode(t *testing.T) {
 func TestInodeENOSYSDefaults(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	i := &Inode{}
 
 	tests := []struct {
@@ -240,7 +239,7 @@ func TestInodeCloseNoOp(t *testing.T) {
 	t.Parallel()
 
 	i := &Inode{}
-	if err := i.Close(context.Background()); err != nil {
+	if err := i.Close(t.Context()); err != nil {
 		t.Errorf("Close() = %v, want nil", err)
 	}
 }
@@ -249,7 +248,7 @@ func TestInodeLookupNoChildren(t *testing.T) {
 	t.Parallel()
 
 	i := &Inode{}
-	node, err := i.Lookup(context.Background(), "missing")
+	node, err := i.Lookup(t.Context(), "missing")
 	if node != nil {
 		t.Error("Lookup: node not nil")
 	}
@@ -269,7 +268,7 @@ func TestInodeAddChildAndLookup(t *testing.T) {
 
 	parent.AddChild("readme.txt", &child.Inode)
 
-	node, err := parent.Lookup(context.Background(), "readme.txt")
+	node, err := parent.Lookup(t.Context(), "readme.txt")
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
@@ -342,7 +341,7 @@ func TestInodeRemoveChild(t *testing.T) {
 	parent.AddChild("file", child)
 	parent.RemoveChild("file")
 
-	_, err := parent.Lookup(context.Background(), "file")
+	_, err := parent.Lookup(t.Context(), "file")
 	if !errors.Is(err, proto.ENOENT) {
 		t.Errorf("Lookup after RemoveChild: error = %v, want ENOENT", err)
 	}
@@ -360,7 +359,7 @@ func TestComposableReadOnlyFile(t *testing.T) {
 	}
 
 	// Ensure the embedded Inode's Write returns ENOSYS.
-	_, err := rof.Write(context.Background(), nil, 0)
+	_, err := rof.Write(t.Context(), nil, 0)
 	if !errors.Is(err, proto.ENOSYS) {
 		t.Errorf("ReadOnlyFile.Write = %v, want ENOSYS", err)
 	}
@@ -378,11 +377,11 @@ func TestComposableReadOnlyDir(t *testing.T) {
 	}
 
 	// Write and Create return ENOSYS via Inode defaults.
-	_, err := rod.Write(context.Background(), nil, 0)
+	_, err := rod.Write(t.Context(), nil, 0)
 	if !errors.Is(err, proto.ENOSYS) {
 		t.Errorf("ReadOnlyDir.Write = %v, want ENOSYS", err)
 	}
-	_, _, _, err = rod.Create(context.Background(), "x", 0, 0, 0)
+	_, _, _, err = rod.Create(t.Context(), "x", 0, 0, 0)
 	if !errors.Is(err, proto.ENOSYS) {
 		t.Errorf("ReadOnlyDir.Create = %v, want ENOSYS", err)
 	}

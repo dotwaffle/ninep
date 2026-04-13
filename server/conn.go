@@ -646,8 +646,7 @@ func isExpectedCloseError(err error) bool {
 	if errors.Is(err, net.ErrClosed) {
 		return true
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
+	if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
 		return true
 	}
 	return false

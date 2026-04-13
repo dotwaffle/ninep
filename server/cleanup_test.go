@@ -65,7 +65,7 @@ func TestDisconnectCleanup_ClunksAllFids(t *testing.T) {
 
 	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	// Get access to the conn for inspection.
@@ -163,7 +163,7 @@ func TestDisconnectCleanup_DrainDeadline(t *testing.T) {
 
 	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -228,7 +228,7 @@ func TestServerSurvivesDisconnect(t *testing.T) {
 
 	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
 	// Connection 1: connect, negotiate, attach, disconnect.
@@ -291,7 +291,7 @@ func TestRapidConnectDisconnect(t *testing.T) {
 
 	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
 	// Warm up the runtime to stabilize goroutine count.

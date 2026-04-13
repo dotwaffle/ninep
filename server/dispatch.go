@@ -267,8 +267,7 @@ func releaseHandle(ctx context.Context, fs *fidState, logger *slog.Logger) {
 // is a proto.Errno, that value is returned. Otherwise EIO is used as the
 // default.
 func errnoFromError(err error) proto.Errno {
-	var errno proto.Errno
-	if errors.As(err, &errno) {
+	if errno, ok := errors.AsType[proto.Errno](err); ok {
 		return errno
 	}
 	return proto.EIO

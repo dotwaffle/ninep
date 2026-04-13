@@ -24,7 +24,7 @@ import (
 func mountV9FS(t *testing.T, root *Root) string {
 	t.Helper()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 
 	sockDir := t.TempDir()
 	sockPath := filepath.Join(sockDir, "9p.sock")
@@ -106,7 +106,7 @@ func TestKernelMountReadFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRoot: %v", err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { root.Close(t.Context()) })
 
 	mnt := mountV9FS(t, root)
 
@@ -128,7 +128,7 @@ func TestKernelMountWriteFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRoot: %v", err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { root.Close(t.Context()) })
 
 	mnt := mountV9FS(t, root)
 
@@ -166,7 +166,7 @@ func TestKernelMountReaddir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRoot: %v", err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { root.Close(t.Context()) })
 
 	mnt := mountV9FS(t, root)
 
@@ -206,7 +206,7 @@ func TestKernelMountStat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRoot: %v", err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { root.Close(t.Context()) })
 
 	mnt := mountV9FS(t, root)
 
@@ -231,7 +231,7 @@ func TestKernelMountCreateFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRoot: %v", err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { root.Close(t.Context()) })
 
 	mnt := mountV9FS(t, root)
 
@@ -261,7 +261,7 @@ func TestKernelMountSkipGracefully(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRoot: %v", err)
 	}
-	t.Cleanup(func() { root.Close(context.Background()) })
+	t.Cleanup(func() { root.Close(t.Context()) })
 
 	// Try to detect if we can mount at all. If mount fails, the mountV9FS
 	// helper will call t.Skip, which is exactly the graceful behavior we want.
@@ -277,8 +277,7 @@ func TestKernelMountSkipGracefully(t *testing.T) {
 	if err == nil {
 		t.Error("Stat(nonexistent) should fail")
 	}
-	var pathErr *os.PathError
-	if errors.As(err, &pathErr) {
+	if pathErr, ok := errors.AsType[*os.PathError](err); ok {
 		if !errors.Is(pathErr.Err, syscall.ENOENT) {
 			t.Errorf("Stat(nonexistent) errno = %v, want ENOENT", pathErr.Err)
 		}

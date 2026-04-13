@@ -36,11 +36,11 @@ func setupOTelTest(t *testing.T) (client net.Conn, spanExporter *tracetest.InMem
 
 	spanExporter = tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(spanExporter))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = tp.Shutdown(t.Context()) })
 
 	metricReader = sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(metricReader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = mp.Shutdown(t.Context()) })
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
@@ -54,7 +54,7 @@ func setupOTelTest(t *testing.T) (client net.Conn, spanExporter *tracetest.InMem
 
 	clientConn, serverConn := otelConnPair(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 
 	done := make(chan struct{})
@@ -74,7 +74,7 @@ func setupOTelTest(t *testing.T) (client net.Conn, spanExporter *tracetest.InMem
 func collectMetrics(t *testing.T, reader *sdkmetric.ManualReader) metricdata.ResourceMetrics {
 	t.Helper()
 	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
+	if err := reader.Collect(t.Context(), &rm); err != nil {
 		t.Fatalf("collect metrics: %v", err)
 	}
 	return rm
@@ -422,11 +422,11 @@ func TestOTelMiddlewareConnectionGauge(t *testing.T) {
 
 	spanExporter := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(spanExporter))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = tp.Shutdown(t.Context()) })
 
 	metricReader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(metricReader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = mp.Shutdown(t.Context()) })
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
@@ -439,7 +439,7 @@ func TestOTelMiddlewareConnectionGauge(t *testing.T) {
 	)
 
 	clientConn, serverConn := otelConnPair(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -609,10 +609,10 @@ func TestWithTracerAndWithMeterOptions(t *testing.T) {
 	t.Parallel()
 
 	tp := sdktrace.NewTracerProvider()
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = tp.Shutdown(t.Context()) })
 
 	mp := sdkmetric.NewMeterProvider()
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = mp.Shutdown(t.Context()) })
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)

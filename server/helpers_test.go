@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"testing"
 
 	"github.com/dotwaffle/ninep/proto"
@@ -32,7 +31,7 @@ func TestSymlinkTo(t *testing.T) {
 			}
 
 			// Verify Readlink returns the target.
-			got, err := s.Readlink(context.Background())
+			got, err := s.Readlink(t.Context())
 			if err != nil {
 				t.Fatalf("Readlink() error = %v", err)
 			}
@@ -129,7 +128,7 @@ func TestStaticStatFS(t *testing.T) {
 			}
 
 			// Verify StatFS returns the provided stat.
-			got, err := f.StatFS(context.Background())
+			got, err := f.StatFS(t.Context())
 			if err != nil {
 				t.Fatalf("StatFS() error = %v", err)
 			}

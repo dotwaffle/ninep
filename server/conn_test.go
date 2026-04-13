@@ -150,7 +150,7 @@ func TestVersionNegotiation(t *testing.T) {
 			defer func() { _ = client.Close() }()
 			defer func() { _ = server.Close() }()
 
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 			defer cancel()
 
 			done := make(chan struct{})
@@ -215,7 +215,7 @@ func TestProtocolAutoDetect(t *testing.T) {
 	defer func() { _ = c2client.Close() }()
 	defer func() { _ = c2server.Close() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 
 	done1 := make(chan struct{})
@@ -291,7 +291,7 @@ func TestServeConn(t *testing.T) {
 	defer func() { _ = client.Close() }()
 	defer func() { _ = server.Close() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -354,7 +354,7 @@ func TestServeListener(t *testing.T) {
 	}
 	defer func() { _ = ln.Close() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 
 	errCh := make(chan error, 1)
@@ -403,7 +403,7 @@ func TestIdleTimeout(t *testing.T) {
 	defer func() { _ = client.Close() }()
 	defer func() { _ = server.Close() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -442,7 +442,7 @@ func TestIdleTimeout_ResetOnActivity(t *testing.T) {
 	defer func() { _ = client.Close() }()
 	defer func() { _ = server.Close() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	done := make(chan struct{})

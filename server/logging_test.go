@@ -66,9 +66,9 @@ func TestTraceHandlerHandleWithValidSpan(t *testing.T) {
 	// Use the OTel SDK test tracer to create real spans with valid IDs.
 	exporter := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = tp.Shutdown(t.Context()) })
 
-	ctx, span := tp.Tracer("test").Start(context.Background(), "test-op")
+	ctx, span := tp.Tracer("test").Start(t.Context(), "test-op")
 	defer span.End()
 
 	sc := span.SpanContext()
@@ -112,7 +112,7 @@ func TestTraceHandlerHandleWithoutSpan(t *testing.T) {
 	th := NewTraceHandler(rec)
 
 	logger := slog.New(th)
-	logger.InfoContext(context.Background(), "no span")
+	logger.InfoContext(t.Context(), "no span")
 
 	if len(rec.records) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(rec.records))
@@ -137,7 +137,7 @@ func TestTraceHandlerHandleWithInvalidSpan(t *testing.T) {
 
 	// Use a context with an invalid (zero-value) span context.
 	logger := slog.New(th)
-	logger.InfoContext(context.Background(), "invalid span context")
+	logger.InfoContext(t.Context(), "invalid span context")
 
 	if len(rec.records) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(rec.records))
@@ -170,7 +170,7 @@ func TestTraceHandlerEnabled(t *testing.T) {
 			rec := &recordingHandler{enabled: tt.enabled}
 			th := NewTraceHandler(rec)
 
-			got := th.Enabled(context.Background(), slog.LevelInfo)
+			got := th.Enabled(t.Context(), slog.LevelInfo)
 			if got != tt.enabled {
 				t.Fatalf("Enabled: got %v, want %v", got, tt.enabled)
 			}
@@ -221,7 +221,7 @@ func TestNewLoggingMiddlewareSuccess(t *testing.T) {
 	}
 
 	handler := mw(inner)
-	handler(context.Background(), 1, &proto.Twalk{})
+	handler(t.Context(), 1, &proto.Twalk{})
 
 	if len(rec.records) != 1 {
 		t.Fatalf("expected 1 log record, got %d", len(rec.records))
@@ -277,7 +277,7 @@ func TestNewLoggingMiddlewareError(t *testing.T) {
 	}
 
 	handler := mw(inner)
-	handler(context.Background(), 1, &proto.Tread{})
+	handler(t.Context(), 1, &proto.Tread{})
 
 	if len(rec.records) != 1 {
 		t.Fatalf("expected 1 log record, got %d", len(rec.records))
@@ -309,7 +309,7 @@ func TestNewLoggingMiddlewareNotInfoLevel(t *testing.T) {
 	}
 
 	handler := mw(inner)
-	handler(context.Background(), 1, &proto.Twalk{})
+	handler(t.Context(), 1, &proto.Twalk{})
 
 	// Since handler is not enabled, LogAttrs should still be called but the
 	// recording handler won't capture it. We verify the middleware uses
