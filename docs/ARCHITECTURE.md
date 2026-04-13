@@ -8,40 +8,39 @@ ninep is a Go library implementing the 9P2000.L and 9P2000.u network filesystem 
 ## Component Diagram
 
 ```
-                      net.Listener
-                           │
-                     ┌─────▼─────┐
-                     │  Server    │  Accepts connections, holds config
-                     └─────┬─────┘
-                           │ goroutine-per-connection
-                     ┌─────▼─────┐
-                     │   conn     │  Version negotiation, read loop,
-                     │            │  write loop, fid table, inflight map
-                     └──┬──────┬─┘
-                        │      │
-          ┌─────────────▼─┐  ┌▼──────────────┐
-          │  readLoop      │  │  writeLoop     │
-          │  (decode +     │  │  (single       │
-          │   dispatch)    │  │   writer)      │
-          └───────┬────────┘  └───────▲───────┘
-                  │                   │
-                  │  goroutine-per-request
-          ┌───────▼────────┐          │
-          │ handleRequest  │──────────┘
-          │  (middleware →  │  sends taggedResponse
-          │   dispatch →   │  via channel
-          │   bridge)      │
-          └───────┬────────┘
-                  │
-          ┌───────▼────────┐
-          │  Node (user)   │  Capability interfaces
-          │  embed *Inode  │  (NodeReader, NodeWriter, ...)
-          └────────────────┘
+                net.Listener
+                     │
+               ┌─────▼─────┐
+               │  Server   │  Accepts connections, holds config
+               └─────┬─────┘
+                     │  goroutine-per-connection
+               ┌─────▼─────┐
+               │   conn    │  Version negotiation, read loop,
+               └──┬──────┬─┘  write loop, fid table, inflight map
+                  │      │
+     ┌────────────▼┐  ┌──▼────────────┐
+     │ readLoop    │  │ writeLoop     │
+     │ (decode,    │  │ (single       │
+     │  dispatch)  │  │  writer)      │
+     └──────┬──────┘  └───────▲───────┘
+            │                 │
+            │  goroutine-per-request
+     ┌──────▼──────┐          │
+     │handleRequest│──────────┘
+     │ middleware →│  sends taggedResponse
+     │ dispatch →  │  via channel
+     │ bridge      │
+     └──────┬──────┘
+            │
+     ┌──────▼──────┐
+     │ Node (user) │  Capability interfaces
+     │ embed Inode │  (NodeReader, NodeWriter, ...)
+     └─────────────┘
 
 Wire encoding:
-  proto/       ── shared types, Message interface, encode/decode helpers
-  proto/p9l/   ── 9P2000.L codec (Encode/Decode)
-  proto/p9u/   ── 9P2000.u codec (Encode/Decode)
+  proto/      shared types, Message interface, encode/decode helpers
+  proto/p9l/  9P2000.L codec (Encode/Decode)
+  proto/p9u/  9P2000.u codec (Encode/Decode)
 ```
 
 ## Package Responsibilities
