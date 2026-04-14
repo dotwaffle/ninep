@@ -352,8 +352,21 @@ func (c *conn) readLoop(ctx context.Context) {
 		}
 
 		// Read remaining bytes: type[1] + tag[2] + body.
-		buf := make([]byte, size-4) // TODO: use sync.Pool in optimization pass
-		if _, err := io.ReadFull(c.nc, buf); err != nil {
+		//
+		// SAFETY (RESEARCH Pattern 4, re-verified in Task 3): every
+		// DecodeFrom method in proto/, proto/p9l/, proto/p9u/ that reads
+		// []byte or string fields does so via make+copy (e.g. Rread.Data,
+		// Twrite.Data, Rreaddir.Data) or via ReadString (which now has
+		// its own pooled scratch + unavoidable string() copy). None of
+		// them alias the input buffer into message fields. This makes it
+		// safe to return buf to the pool AFTER DecodeFrom completes but
+		// BEFORE launching the handler goroutine -- msg is fully
+		// independent of buf at that point. -race CI catches regressions
+		// if a future DecodeFrom introduces aliasing.
+		bufPtr := bufpool.GetMsgBuf(int(size - 4))
+		b := (*bufPtr)[:size-4]
+		if _, err := io.ReadFull(c.nc, b); err != nil {
+			bufpool.PutMsgBuf(bufPtr)
 			if !isExpectedCloseError(err) {
 				c.logger.Debug("read body error", slog.Any("error", err))
 			}
@@ -361,12 +374,15 @@ func (c *conn) readLoop(ctx context.Context) {
 		}
 
 		// Parse header.
-		msgType := proto.MessageType(buf[0])
-		tag := proto.Tag(binary.LittleEndian.Uint16(buf[1:3]))
+		msgType := proto.MessageType(b[0])
+		tag := proto.Tag(binary.LittleEndian.Uint16(b[1:3]))
 
 		// Handle Tversion mid-connection (re-negotiation).
+		// handleReVersion uses body synchronously (DecodeFrom copies); after
+		// it returns, the pool buffer is safe to release.
 		if msgType == proto.TypeTversion {
-			c.handleReVersion(ctx, tag, buf[3:])
+			c.handleReVersion(ctx, tag, b[3:])
+			bufpool.PutMsgBuf(bufPtr)
 			continue
 		}
 
@@ -375,10 +391,13 @@ func (c *conn) readLoop(ctx context.Context) {
 		// cancel a pending request and free a slot (T-02-10).
 		if msgType == proto.TypeTflush {
 			var tf proto.Tflush
-			if err := tf.DecodeFrom(bytes.NewReader(buf[3:])); err != nil {
+			if err := tf.DecodeFrom(bytes.NewReader(b[3:])); err != nil {
+				bufpool.PutMsgBuf(bufPtr)
 				c.logger.Warn("decode tflush error", slog.Any("error", err))
 				return
 			}
+			// tf has no reference into b after DecodeFrom. Safe to Put.
+			bufpool.PutMsgBuf(bufPtr)
 			resp := c.handleFlush(ctx, &tf)
 			c.sendResponse(tag, resp)
 			continue
@@ -387,17 +406,23 @@ func (c *conn) readLoop(ctx context.Context) {
 		// Decode message body via protocol-specific message factory.
 		msg, err := c.newMessage(msgType)
 		if err != nil {
+			bufpool.PutMsgBuf(bufPtr)
 			// Unknown message type -> ENOSYS.
 			c.sendError(tag, proto.ENOSYS)
 			continue
 		}
-		if err := msg.DecodeFrom(bytes.NewReader(buf[3:])); err != nil {
+		if err := msg.DecodeFrom(bytes.NewReader(b[3:])); err != nil {
+			bufpool.PutMsgBuf(bufPtr)
 			c.logger.Warn("decode error",
 				slog.String("type", msgType.String()),
 				slog.Any("error", err),
 			)
 			return // Fatal decode error.
 		}
+		// DecodeFrom has copied buf contents into msg fields; msg is
+		// independent of b. Safe to return buf to the pool before launching
+		// the handler goroutine.
+		bufpool.PutMsgBuf(bufPtr)
 
 		// Acquire semaphore slot (blocks if MaxInflight reached).
 		select {

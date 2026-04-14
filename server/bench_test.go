@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/dotwaffle/ninep/internal/bufpool"
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
 
@@ -182,10 +183,9 @@ func BenchmarkRoundTripWithOTel(b *testing.B) {
 }
 
 // BenchmarkReadDecode isolates the readLoop allocation pattern from
-// server/conn.go:348 (`buf := make([]byte, size-4)`) that Phase 8 PERF-02 will
-// replace with a sync.Pool. It does not call the unexported readLoop; it
-// mirrors the same read-size -> allocate -> ReadFull -> decode sequence on
-// frames fed by a producer goroutine through a net.Pipe.
+// server/conn.go. Post-08-04 it mirrors the new bufpool.GetMsgBuf /
+// PutMsgBuf flow so the benchmark reflects production behaviour and
+// benchstat shows the allocation win delivered by PERF-02.
 //
 // The producer goroutine has no explicit stop channel. A net.Pipe Write blocks
 // until a matching Read occurs, so a select-based stop signal would not be
@@ -213,19 +213,24 @@ func BenchmarkReadDecode(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(len(frame)))
 	for b.Loop() {
-		// Mirror server/conn.go:328-354 readLoop pattern.
+		// Mirror the post-08-04 readLoop: pooled msg buf, ReadFull into the
+		// pooled slice, reconstruct a complete frame for p9l.Decode, then
+		// release the pooled slice (safe because DecodeFrom copies).
 		size, err := proto.ReadUint32(serverConn)
 		if err != nil {
 			b.Fatalf("read size: %v", err)
 		}
-		buf := make([]byte, size-4) // <-- Phase 8 PERF-02 target
+		bufPtr := bufpool.GetMsgBuf(int(size - 4))
+		buf := (*bufPtr)[:size-4]
 		if _, err := io.ReadFull(serverConn, buf); err != nil {
+			bufpool.PutMsgBuf(bufPtr)
 			b.Fatalf("read body: %v", err)
 		}
 		// Reconstruct a complete frame so p9l.Decode can parse the header.
 		full := make([]byte, 4+len(buf))
 		binary.LittleEndian.PutUint32(full[:4], size)
 		copy(full[4:], buf)
+		bufpool.PutMsgBuf(bufPtr)
 		if _, _, err := p9l.Decode(bytes.NewReader(full)); err != nil {
 			b.Fatalf("decode: %v", err)
 		}
