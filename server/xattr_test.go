@@ -430,3 +430,205 @@ func TestXattr_Raw_Set(t *testing.T) {
 	}
 }
 
+
+// --- Negative-path tests (Task 2). Cover Pitfall 6 (ENODATA vs ENOSYS),
+// msize clamp, ENOSPC overflow, and ENOSYS for mixed-capability nodes. ---
+
+// TestXattr_Missing_ENODATA verifies that when a node implements
+// NodeXattrGetter but the requested key is absent, the bridge surfaces the
+// node's proto.ENODATA sentinel as Rlerror{ENODATA} on the wire. Contrasts
+// with TestXattr_ENOSYS_NoCapability where the node does not implement the
+// interface at all (Pitfall 6).
+func TestXattr_Missing_ENODATA(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+	xf := &xattrFile{xattrs: map[string][]byte{}}
+	xf.Init(gen.Next(proto.QTFILE), xf)
+	root.AddChild("xfile", xf.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	cp.walk(t, 2, 0, 2, "xfile")
+
+	sendMessage(t, cp.client, 3, &p9l.Txattrwalk{Fid: 2, NewFid: 10, Name: "user.absent"})
+	_, msg := readResponse(t, cp.client)
+	isError(t, msg, proto.ENODATA)
+}
+
+// TestXattr_ENOSYS_NoCapability verifies that a node whose xattr behaviour is
+// provided only by the Inode ENOSYS-returning defaults (i.e. the type does not
+// override NodeXattr* itself) surfaces ENOSYS to the wire. The Inode stubs
+// satisfy the type assertions at bridge.go:810/781/869/873, so ENOSYS
+// originates from the default method bodies (inode.go:223-240) and is
+// forwarded via errnoFromError. For Txattrwalk this surfaces on the request
+// itself; for Txattrcreate it surfaces on Tclunk (the simple-interface commit
+// calls SetXattr / RemoveXattr from dispatch.go:224/239). Covers Pitfall 6.
+func TestXattr_ENOSYS_NoCapability(t *testing.T) {
+	t.Parallel()
+
+	root := &testDir{}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Txattrwalk for a specific name → Inode.GetXattr returns ENOSYS,
+	// surfaced on the Rxattrwalk path itself.
+	sendMessage(t, cp.client, 2, &p9l.Txattrwalk{Fid: 0, NewFid: 10, Name: "user.foo"})
+	_, msg := readResponse(t, cp.client)
+	isError(t, msg, proto.ENOSYS)
+
+	// Txattrwalk in list mode → Inode.ListXattrs returns ENOSYS.
+	sendMessage(t, cp.client, 3, &p9l.Txattrwalk{Fid: 0, NewFid: 11, Name: ""})
+	_, msg = readResponse(t, cp.client)
+	isError(t, msg, proto.ENOSYS)
+
+	// Txattrcreate with AttrSize>0 succeeds (the type assertion against the
+	// Inode stub passes); ENOSYS surfaces when the commit calls SetXattr.
+	// Clone fid 0 → 2 so the fid-mutating xattrcreate doesn't break root.
+	cp.walk(t, 4, 0, 2)
+	sendMessage(t, cp.client, 5, &p9l.Txattrcreate{Fid: 2, Name: "user.bar", AttrSize: 3, Flags: 0})
+	_, msg = readResponse(t, cp.client)
+	if _, ok := msg.(*p9l.Rxattrcreate); !ok {
+		t.Fatalf("expected Rxattrcreate, got %T: %+v", msg, msg)
+	}
+	// Write the declared size so clunk reaches the SetXattr call (not EIO).
+	msg = cp.write(t, 6, 2, 0, []byte("abc"))
+	if _, ok := msg.(*proto.Rwrite); !ok {
+		t.Fatalf("expected Rwrite, got %T: %+v", msg, msg)
+	}
+	msg = cp.clunk(t, 7, 2)
+	isError(t, msg, proto.ENOSYS)
+
+	// Txattrcreate with AttrSize=0 (remove) → clunk invokes RemoveXattr.
+	cp.walk(t, 8, 0, 3)
+	sendMessage(t, cp.client, 9, &p9l.Txattrcreate{Fid: 3, Name: "user.rm", AttrSize: 0, Flags: 0})
+	_, msg = readResponse(t, cp.client)
+	if _, ok := msg.(*p9l.Rxattrcreate); !ok {
+		t.Fatalf("expected Rxattrcreate, got %T: %+v", msg, msg)
+	}
+	msg = cp.clunk(t, 10, 3)
+	isError(t, msg, proto.ENOSYS)
+}
+
+// TestXattr_ENOSYS_NoSetter verifies the mixed-capability ENOSYS path: a node
+// that explicitly implements NodeXattrGetter but inherits the Inode defaults
+// for Setter/Remover surfaces ENOSYS on Tclunk (the xattr commit step calls
+// the Inode stubs at dispatch.go:224/239). Txattrwalk succeeds because the
+// user-defined GetXattr returns data.
+func TestXattr_ENOSYS_NoSetter(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+	gf := &getterOnlyFile{value: []byte("ro")}
+	gf.Init(gen.Next(proto.QTFILE), gf)
+	root.AddChild("readonly", gf.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	cp.walk(t, 2, 0, 2, "readonly")
+
+	// Read path works: user-defined GetXattr returns "ro".
+	sendMessage(t, cp.client, 3, &p9l.Txattrwalk{Fid: 2, NewFid: 10, Name: "user.x"})
+	_, msg := readResponse(t, cp.client)
+	if _, ok := msg.(*p9l.Rxattrwalk); !ok {
+		t.Fatalf("expected Rxattrwalk, got %T: %+v", msg, msg)
+	}
+	cp.clunk(t, 4, 10)
+
+	// Clone fid 2 → 3 for the set-mode xattrcreate.
+	cp.walk(t, 5, 2, 3)
+	sendMessage(t, cp.client, 6, &p9l.Txattrcreate{Fid: 3, Name: "user.set", AttrSize: 5, Flags: 0})
+	_, msg = readResponse(t, cp.client)
+	if _, ok := msg.(*p9l.Rxattrcreate); !ok {
+		t.Fatalf("expected Rxattrcreate, got %T: %+v", msg, msg)
+	}
+	msg = cp.write(t, 7, 3, 0, []byte("hello"))
+	if _, ok := msg.(*proto.Rwrite); !ok {
+		t.Fatalf("expected Rwrite, got %T: %+v", msg, msg)
+	}
+	// Clunk reaches SetXattr → Inode default returns ENOSYS.
+	msg = cp.clunk(t, 8, 3)
+	isError(t, msg, proto.ENOSYS)
+
+	// Fresh clone for the remove-mode xattrcreate.
+	cp.walk(t, 9, 2, 4)
+	sendMessage(t, cp.client, 10, &p9l.Txattrcreate{Fid: 4, Name: "user.rm", AttrSize: 0, Flags: 0})
+	_, msg = readResponse(t, cp.client)
+	if _, ok := msg.(*p9l.Rxattrcreate); !ok {
+		t.Fatalf("expected Rxattrcreate, got %T: %+v", msg, msg)
+	}
+	// Clunk reaches RemoveXattr → Inode default returns ENOSYS.
+	msg = cp.clunk(t, 11, 4)
+	isError(t, msg, proto.ENOSYS)
+}
+
+// TestXattr_TooBig_EINVAL verifies the msize clamp at bridge.go:844: an
+// AttrSize exceeding the negotiated msize is rejected with EINVAL before any
+// writer is allocated. Protects against oversized buffer allocation (T-04-06).
+func TestXattr_TooBig_EINVAL(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+	xf := &xattrFile{xattrs: map[string][]byte{}}
+	xf.Init(gen.Next(proto.QTFILE), xf)
+	root.AddChild("xfile", xf.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	cp.walk(t, 2, 0, 2, "xfile")
+	cp.walk(t, 3, 2, 3) // clone for xattrcreate
+
+	// newConnPair negotiates msize=65536. AttrSize=65537 trips the clamp.
+	sendMessage(t, cp.client, 4, &p9l.Txattrcreate{Fid: 3, Name: "user.big", AttrSize: 65537, Flags: 0})
+	_, msg := readResponse(t, cp.client)
+	isError(t, msg, proto.EINVAL)
+}
+
+// TestXattr_Overwrite_ENOSPC verifies handleWrite rejects writes that would
+// overflow the declared xattr size (bridge.go:130). After the ENOSPC, the
+// fid's xattrData remains empty; clunk then fails with EIO because 0 != 3
+// (size-mismatch check at dispatch.go:232). This test covers both error paths
+// in a single realistic flow.
+func TestXattr_Overwrite_ENOSPC(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+	xf := &xattrFile{xattrs: map[string][]byte{}}
+	xf.Init(gen.Next(proto.QTFILE), xf)
+	root.AddChild("xfile", xf.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	cp.walk(t, 2, 0, 2, "xfile")
+	cp.walk(t, 3, 2, 3) // clone
+
+	// Declare AttrSize=3.
+	sendMessage(t, cp.client, 4, &p9l.Txattrcreate{Fid: 3, Name: "user.ovf", AttrSize: 3, Flags: 0})
+	_, msg := readResponse(t, cp.client)
+	if _, ok := msg.(*p9l.Rxattrcreate); !ok {
+		t.Fatalf("expected Rxattrcreate, got %T: %+v", msg, msg)
+	}
+
+	// Write 5 bytes (exceeds declared 3) → ENOSPC.
+	msg = cp.write(t, 5, 3, 0, []byte("hello"))
+	isError(t, msg, proto.ENOSPC)
+
+	// The rejected write leaves xattrData empty; clunk surfaces the
+	// size-mismatch (len(0) != 3) as EIO.
+	msg = cp.clunk(t, 6, 3)
+	isError(t, msg, proto.EIO)
+}
