@@ -21,52 +21,52 @@ func discardLogger() *slog.Logger {
 
 // sendTversion writes a raw Tversion message to w. It encodes the full wire
 // frame: size[4] + type[1] + tag[2] + msize[4] + version[s].
-func sendTversion(t *testing.T, w io.Writer, msize uint32, version string) {
-	t.Helper()
+func sendTversion(tb testing.TB, w io.Writer, msize uint32, version string) {
+	tb.Helper()
 	var body bytes.Buffer
 	tv := &proto.Tversion{Msize: msize, Version: version}
 	if err := tv.EncodeTo(&body); err != nil {
-		t.Fatalf("encode tversion body: %v", err)
+		tb.Fatalf("encode tversion body: %v", err)
 	}
 	size := uint32(proto.HeaderSize) + uint32(body.Len())
 	if err := proto.WriteUint32(w, size); err != nil {
-		t.Fatalf("write size: %v", err)
+		tb.Fatalf("write size: %v", err)
 	}
 	if err := proto.WriteUint8(w, uint8(proto.TypeTversion)); err != nil {
-		t.Fatalf("write type: %v", err)
+		tb.Fatalf("write type: %v", err)
 	}
 	if err := proto.WriteUint16(w, uint16(proto.NoTag)); err != nil {
-		t.Fatalf("write tag: %v", err)
+		tb.Fatalf("write tag: %v", err)
 	}
 	if _, err := w.Write(body.Bytes()); err != nil {
-		t.Fatalf("write body: %v", err)
+		tb.Fatalf("write body: %v", err)
 	}
 }
 
 // readRversion reads a raw Rversion from r and returns it.
-func readRversion(t *testing.T, r io.Reader) *proto.Rversion {
-	t.Helper()
+func readRversion(tb testing.TB, r io.Reader) *proto.Rversion {
+	tb.Helper()
 	size, err := proto.ReadUint32(r)
 	if err != nil {
-		t.Fatalf("read rversion size: %v", err)
+		tb.Fatalf("read rversion size: %v", err)
 	}
 	if size < uint32(proto.HeaderSize) {
-		t.Fatalf("rversion size too small: %d", size)
+		tb.Fatalf("rversion size too small: %d", size)
 	}
 	msgType, err := proto.ReadUint8(r)
 	if err != nil {
-		t.Fatalf("read rversion type: %v", err)
+		tb.Fatalf("read rversion type: %v", err)
 	}
 	if proto.MessageType(msgType) != proto.TypeRversion {
-		t.Fatalf("expected Rversion (type %d), got type %d", proto.TypeRversion, msgType)
+		tb.Fatalf("expected Rversion (type %d), got type %d", proto.TypeRversion, msgType)
 	}
 	if _, err := proto.ReadUint16(r); err != nil { // tag
-		t.Fatalf("read rversion tag: %v", err)
+		tb.Fatalf("read rversion tag: %v", err)
 	}
 	bodySize := int64(size) - int64(proto.HeaderSize)
 	var rv proto.Rversion
 	if err := rv.DecodeFrom(io.LimitReader(r, bodySize)); err != nil {
-		t.Fatalf("decode rversion: %v", err)
+		tb.Fatalf("decode rversion: %v", err)
 	}
 	return &rv
 }

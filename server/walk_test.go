@@ -62,16 +62,16 @@ type connPair struct {
 	cancel context.CancelFunc
 }
 
-func newConnPair(t *testing.T, root Node, opts ...Option) *connPair {
-	t.Helper()
+func newConnPair(tb testing.TB, root Node, opts ...Option) *connPair {
+	tb.Helper()
 
 	opts = append([]Option{WithMaxMsize(65536), WithLogger(discardLogger())}, opts...)
 	srv := New(root, opts...)
 
 	client, server := net.Pipe()
 
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	t.Cleanup(func() {
+	ctx, cancel := context.WithTimeout(tb.Context(), 5*time.Second)
+	tb.Cleanup(func() {
 		cancel()
 		_ = client.Close()
 		_ = server.Close()
@@ -84,17 +84,17 @@ func newConnPair(t *testing.T, root Node, opts ...Option) *connPair {
 	}()
 
 	// Negotiate version.
-	sendTversion(t, client, 65536, "9P2000.L")
-	rv := readRversion(t, client)
+	sendTversion(tb, client, 65536, "9P2000.L")
+	rv := readRversion(tb, client)
 	if rv.Version != "9P2000.L" {
-		t.Fatalf("version negotiation failed: got %q", rv.Version)
+		tb.Fatalf("version negotiation failed: got %q", rv.Version)
 	}
 
 	return &connPair{client: client, done: done, cancel: cancel}
 }
 
-func (cp *connPair) close(t *testing.T) {
-	t.Helper()
+func (cp *connPair) close(tb testing.TB) {
+	tb.Helper()
 	_ = cp.client.Close()
 	<-cp.done
 	cp.cancel()
