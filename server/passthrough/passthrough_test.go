@@ -1259,3 +1259,57 @@ func TestProtocol_Getattr(t *testing.T) {
 
 	clunk(t, cp, 4, 1)
 }
+
+func TestPassthrough_Fsync(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fpath := filepath.Join(dir, "data.txt")
+	if err := os.WriteFile(fpath, []byte("initial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := NewRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cp := newConnPair(t, root)
+	defer cp.close(t)
+
+	attach(t, cp, 1, 0)
+	walk(t, cp, 2, 0, 1, "data.txt")
+
+	// Open for read/write on fid 1.
+	sendMessage(t, cp.client, 3, &p9l.Tlopen{Fid: 1, Flags: unix.O_RDWR})
+	_, msg := readResponse(t, cp.client)
+	if _, ok := msg.(*p9l.Rlopen); !ok {
+		t.Fatalf("expected Rlopen, got %T: %+v", msg, msg)
+	}
+
+	// Write some data through the handle.
+	sendMessage(t, cp.client, 4, &proto.Twrite{Fid: 1, Offset: 0, Data: []byte("hello")})
+	_, msg = readResponse(t, cp.client)
+	if rw, ok := msg.(*proto.Rwrite); !ok || rw.Count != 5 {
+		t.Fatalf("expected Rwrite{Count:5}, got %T: %+v", msg, msg)
+	}
+
+	// Fsync through the wire path. This exercises FileSyncer on fileHandle.
+	sendMessage(t, cp.client, 5, &p9l.Tfsync{Fid: 1, DataSync: 0})
+	_, msg = readResponse(t, cp.client)
+	if _, ok := msg.(*p9l.Rfsync); !ok {
+		t.Fatalf("expected Rfsync, got %T: %+v", msg, msg)
+	}
+
+	// Verify the data actually landed on disk. Fsync's durability
+	// guarantees are the kernel's job; this only proves the wire path
+	// does not corrupt the in-flight data.
+	got, err := os.ReadFile(fpath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(got, []byte("hello")) {
+		t.Fatalf("file content = %q, want prefix 'hello'", got)
+	}
+
+	clunk(t, cp, 6, 1)
+}

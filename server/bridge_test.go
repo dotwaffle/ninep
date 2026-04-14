@@ -1742,3 +1742,191 @@ func TestBridge_ENOSYS_Symlink(t *testing.T) {
 	_, msg := readResponse(t, cp.client)
 	isError(t, msg, proto.ENOSYS)
 }
+
+// --- Fsync test node types ---
+
+// fsyncingNode embeds Inode and overrides Fsync to record calls. Open
+// returns nil handle so the bridge falls back to NodeFSyncer.
+type fsyncingNode struct {
+	Inode
+	fsyncCalled int
+	fsyncErr    error
+}
+
+func (n *fsyncingNode) Open(_ context.Context, _ uint32) (FileHandle, uint32, error) {
+	return nil, 0, nil
+}
+
+func (n *fsyncingNode) Fsync(_ context.Context) error {
+	n.fsyncCalled++
+	return n.fsyncErr
+}
+
+// fsyncingHandle implements FileSyncer on an open file handle.
+type fsyncingHandle struct {
+	fsyncCalled int
+	fsyncErr    error
+}
+
+func (h *fsyncingHandle) Fsync(_ context.Context) error {
+	h.fsyncCalled++
+	return h.fsyncErr
+}
+
+// bothFsyncingNode implements NodeFSyncer and returns a FileSyncer-
+// implementing handle from Open. Used to verify FileSyncer precedence
+// over NodeFSyncer.
+type bothFsyncingNode struct {
+	Inode
+	fsyncCalled int
+	handle      *fsyncingHandle
+}
+
+func (n *bothFsyncingNode) Open(_ context.Context, _ uint32) (FileHandle, uint32, error) {
+	n.handle = &fsyncingHandle{}
+	return n.handle, 0, nil
+}
+
+func (n *bothFsyncingNode) Fsync(_ context.Context) error {
+	n.fsyncCalled++
+	return nil
+}
+
+var (
+	_ NodeOpener    = (*fsyncingNode)(nil)
+	_ NodeFSyncer   = (*fsyncingNode)(nil)
+	_ InodeEmbedder = (*fsyncingNode)(nil)
+
+	_ FileSyncer = (*fsyncingHandle)(nil)
+
+	_ NodeOpener    = (*bothFsyncingNode)(nil)
+	_ NodeFSyncer   = (*bothFsyncingNode)(nil)
+	_ InodeEmbedder = (*bothFsyncingNode)(nil)
+)
+
+// fsync is a connPair helper that sends Tfsync and returns the response.
+func (cp *connPair) fsync(t *testing.T, tag proto.Tag, fid proto.Fid, datasync uint32) proto.Message {
+	t.Helper()
+	sendMessage(t, cp.client, tag, &p9l.Tfsync{Fid: fid, DataSync: datasync})
+	_, msg := readResponse(t, cp.client)
+	return msg
+}
+
+func TestHandleFsync_ENOSYS(t *testing.T) {
+	t.Parallel()
+
+	// bridgeFile embeds Inode; Inode.Fsync returns proto.ENOSYS. Open
+	// returns a nil handle, so the bridge takes the NodeFSyncer path and
+	// gets ENOSYS back through errnoFromError.
+	file := &bridgeFile{content: []byte("data"), mode: 0o644}
+	file.Init(proto.QID{Type: proto.QTFILE, Path: 10}, file)
+
+	root := &testDir{}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+	root.AddChild("file.txt", file.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	cp.walk(t, 2, 0, 1, "file.txt")
+	if _, ok := cp.lopen(t, 3, 1, 0).(*p9l.Rlopen); !ok {
+		t.Fatalf("lopen failed")
+	}
+
+	msg := cp.fsync(t, 4, 1, 0)
+	isError(t, msg, proto.ENOSYS)
+}
+
+func TestHandleFsync_EBADF_Unopened(t *testing.T) {
+	t.Parallel()
+
+	file := &bridgeFile{content: []byte("data"), mode: 0o644}
+	file.Init(proto.QID{Type: proto.QTFILE, Path: 10}, file)
+
+	root := &testDir{}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+	root.AddChild("file.txt", file.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Walk places fid 1 in fidAllocated state (not opened).
+	cp.walk(t, 2, 0, 1, "file.txt")
+
+	msg := cp.fsync(t, 3, 1, 0)
+	isError(t, msg, proto.EBADF)
+}
+
+func TestHandleFsync_EBADF_NoFid(t *testing.T) {
+	t.Parallel()
+
+	root := &testDir{}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Fid 99 was never attached.
+	msg := cp.fsync(t, 2, 99, 0)
+	isError(t, msg, proto.EBADF)
+}
+
+func TestHandleFsync_NodeFSyncer(t *testing.T) {
+	t.Parallel()
+
+	fn := &fsyncingNode{}
+	fn.Init(proto.QID{Type: proto.QTFILE, Path: 42}, fn)
+
+	root := &testDir{}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+	root.AddChild("f", fn.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	cp.walk(t, 2, 0, 1, "f")
+	if _, ok := cp.lopen(t, 3, 1, 0).(*p9l.Rlopen); !ok {
+		t.Fatalf("lopen failed")
+	}
+
+	msg := cp.fsync(t, 4, 1, 0)
+	if _, ok := msg.(*p9l.Rfsync); !ok {
+		t.Fatalf("got %T, want *p9l.Rfsync: %+v", msg, msg)
+	}
+	if fn.fsyncCalled != 1 {
+		t.Fatalf("fsyncCalled = %d, want 1", fn.fsyncCalled)
+	}
+}
+
+func TestHandleFsync_FileSyncerPrecedence(t *testing.T) {
+	t.Parallel()
+
+	bn := &bothFsyncingNode{}
+	bn.Init(proto.QID{Type: proto.QTFILE, Path: 43}, bn)
+
+	root := &testDir{}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+	root.AddChild("f", bn.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	cp.walk(t, 2, 0, 1, "f")
+	if _, ok := cp.lopen(t, 3, 1, 0).(*p9l.Rlopen); !ok {
+		t.Fatalf("lopen failed")
+	}
+
+	msg := cp.fsync(t, 4, 1, 0)
+	if _, ok := msg.(*p9l.Rfsync); !ok {
+		t.Fatalf("got %T, want *p9l.Rfsync: %+v", msg, msg)
+	}
+	if bn.handle == nil {
+		t.Fatal("expected handle to be populated by Open")
+	}
+	if bn.handle.fsyncCalled != 1 {
+		t.Errorf("handle.fsyncCalled = %d, want 1", bn.handle.fsyncCalled)
+	}
+	if bn.fsyncCalled != 0 {
+		t.Errorf("node.fsyncCalled = %d, want 0 (FileSyncer takes precedence)", bn.fsyncCalled)
+	}
+}
