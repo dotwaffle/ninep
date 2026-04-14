@@ -69,7 +69,7 @@ func (d *bridgeDir) Readdir(_ context.Context) ([]proto.Dirent, error) {
 		qid := inode.QID()
 		dirents = append(dirents, proto.Dirent{
 			QID:  qid,
-			Type: uint8(qid.Type),
+			Type: proto.QIDTypeToDT(qid.Type),
 			Name: name,
 		})
 	}

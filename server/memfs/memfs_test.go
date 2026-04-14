@@ -235,8 +235,8 @@ func TestMemDirReaddir(t *testing.T) {
 	names := make(map[string]bool)
 	for _, e := range entries {
 		names[e.Name] = true
-		if e.Type != uint8(proto.QTFILE) {
-			t.Errorf("entry %q Type = %d, want %d", e.Name, e.Type, proto.QTFILE)
+		if e.Type != proto.DT_REG {
+			t.Errorf("entry %q Type = %d, want %d", e.Name, e.Type, proto.DT_REG)
 		}
 	}
 	if !names["file1"] || !names["file2"] {

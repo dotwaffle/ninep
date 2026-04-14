@@ -392,7 +392,7 @@ func makeBenchDirents(n int) []proto.Dirent {
 		dirents[i] = proto.Dirent{
 			QID:    proto.QID{Type: proto.QTFILE, Version: 0, Path: uint64(i)},
 			Offset: uint64(i + 1),
-			Type:   uint8(proto.QTFILE),
+			Type:   proto.DT_REG,
 			Name:   "file" + strconv.Itoa(i),
 		}
 	}

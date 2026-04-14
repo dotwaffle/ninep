@@ -375,7 +375,7 @@ func (d *testDir) Readdir(_ context.Context) ([]proto.Dirent, error) {
 		entries = append(entries, proto.Dirent{
 			QID:    qid,
 			Offset: offset,
-			Type:   uint8(qid.Type),
+			Type:   proto.QIDTypeToDT(qid.Type),
 			Name:   name,
 		})
 	}

@@ -134,8 +134,10 @@ func (d *Dir) Readdir(_ context.Context) ([]proto.Dirent, error) {
 		entries = append(entries, proto.Dirent{
 			QID:    qid,
 			Offset: offset,
-			Type:   uint8(qid.Type),
-			Name:   name,
+			// Type carries a Linux DT_* dirent value (see proto.DT_DIR/DT_REG/DT_LNK).
+			// Use proto.QIDTypeToDT to derive the correct value from a QID.
+			Type: proto.QIDTypeToDT(qid.Type),
+			Name: name,
 		})
 	}
 	return entries, nil
