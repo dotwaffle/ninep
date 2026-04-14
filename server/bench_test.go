@@ -273,6 +273,62 @@ func BenchmarkFidTableContention(b *testing.B) {
 	}
 }
 
+// BenchmarkWalkCycle exercises the walk+clunk hot path for SEC-01/SEC-02
+// zero-cost verification. The two subtests differ only in the WithMaxFids
+// option: benchstat against limit=none to confirm that WithMaxFids, when
+// never fired, imposes no measurable overhead (branch predictor ensures the
+// extra compare is free when the cap is never hit).
+//
+// Pattern: Twalk clone (Names=[]) allocates a new fid; Tclunk frees it.
+// This exercises fidTable.add + fidTable.clunk once per iteration -- the
+// code paths modified by Plan 09-02.
+//
+// benchstat-friendly: both subtests use key=value naming so the file can be
+// split and diffed; see .planning/phases/09/09-03-ZEROCOST.md for the
+// methodology and verdict.
+func BenchmarkWalkCycle(b *testing.B) {
+	cases := []struct {
+		name string
+		opts []Option
+	}{
+		{name: "limit=none", opts: nil},
+		{name: "limit=huge", opts: []Option{WithMaxFids(100_000)}},
+	}
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
+			cp := newConnPair(b, root, tc.opts...)
+			b.Cleanup(func() { cp.close(b) })
+
+			benchAttachFid0(b, cp)
+
+			walkFrame := mustEncode(b, proto.Tag(2), &proto.Twalk{
+				Fid:    0,
+				NewFid: 1,
+				Names:  nil,
+			})
+			clunkFrame := mustEncode(b, proto.Tag(3), &proto.Tclunk{Fid: 1})
+
+			b.ReportAllocs()
+			b.SetBytes(int64(len(walkFrame) + len(clunkFrame)))
+			for b.Loop() {
+				if _, err := cp.client.Write(walkFrame); err != nil {
+					b.Fatalf("walk write: %v", err)
+				}
+				if err := drainResponse(cp.client); err != nil {
+					b.Fatalf("walk drain: %v", err)
+				}
+				if _, err := cp.client.Write(clunkFrame); err != nil {
+					b.Fatalf("clunk write: %v", err)
+				}
+				if err := drainResponse(cp.client); err != nil {
+					b.Fatalf("clunk drain: %v", err)
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkWalkClunk exercises the realistic attach->walk->clunk path under
 // parallel load. Each worker owns a disjoint fid range to avoid "fid in use"
 // collisions. A client-side mutex serialises writes to the shared net.Pipe
