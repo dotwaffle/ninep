@@ -3,7 +3,6 @@ package passthrough
 import (
 	"context"
 	"fmt"
-	"syscall"
 
 	"golang.org/x/sys/unix"
 
@@ -47,14 +46,14 @@ func WithUIDMapper(m UIDMapper) Option {
 // NewRoot creates a new passthrough filesystem root from the given host
 // directory path. The path must refer to an existing directory.
 func NewRoot(hostPath string, opts ...Option) (*Root, error) {
-	fd, err := syscall.Open(hostPath, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
+	fd, err := unix.Open(hostPath, unix.O_RDONLY|unix.O_DIRECTORY, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open root %s: %w", hostPath, err)
 	}
 
-	var st syscall.Stat_t
-	if err := syscall.Fstat(fd, &st); err != nil {
-		_ = syscall.Close(fd)
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		_ = unix.Close(fd)
 		return nil, fmt.Errorf("stat root %s: %w", hostPath, err)
 	}
 
@@ -104,7 +103,7 @@ func (n *Node) Open(_ context.Context, flags uint32) (server.FileHandle, uint32,
 	}
 	// Reopen via /proc/self/fd/N to convert O_PATH fd to a usable fd.
 	path := fmt.Sprintf("/proc/self/fd/%d", n.fd)
-	fd, err := syscall.Open(path, int(flags)&^syscall.O_NOFOLLOW, 0)
+	fd, err := unix.Open(path, int(flags)&^unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, 0, toProtoErr(err)
 	}
@@ -113,8 +112,8 @@ func (n *Node) Open(_ context.Context, flags uint32) (server.FileHandle, uint32,
 
 // Getattr returns file attributes from fstat on the node's fd.
 func (n *Node) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {
-	var st syscall.Stat_t
-	if err := syscall.Fstat(n.fd, &st); err != nil {
+	var st unix.Stat_t
+	if err := unix.Fstat(n.fd, &st); err != nil {
 		return proto.Attr{}, toProtoErr(err)
 	}
 	return statToAttr(&st, n.root.mapper), nil
@@ -123,7 +122,7 @@ func (n *Node) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) 
 // Setattr modifies file attributes based on the valid mask.
 func (n *Node) Setattr(_ context.Context, attr proto.SetAttr) error {
 	if attr.Valid&proto.SetAttrMode != 0 {
-		if err := syscall.Fchmod(n.fd, attr.Mode); err != nil {
+		if err := unix.Fchmod(n.fd, attr.Mode); err != nil {
 			return toProtoErr(err)
 		}
 	}
@@ -144,7 +143,7 @@ func (n *Node) Setattr(_ context.Context, attr proto.SetAttr) error {
 		}
 	}
 	if attr.Valid&proto.SetAttrSize != 0 {
-		if err := syscall.Ftruncate(n.fd, int64(attr.Size)); err != nil {
+		if err := unix.Ftruncate(n.fd, int64(attr.Size)); err != nil {
 			return toProtoErr(err)
 		}
 	}
@@ -169,8 +168,8 @@ func (n *Node) Setattr(_ context.Context, attr proto.SetAttr) error {
 
 // StatFS returns filesystem statistics for the filesystem containing this node.
 func (n *Node) StatFS(_ context.Context) (proto.FSStat, error) {
-	var st syscall.Statfs_t
-	if err := syscall.Fstatfs(n.fd, &st); err != nil {
+	var st unix.Statfs_t
+	if err := unix.Fstatfs(n.fd, &st); err != nil {
 		return proto.FSStat{}, toProtoErr(err)
 	}
 	return proto.FSStat{
@@ -181,12 +180,12 @@ func (n *Node) StatFS(_ context.Context) (proto.FSStat, error) {
 		BAvail:  st.Bavail,
 		Files:   st.Files,
 		FFree:   st.Ffree,
-		FSID:    uint64(st.Fsid.X__val[0]) | uint64(st.Fsid.X__val[1])<<32,
+		FSID:    uint64(uint32(st.Fsid.Val[0])) | uint64(uint32(st.Fsid.Val[1]))<<32,
 		NameLen: uint32(st.Namelen),
 	}, nil
 }
 
 // Close releases the OS file descriptor held by this node.
 func (n *Node) Close(_ context.Context) error {
-	return toProtoErr(syscall.Close(n.fd))
+	return toProtoErr(unix.Close(n.fd))
 }

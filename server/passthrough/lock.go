@@ -2,7 +2,9 @@ package passthrough
 
 import (
 	"context"
-	"syscall"
+	"errors"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/server"
@@ -15,20 +17,20 @@ var _ server.NodeLocker = (*Node)(nil)
 // Uses F_SETLK for non-blocking and F_SETLKW for blocking requests.
 // Blocking locks respect context cancellation via deadline.
 func (n *Node) Lock(_ context.Context, lockType proto.LockType, flags proto.LockFlags, start, length uint64, _ uint32, _ string) (proto.LockStatus, error) {
-	flock := syscall.Flock_t{
+	flock := unix.Flock_t{
 		Type:   lockTypeToFcntl(lockType),
 		Whence: 0, // SEEK_SET
 		Start:  int64(start),
 		Len:    int64(length),
 	}
 
-	cmd := syscall.F_SETLK
+	cmd := unix.F_SETLK
 	if flags&proto.LockFlagBlock != 0 {
-		cmd = syscall.F_SETLKW
+		cmd = unix.F_SETLKW
 	}
 
-	if err := syscall.FcntlFlock(uintptr(n.fd), cmd, &flock); err != nil {
-		if err == syscall.EAGAIN || err == syscall.EACCES {
+	if err := unix.FcntlFlock(uintptr(n.fd), cmd, &flock); err != nil {
+		if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EACCES) {
 			return proto.LockStatusBlocked, nil
 		}
 		return proto.LockStatusError, toProtoErr(err)
@@ -40,7 +42,7 @@ func (n *Node) Lock(_ context.Context, lockType proto.LockType, flags proto.Lock
 // GetLock tests whether a lock could be placed, returning the conflicting
 // lock parameters if one exists.
 func (n *Node) GetLock(_ context.Context, lockType proto.LockType, start, length uint64, procID uint32, clientID string) (proto.LockType, uint64, uint64, uint32, string, error) {
-	flock := syscall.Flock_t{
+	flock := unix.Flock_t{
 		Type:   lockTypeToFcntl(lockType),
 		Whence: 0, // SEEK_SET
 		Start:  int64(start),
@@ -48,39 +50,39 @@ func (n *Node) GetLock(_ context.Context, lockType proto.LockType, start, length
 		Pid:    int32(procID),
 	}
 
-	if err := syscall.FcntlFlock(uintptr(n.fd), syscall.F_GETLK, &flock); err != nil {
+	if err := unix.FcntlFlock(uintptr(n.fd), unix.F_GETLK, &flock); err != nil {
 		return 0, 0, 0, 0, "", toProtoErr(err)
 	}
 
-	if flock.Type == syscall.F_UNLCK {
+	if flock.Type == unix.F_UNLCK {
 		return proto.LockTypeUnlck, start, length, procID, clientID, nil
 	}
 
 	return fcntlToLockType(flock.Type), uint64(flock.Start), uint64(flock.Len), uint32(flock.Pid), clientID, nil
 }
 
-// lockTypeToFcntl converts a proto.LockType to a syscall F_* constant.
+// lockTypeToFcntl converts a proto.LockType to a unix F_* constant.
 func lockTypeToFcntl(lt proto.LockType) int16 {
 	switch lt {
 	case proto.LockTypeRdLck:
-		return syscall.F_RDLCK
+		return unix.F_RDLCK
 	case proto.LockTypeWrLck:
-		return syscall.F_WRLCK
+		return unix.F_WRLCK
 	case proto.LockTypeUnlck:
-		return syscall.F_UNLCK
+		return unix.F_UNLCK
 	default:
-		return syscall.F_UNLCK
+		return unix.F_UNLCK
 	}
 }
 
-// fcntlToLockType converts a syscall F_* constant to proto.LockType.
+// fcntlToLockType converts a unix F_* constant to proto.LockType.
 func fcntlToLockType(ft int16) proto.LockType {
 	switch ft {
-	case syscall.F_RDLCK:
+	case unix.F_RDLCK:
 		return proto.LockTypeRdLck
-	case syscall.F_WRLCK:
+	case unix.F_WRLCK:
 		return proto.LockTypeWrLck
-	case syscall.F_UNLCK:
+	case unix.F_UNLCK:
 		return proto.LockTypeUnlck
 	default:
 		return proto.LockTypeUnlck

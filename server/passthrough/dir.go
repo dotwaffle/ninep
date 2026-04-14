@@ -3,9 +3,8 @@ package passthrough
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
-	"syscall"
-	"unsafe"
 
 	"golang.org/x/sys/unix"
 
@@ -38,20 +37,19 @@ func (n *Node) Lookup(_ context.Context, name string) (server.Node, error) {
 
 	var fd int
 	var err error
-	switch st.Mode & syscall.S_IFMT {
-	case syscall.S_IFDIR:
-		fd, err = unix.Openat(n.fd, name, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	switch st.Mode & unix.S_IFMT {
+	case unix.S_IFDIR:
+		fd, err = unix.Openat(n.fd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 	default:
 		// O_PATH for non-directories (files, symlinks, devices, etc.).
-		fd, err = unix.Openat(n.fd, name, unix.O_PATH|syscall.O_NOFOLLOW, 0)
+		fd, err = unix.Openat(n.fd, name, unix.O_PATH|unix.O_NOFOLLOW, 0)
 	}
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
 
-	sst := syscallStatFrom(st)
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
-	child.Init(statToQID(&sst), child)
+	child.Init(statToQID(&st), child)
 	n.EmbeddedInode().AddChild(name, child.EmbeddedInode())
 
 	return child, nil
@@ -64,21 +62,21 @@ func (n *Node) Create(_ context.Context, name string, flags uint32, mode proto.F
 		return nil, nil, 0, proto.ENOTDIR
 	}
 
-	fd, err := unix.Openat(n.fd, name, int(flags)|syscall.O_CREAT|syscall.O_NOFOLLOW, uint32(mode))
+	fd, err := unix.Openat(n.fd, name, int(flags)|unix.O_CREAT|unix.O_NOFOLLOW, uint32(mode))
 	if err != nil {
 		return nil, nil, 0, toProtoErr(err)
 	}
 
-	var st syscall.Stat_t
-	if err := syscall.Fstat(fd, &st); err != nil {
-		_ = syscall.Close(fd)
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		_ = unix.Close(fd)
 		return nil, nil, 0, toProtoErr(err)
 	}
 
 	// Open an O_PATH fd for the node reference, use the real fd for the handle.
-	pathFd, err := unix.Openat(n.fd, name, unix.O_PATH|syscall.O_NOFOLLOW, 0)
+	pathFd, err := unix.Openat(n.fd, name, unix.O_PATH|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		_ = syscall.Close(fd)
+		_ = unix.Close(fd)
 		return nil, nil, 0, toProtoErr(err)
 	}
 
@@ -98,14 +96,14 @@ func (n *Node) Mkdir(_ context.Context, name string, mode proto.FileMode, _ uint
 		return nil, toProtoErr(err)
 	}
 
-	fd, err := unix.Openat(n.fd, name, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	fd, err := unix.Openat(n.fd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
 
-	var st syscall.Stat_t
-	if err := syscall.Fstat(fd, &st); err != nil {
-		_ = syscall.Close(fd)
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		_ = unix.Close(fd)
 		return nil, toProtoErr(err)
 	}
 
@@ -125,20 +123,19 @@ func (n *Node) Symlink(_ context.Context, name, target string, _ uint32) (server
 		return nil, toProtoErr(err)
 	}
 
-	fd, err := unix.Openat(n.fd, name, unix.O_PATH|syscall.O_NOFOLLOW, 0)
+	fd, err := unix.Openat(n.fd, name, unix.O_PATH|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
 
 	var st unix.Stat_t
 	if err := unix.Fstatat(n.fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		_ = syscall.Close(fd)
+		_ = unix.Close(fd)
 		return nil, toProtoErr(err)
 	}
 
-	sst := syscallStatFrom(st)
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
-	child.Init(statToQID(&sst), child)
+	child.Init(statToQID(&st), child)
 
 	return child, nil
 }
@@ -179,20 +176,19 @@ func (n *Node) Mknod(_ context.Context, name string, mode proto.FileMode, major,
 		return nil, toProtoErr(err)
 	}
 
-	fd, err := unix.Openat(n.fd, name, unix.O_PATH|syscall.O_NOFOLLOW, 0)
+	fd, err := unix.Openat(n.fd, name, unix.O_PATH|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
 
 	var st unix.Stat_t
 	if err := unix.Fstatat(n.fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		_ = syscall.Close(fd)
+		_ = unix.Close(fd)
 		return nil, toProtoErr(err)
 	}
 
-	sst := syscallStatFrom(st)
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
-	child.Init(statToQID(&sst), child)
+	child.Init(statToQID(&st), child)
 
 	return child, nil
 }
@@ -258,17 +254,17 @@ func (n *Node) Readdir(_ context.Context) ([]proto.Dirent, error) {
 	}
 
 	// Open a fresh fd to read directory entries from offset 0.
-	fd, err := unix.Openat(n.fd, ".", syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
+	fd, err := unix.Openat(n.fd, ".", unix.O_RDONLY|unix.O_DIRECTORY, 0)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
-	defer func() { _ = syscall.Close(fd) }()
+	defer func() { _ = unix.Close(fd) }()
 
 	var dirents []proto.Dirent
 	buf := make([]byte, 8192)
 
 	for {
-		nbytes, err := syscall.Getdents(fd, buf)
+		nbytes, err := unix.Getdents(fd, buf)
 		if err != nil {
 			return nil, toProtoErr(err)
 		}
@@ -285,19 +281,24 @@ func (n *Node) Readdir(_ context.Context) ([]proto.Dirent, error) {
 
 // parseDirents parses raw getdents64 output into proto.Dirent entries.
 // Skips "." and ".." entries.
+//
+// linux_dirent64 is laid out as: d_ino[8] d_off[8] d_reclen[2] d_type[1] d_name[...].
+// encoding/binary handles alignment — Linux getdents64 buffers guarantee
+// little-endian but not struct alignment, so binary.LittleEndian.Uint*
+// reads directly from the []byte slice (shift-and-OR) with no alignment
+// requirement on the source.
 func parseDirents(buf []byte) []proto.Dirent {
 	var dirents []proto.Dirent
 
 	for len(buf) > 0 {
-		// struct linux_dirent64:
-		//   d_ino[8] d_off[8] d_reclen[2] d_type[1] d_name[...]
+		// Minimum fixed-header size: d_ino[8] + d_off[8] + d_reclen[2] + d_type[1] = 19.
 		if len(buf) < 19 {
 			break
 		}
 
-		ino := *(*uint64)(unsafe.Pointer(&buf[0]))
-		_ = *(*uint64)(unsafe.Pointer(&buf[8])) // d_off
-		reclen := *(*uint16)(unsafe.Pointer(&buf[16]))
+		ino := binary.LittleEndian.Uint64(buf[0:8])
+		_ = binary.LittleEndian.Uint64(buf[8:16]) // d_off (unused; advance past)
+		reclen := binary.LittleEndian.Uint16(buf[16:18])
 		dtype := buf[18]
 
 		if int(reclen) > len(buf) || reclen < 19 {
@@ -335,31 +336,11 @@ func parseDirents(buf []byte) []proto.Dirent {
 // dtypeToQIDType maps a d_type to proto.QIDType.
 func dtypeToQIDType(dtype uint8) proto.QIDType {
 	switch dtype {
-	case syscall.DT_DIR:
+	case unix.DT_DIR:
 		return proto.QTDIR
-	case syscall.DT_LNK:
+	case unix.DT_LNK:
 		return proto.QTSYMLINK
 	default:
 		return proto.QTFILE
-	}
-}
-
-// syscallStatFrom converts a unix.Stat_t to syscall.Stat_t.
-// On Linux/amd64, these have the same layout.
-func syscallStatFrom(st unix.Stat_t) syscall.Stat_t {
-	return syscall.Stat_t{
-		Dev:     st.Dev,
-		Ino:     st.Ino,
-		Nlink:   st.Nlink,
-		Mode:    st.Mode,
-		Uid:     st.Uid,
-		Gid:     st.Gid,
-		Rdev:    st.Rdev,
-		Size:    st.Size,
-		Blksize: st.Blksize,
-		Blocks:  st.Blocks,
-		Atim:    syscall.Timespec{Sec: st.Atim.Sec, Nsec: st.Atim.Nsec},
-		Mtim:    syscall.Timespec{Sec: st.Mtim.Sec, Nsec: st.Mtim.Nsec},
-		Ctim:    syscall.Timespec{Sec: st.Ctim.Sec, Nsec: st.Ctim.Nsec},
 	}
 }

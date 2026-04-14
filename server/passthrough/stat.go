@@ -2,14 +2,15 @@ package passthrough
 
 import (
 	"errors"
-	"syscall"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/dotwaffle/ninep/proto"
 )
 
-// statToAttr converts a syscall.Stat_t to proto.Attr with all fields mapped.
+// statToAttr converts a unix.Stat_t to proto.Attr with all fields mapped.
 // UID/GID are transformed through mapper.FromHost for protocol-level reporting.
-func statToAttr(st *syscall.Stat_t, mapper UIDMapper) proto.Attr {
+func statToAttr(st *unix.Stat_t, mapper UIDMapper) proto.Attr {
 	uid, gid := mapper.FromHost(st.Uid, st.Gid)
 	return proto.Attr{
 		Valid:     proto.AttrAll,
@@ -31,15 +32,15 @@ func statToAttr(st *syscall.Stat_t, mapper UIDMapper) proto.Attr {
 	}
 }
 
-// statToQID extracts a QID from a syscall.Stat_t. The type is derived from
+// statToQID extracts a QID from a unix.Stat_t. The type is derived from
 // the file mode, the version from ctime seconds, and the path from the inode
 // number.
-func statToQID(st *syscall.Stat_t) proto.QID {
+func statToQID(st *unix.Stat_t) proto.QID {
 	var t proto.QIDType
-	switch st.Mode & syscall.S_IFMT {
-	case syscall.S_IFDIR:
+	switch st.Mode & unix.S_IFMT {
+	case unix.S_IFDIR:
 		t = proto.QTDIR
-	case syscall.S_IFLNK:
+	case unix.S_IFLNK:
 		t = proto.QTSYMLINK
 	default:
 		t = proto.QTFILE
@@ -51,15 +52,16 @@ func statToQID(st *syscall.Stat_t) proto.QID {
 	}
 }
 
-// toProtoErr converts an OS error to a proto.Errno. If the error contains a
-// syscall.Errno, the numeric value is used directly as a proto.Errno (Linux
-// errno values match the 9P2000.L wire format). Unknown errors map to EIO.
-// Returns nil for nil input.
+// toProtoErr converts an OS error to a proto.Errno. unix.Errno is a type
+// alias for syscall.Errno on Linux, so errors.AsType[unix.Errno] also matches
+// the syscall.Errno wrapped by os.PathError / os.OpenFile. The numeric value
+// is used directly as a proto.Errno (Linux errno values match the 9P2000.L
+// wire format). Unknown errors map to EIO. Returns nil for nil input.
 func toProtoErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errno, ok := errors.AsType[syscall.Errno](err); ok {
+	if errno, ok := errors.AsType[unix.Errno](err); ok {
 		return proto.Errno(errno)
 	}
 	return proto.EIO
@@ -68,5 +70,5 @@ func toProtoErr(err error) error {
 // direntType converts a file mode to the DT_* type value used in readdir
 // responses. The type is extracted by shifting the S_IFMT bits.
 func direntType(mode uint32) uint8 {
-	return uint8((mode & syscall.S_IFMT) >> 12)
+	return uint8((mode & unix.S_IFMT) >> 12)
 }

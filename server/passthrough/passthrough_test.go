@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
 	"github.com/dotwaffle/ninep/server"
@@ -61,8 +63,8 @@ func TestStatToAttr(t *testing.T) {
 	}
 	_ = f.Close()
 
-	var st syscall.Stat_t
-	if err := syscall.Stat(f.Name(), &st); err != nil {
+	var st unix.Stat_t
+	if err := unix.Stat(f.Name(), &st); err != nil {
 		t.Fatalf("stat: %v", err)
 	}
 
@@ -133,10 +135,10 @@ func TestStatToQID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			st := &syscall.Stat_t{
+			st := &unix.Stat_t{
 				Mode: tt.mode,
 				Ino:  12345,
-				Ctim: syscall.Timespec{Sec: 1000},
+				Ctim: unix.Timespec{Sec: 1000},
 			}
 			qid := statToQID(st)
 			if qid.Type != tt.wantType {
@@ -362,8 +364,8 @@ func TestRoot_Setattr_Mode(t *testing.T) {
 	t.Cleanup(func() { _ = root.Close(t.Context()) })
 
 	node := &Node{fd: fd, root: root}
-	var st syscall.Stat_t
-	if err := syscall.Fstat(fd, &st); err != nil {
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
 		t.Fatal(err)
 	}
 	node.Init(statToQID(&st), node)
@@ -409,8 +411,8 @@ func TestRoot_Setattr_Size(t *testing.T) {
 	t.Cleanup(func() { _ = root.Close(t.Context()) })
 
 	node := &Node{fd: fd, root: root}
-	var st syscall.Stat_t
-	if err := syscall.Fstat(fd, &st); err != nil {
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
 		t.Fatal(err)
 	}
 	node.Init(statToQID(&st), node)
@@ -757,8 +759,8 @@ func TestLock_NonBlocking(t *testing.T) {
 	t.Cleanup(func() { _ = root.Close(t.Context()) })
 
 	node := &Node{fd: fd, root: root}
-	var st syscall.Stat_t
-	if err := syscall.Fstat(fd, &st); err != nil {
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
 		t.Fatal(err)
 	}
 	node.Init(statToQID(&st), node)
@@ -803,8 +805,8 @@ func TestGetLock_NoConflict(t *testing.T) {
 	t.Cleanup(func() { _ = root.Close(t.Context()) })
 
 	node := &Node{fd: fd, root: root}
-	var st syscall.Stat_t
-	if err := syscall.Fstat(fd, &st); err != nil {
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
 		t.Fatal(err)
 	}
 	node.Init(statToQID(&st), node)
