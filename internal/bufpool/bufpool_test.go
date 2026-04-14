@@ -86,3 +86,102 @@ func TestGetPutCycle_ZeroAllocs(t *testing.T) {
 		t.Errorf("GetBuf+PutBuf allocs/op: got %v, want 0", allocs)
 	}
 }
+
+func TestGetMsgBuf_ReturnsCorrectSize(t *testing.T) {
+	t.Parallel()
+	b := GetMsgBuf(100)
+	defer PutMsgBuf(b)
+	if cap(*b) < 100 {
+		t.Errorf("GetMsgBuf(100) cap=%d, want >= 100", cap(*b))
+	}
+}
+
+func TestGetMsgBuf_DefaultSizePreGrown(t *testing.T) {
+	t.Parallel()
+	b := GetMsgBuf(1024)
+	defer PutMsgBuf(b)
+	// Pool-provided buffers are pre-grown to PoolMaxBufSize.
+	if cap(*b) < PoolMaxBufSize {
+		t.Errorf("GetMsgBuf(1024) cap=%d, want >= %d", cap(*b), PoolMaxBufSize)
+	}
+}
+
+func TestGetMsgBuf_OversizedNotPooled(t *testing.T) {
+	t.Parallel()
+	n := PoolMaxBufSize * 2
+	b := GetMsgBuf(n)
+	if cap(*b) < n {
+		t.Errorf("GetMsgBuf(%d) cap=%d, want >= %d", n, cap(*b), n)
+	}
+	// PutMsgBuf must NOT retain oversized buffers in the pool.
+	PutMsgBuf(b)
+	// Drain some pool entries -- if an oversized buffer leaked into the pool
+	// we might see it; probabilistic but exercises the drop path.
+	for range 10 {
+		got := GetMsgBuf(1024)
+		if cap(*got) > PoolMaxBufSize {
+			t.Errorf("oversized msgBuf leaked into pool: cap=%d", cap(*got))
+		}
+		PutMsgBuf(got)
+	}
+}
+
+func TestMsgBufCycle_ZeroAllocs(t *testing.T) {
+	// Warm the pool.
+	for range 100 {
+		b := GetMsgBuf(1024)
+		PutMsgBuf(b)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		b := GetMsgBuf(1024)
+		PutMsgBuf(b)
+	})
+
+	if allocs != 0 {
+		t.Errorf("GetMsgBuf+PutMsgBuf allocs/op: got %v, want 0", allocs)
+	}
+}
+
+func TestGetStringBuf_ReturnsCorrectSize(t *testing.T) {
+	t.Parallel()
+	b := GetStringBuf(100)
+	defer PutStringBuf(b)
+	if cap(*b) < 100 {
+		t.Errorf("GetStringBuf(100) cap=%d, want >= 100", cap(*b))
+	}
+}
+
+func TestGetStringBuf_OversizedNotPooled(t *testing.T) {
+	t.Parallel()
+	n := PoolMaxBufSize * 2
+	b := GetStringBuf(n)
+	if cap(*b) < n {
+		t.Errorf("GetStringBuf(%d) cap=%d, want >= %d", n, cap(*b), n)
+	}
+	PutStringBuf(b)
+	for range 10 {
+		got := GetStringBuf(128)
+		if cap(*got) > PoolMaxBufSize {
+			t.Errorf("oversized stringBuf leaked into pool: cap=%d", cap(*got))
+		}
+		PutStringBuf(got)
+	}
+}
+
+func TestStringBufCycle_ZeroAllocs(t *testing.T) {
+	// Warm the pool.
+	for range 100 {
+		b := GetStringBuf(128)
+		PutStringBuf(b)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		b := GetStringBuf(128)
+		PutStringBuf(b)
+	})
+
+	if allocs != 0 {
+		t.Errorf("GetStringBuf+PutStringBuf allocs/op: got %v, want 0", allocs)
+	}
+}
