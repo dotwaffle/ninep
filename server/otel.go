@@ -170,6 +170,38 @@ func (o *connOTelInstruments) recordFidChange(delta int64) {
 	o.fidGauge.Add(context.Background(), delta)
 }
 
+// serverOTelInstruments holds server-level (pre-connection) OTel instruments.
+// Created once in New when a MeterProvider is configured. Used by the
+// ServeConn reject path (before newConn runs), where conn-level instruments
+// do not exist.
+type serverOTelInstruments struct {
+	connectionsRejected metric.Int64Counter
+}
+
+// newServerOTelInstruments creates server-level metric instruments from the
+// given MeterProvider. Returns nil if mp is nil (zero-cost when no
+// MeterProvider is configured).
+func newServerOTelInstruments(mp metric.MeterProvider) *serverOTelInstruments {
+	if mp == nil {
+		return nil
+	}
+	meter := mp.Meter(instrumentationName)
+	return &serverOTelInstruments{
+		connectionsRejected: must(meter.Int64Counter("ninep.server.connections_rejected",
+			metric.WithDescription("Number of connections rejected due to WithMaxConnections limit"),
+		)),
+	}
+}
+
+// recordConnectionRejected increments the rejected-connection counter. Safe
+// on nil receiver (no-op when no MeterProvider is configured).
+func (o *serverOTelInstruments) recordConnectionRejected() {
+	if o == nil {
+		return
+	}
+	o.connectionsRejected.Add(context.Background(), 1)
+}
+
 // must is a generic helper that panics on instrument creation error. OTel
 // instrument creation only fails on invalid names, which are compile-time
 // constants in this package.
