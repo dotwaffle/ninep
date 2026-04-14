@@ -29,3 +29,22 @@ var (
 	// afid in Tattach when no authentication is required.
 	NoFid Fid = Fid(math.MaxUint32)
 )
+
+// Dirent type constants for the Type field of Dirent. These match Linux's
+// DT_* values from <dirent.h> and the linux_dirent64 d_type byte returned
+// by getdents64(2). The 9P2000.L kernel client passes this byte verbatim to
+// dir_emit() in v9fs_dir_readdir_dotl, so servers MUST use these values
+// (not 9P QID type bits) for filesystem clients to work correctly.
+//
+// Values verified against /usr/include/dirent.h (glibc) and
+// golang.org/x/sys/unix zerrors_linux.go.
+const (
+	DT_UNKNOWN uint8 = 0  // Unknown file type.
+	DT_FIFO    uint8 = 1  // Named pipe (FIFO).
+	DT_CHR     uint8 = 2  // Character device.
+	DT_DIR     uint8 = 4  // Directory.
+	DT_BLK     uint8 = 6  // Block device.
+	DT_REG     uint8 = 8  // Regular file.
+	DT_LNK     uint8 = 10 // Symbolic link.
+	DT_SOCK    uint8 = 12 // Unix-domain socket.
+)

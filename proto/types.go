@@ -127,11 +127,41 @@ type SetAttr struct {
 }
 
 // Dirent represents a single directory entry as returned by Rreaddir.
+//
+// The Type field carries a Linux DT_* dirent type value (see proto.DT_DIR,
+// DT_REG, DT_LNK, etc.) -- NOT a 9P QID type bit. The 9P2000.L kernel
+// client in Linux (v9fs_dir_readdir_dotl) passes this byte directly to
+// dir_emit(), so values outside the DT_* range will break ls -F, find -type
+// <X>, and other userspace tools.
+//
+// For synthetic filesystems that derive dirents from QID metadata, use
+// QIDTypeToDT to convert.
 type Dirent struct {
 	QID    QID
 	Offset uint64
 	Type   uint8
 	Name   string
+}
+
+// QIDTypeToDT maps a 9P QID type byte to the closest Linux DT_* dirent
+// type value. Use this when building dirents for synthetic filesystems
+// that track QID metadata rather than stat-derived mode bits.
+//
+// QID type is a bitmask; QTDIR (0x80) has the high bit set, so a bitwise
+// test is used instead of equality. Mapping:
+//
+//	QTDIR     -> DT_DIR  (directory)
+//	QTSYMLINK -> DT_LNK  (symbolic link)
+//	otherwise -> DT_REG  (regular file, including QTAUTH/QTAPPEND/QTEXCL/QTMOUNT/QTTMP)
+func QIDTypeToDT(t QIDType) uint8 {
+	switch {
+	case t&QTDIR != 0:
+		return DT_DIR
+	case t&QTSYMLINK != 0:
+		return DT_LNK
+	default:
+		return DT_REG
+	}
 }
 
 // FSStat holds filesystem statistics returned by Rstatfs.
