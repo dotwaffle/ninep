@@ -22,6 +22,8 @@ var LockExpectedTree = map[string]string{
 // protocol plumbing between a single client and the NodeLocker
 // implementation. For multi-client contention, use newConnPair-based
 // tests directly (see server/lock_test.go).
+//
+// Callers MUST NOT mutate LockCases -- iterate to filter cases.
 var LockCases = []TestCase{
 	{Name: "lock/acquire-write", Run: testLockAcquireWrite},
 	{Name: "lock/release", Run: testLockRelease},

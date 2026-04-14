@@ -24,6 +24,13 @@ func (g *QIDGenerator) Next(t proto.QIDType) proto.QID {
 
 // PathQID returns a deterministic QID derived from the given path string
 // using FNV-1a 64-bit hashing. Useful for nodes with stable, known paths.
+//
+// Collision behavior: FNV-1a is not cryptographic; two distinct path
+// strings can hash to the same 64-bit value with birthday-paradox
+// probability around 2^32 paths. Suitable for small, stable namespaces
+// where the path set is controlled by the server; unsuitable for hashing
+// untrusted user-supplied path components. Use QIDGenerator for collision-free
+// allocation when the QIDs do not need to be path-deterministic.
 func PathQID(t proto.QIDType, path string) proto.QID {
 	h := fnv.New64a()
 	// hash/fnv.Write never returns an error.

@@ -177,22 +177,31 @@ type NodeCloser interface {
 	Close(ctx context.Context) error
 }
 
-// NodeXattrGetter reads extended attributes.
+// NodeXattrGetter reads a single extended attribute by name. Called in
+// response to Txattrwalk with a non-empty name on a node that does NOT
+// implement RawXattrer.
 type NodeXattrGetter interface {
 	GetXattr(ctx context.Context, name string) ([]byte, error)
 }
 
-// NodeXattrSetter sets extended attributes.
+// NodeXattrSetter sets (creates or replaces) an extended attribute. Called
+// in response to Txattrcreate followed by Twrite and Tclunk on a node that
+// does NOT implement RawXattrer. The flags argument is the raw Txattrcreate
+// flags field.
 type NodeXattrSetter interface {
 	SetXattr(ctx context.Context, name string, data []byte, flags uint32) error
 }
 
-// NodeXattrLister lists extended attribute names.
+// NodeXattrLister returns all extended attribute names set on the node.
+// Called in response to Txattrwalk with an empty name on a node that does
+// NOT implement RawXattrer.
 type NodeXattrLister interface {
 	ListXattrs(ctx context.Context) ([]string, error)
 }
 
-// NodeXattrRemover removes extended attributes.
+// NodeXattrRemover removes an extended attribute by name. Called in
+// response to Txattrcreate(size=0) + Tclunk on a node that does NOT
+// implement RawXattrer.
 type NodeXattrRemover interface {
 	RemoveXattr(ctx context.Context, name string) error
 }

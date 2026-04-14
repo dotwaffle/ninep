@@ -170,12 +170,24 @@ const (
 	ENOTSUPP Errno = 524
 )
 
-// Named sentinel errors for common 9P error conditions.
+// Named sentinel errors for common 9P error conditions. Use these with
+// errors.Is/As rather than comparing to the underlying Errno constants
+// directly -- they are the public-facing aliases.
 var (
-	ErrPermission   = EPERM
-	ErrNotFound     = ENOENT
-	ErrIO           = EIO
-	ErrNoSys        = ENOSYS
+	// ErrPermission is returned when an operation is not permitted.
+	// Alias for EPERM.
+	ErrPermission = EPERM
+	// ErrNotFound is returned when a file or directory does not exist.
+	// Alias for ENOENT.
+	ErrNotFound = ENOENT
+	// ErrIO is returned on a generic input/output error. Alias for EIO.
+	ErrIO = EIO
+	// ErrNoSys is returned when the operation is not implemented by
+	// the filesystem (default for every capability-less node). Alias
+	// for ENOSYS.
+	ErrNoSys = ENOSYS
+	// ErrNotSupported is returned when an operation is recognized but
+	// unsupported by the server configuration. Alias for ENOTSUP.
 	ErrNotSupported = ENOTSUP
 )
 

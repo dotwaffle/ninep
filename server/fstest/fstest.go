@@ -15,12 +15,17 @@ import (
 )
 
 // TestCase defines a single protocol-level test against a filesystem root.
+// Check, CheckFactory, CheckLock, and CheckXattr all invoke TestCase entries
+// via t.Run(tc.Name, func(t *testing.T) { tc.Run(t, root) }); external
+// callers can invoke individual cases the same way for partial test selection.
 type TestCase struct {
 	Name string
 	Run  func(t *testing.T, root server.Node)
 }
 
 // Cases holds all registered test cases. Populated by init in cases.go.
+// Callers MUST NOT mutate Cases -- iterate with `for _, tc := range Cases`
+// or filter into a local slice for custom selection.
 var Cases []TestCase
 
 // ExpectedTree documents the tree shape that root must contain for Check

@@ -6,8 +6,14 @@ import (
 	"github.com/dotwaffle/ninep/proto"
 )
 
-// FileHandle is a marker interface for per-open state returned by NodeOpener.Open.
-// Implement FileReader, FileWriter, FileReleaser, or FileReaddirer as needed.
+// FileHandle is a marker type for per-open state returned by NodeOpener.Open.
+// Implement FileReader, FileWriter, FileReleaser, FileSyncer, FileReaddirer,
+// or FileRawReaddirer on the returned value to handle the corresponding
+// wire operations.
+//
+// A nil FileHandle is permitted for nodes that don't need per-open state;
+// the server will not invoke File-level interfaces against a nil handle and
+// instead falls back to Node-level capability dispatch on the underlying node.
 type FileHandle any
 
 // FileReader is implemented by file handles that support reading.

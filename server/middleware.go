@@ -8,8 +8,9 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9u"
 )
 
-// Handler processes a decoded 9P message and returns the response. This type
-// mirrors the dispatch signature and is the unit that middleware wraps.
+// Handler processes a decoded 9P message and returns the response. Middleware
+// wraps Handler values to add cross-cutting behavior (tracing, metrics, logging)
+// without modifying dispatch logic.
 type Handler func(ctx context.Context, tag proto.Tag, msg proto.Message) proto.Message
 
 // Middleware wraps a Handler, adding behavior before and/or after dispatch.

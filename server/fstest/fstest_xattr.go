@@ -23,6 +23,8 @@ var XattrExpectedTree = map[string]map[string]string{
 // XattrCases is the exported slice of xattr test cases used by CheckXattr.
 // Ordered non-destructive -> destructive ("xattr/remove" last), though
 // CheckXattr's per-case root factory makes order irrelevant for correctness.
+//
+// Callers MUST NOT mutate XattrCases -- iterate to filter cases.
 var XattrCases = []TestCase{
 	{Name: "xattr/get", Run: testXattrGet},
 	{Name: "xattr/set", Run: testXattrSet},
