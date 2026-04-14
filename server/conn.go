@@ -58,6 +58,45 @@ var (
 // least a header plus a small error response.
 const minMsize = 256
 
+// negotiationResult carries the validated outcome of a Tversion exchange:
+// the negotiated msize, the selected protocol, the codec, and the version
+// string to echo back to the client. selected == protocolNone means the
+// client requested an unsupported version; the caller still echoes
+// result.version ("unknown") to the client but must NOT transition into a
+// serving state.
+type negotiationResult struct {
+	msize    uint32
+	selected protocol
+	codec    codec
+	version  string // "9P2000.L", "9P2000.u", or "unknown"
+}
+
+// negotiate validates a Tversion request against server limits and selects a
+// protocol. Returns ErrMsizeTooSmall if the negotiated msize falls below
+// minMsize. Pure logic -- no I/O, no connection state mutation, no locks.
+// Callers apply the result to conn fields after handling their own pre/post
+// steps (e.g. handleReVersion's drain+clunk choreography). See
+// .planning/phases/10/10-CONTEXT.md D-SIMP-01.
+func (c *conn) negotiate(tv *proto.Tversion) (negotiationResult, error) {
+	msize := min(tv.Msize, c.server.maxMsize)
+	if msize < minMsize {
+		return negotiationResult{}, ErrMsizeTooSmall
+	}
+	res := negotiationResult{msize: msize, version: tv.Version}
+	switch tv.Version {
+	case "9P2000.L":
+		res.selected = protocolL
+		res.codec = codecL
+	case "9P2000.u":
+		res.selected = protocolU
+		res.codec = codecU
+	default:
+		res.version = "unknown"
+		// selected stays protocolNone; codec stays zero value.
+	}
+	return res, nil
+}
+
 // taggedResponse pairs a tag with a response for the writer goroutine.
 type taggedResponse struct {
 	tag proto.Tag
@@ -230,47 +269,29 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 		return fmt.Errorf("decode tversion: %w", err)
 	}
 
-	// Negotiate msize: min(client, server).
-	negotiated := min(tver.Msize, c.server.maxMsize)
-	if negotiated < minMsize {
-		return ErrMsizeTooSmall
-	}
-
-	// Select protocol from version string.
-	var selected protocol
-	version := tver.Version
-	switch version {
-	case "9P2000.L":
-		selected = protocolL
-	case "9P2000.u":
-		selected = protocolU
-	default:
-		// Unknown version: respond with "unknown" per spec, then close.
-		version = "unknown"
+	// Validate msize + select protocol via shared helper (D-SIMP-01).
+	res, err := c.negotiate(&tver)
+	if err != nil {
+		return err // ErrMsizeTooSmall
 	}
 
 	// Send Rversion response manually (codec not yet selected for the first response).
-	rver := &proto.Rversion{Msize: negotiated, Version: version}
+	rver := &proto.Rversion{Msize: res.msize, Version: res.version}
 	if err := c.writeRaw(proto.Tag(tag), rver); err != nil {
 		return fmt.Errorf("send rversion: %w", err)
 	}
 
-	if selected == protocolNone {
+	if res.selected == protocolNone {
 		return ErrNotNegotiated
 	}
 
-	c.msize = negotiated
-	c.protocol = selected
-	switch selected {
-	case protocolL:
-		c.codec = codecL
-	case protocolU:
-		c.codec = codecU
-	}
+	c.msize = res.msize
+	c.protocol = res.selected
+	c.codec = res.codec
 
 	c.logger.Debug("version negotiated",
-		slog.String("version", version),
-		slog.Uint64("msize", uint64(negotiated)),
+		slog.String("version", res.version),
+		slog.Uint64("msize", uint64(res.msize)),
 	)
 	return nil
 }
@@ -500,43 +521,28 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 		return
 	}
 
-	negotiated := min(tver.Msize, c.server.maxMsize)
-	if negotiated < minMsize {
-		c.logger.Warn("re-negotiation msize too small", slog.Uint64("msize", uint64(negotiated)))
+	// Validate msize + select protocol via shared helper (D-SIMP-01).
+	res, err := c.negotiate(&tver)
+	if err != nil {
+		c.logger.Warn("re-negotiation msize too small", slog.Uint64("msize", uint64(tver.Msize)))
 		return
-	}
-
-	version := tver.Version
-	var selected protocol
-	switch version {
-	case "9P2000.L":
-		selected = protocolL
-	case "9P2000.u":
-		selected = protocolU
-	default:
-		version = "unknown"
 	}
 
 	// Send Rversion directly via writeRaw, which acquires writeMu to
 	// prevent interleaving with the writeLoop goroutine (CR-01).
-	rver := &proto.Rversion{Msize: negotiated, Version: version}
+	rver := &proto.Rversion{Msize: res.msize, Version: res.version}
 	if err := c.writeRaw(tag, rver); err != nil {
 		c.logger.Warn("re-negotiation send error", slog.Any("error", err))
 		return
 	}
 
-	if selected == protocolNone {
+	if res.selected == protocolNone {
 		return
 	}
 
-	c.msize = negotiated
-	c.protocol = selected
-	switch selected {
-	case protocolL:
-		c.codec = codecL
-	case protocolU:
-		c.codec = codecU
-	}
+	c.msize = res.msize
+	c.protocol = res.selected
+	c.codec = res.codec
 }
 
 // newMessage returns a zero-value message struct for the given type based on
