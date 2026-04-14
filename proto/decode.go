@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+
+	"github.com/dotwaffle/ninep/internal/bufpool"
 )
 
 // ReadUint8 reads a single byte from r.
@@ -44,6 +46,11 @@ func ReadUint64(r io.Reader) (uint64, error) {
 
 // ReadString reads a 9P length-prefixed string from r. The string is encoded
 // as length[2] + data[length].
+//
+// Uses a pooled scratch buffer (bufpool.stringBufPool) to avoid the per-call
+// make([]byte, length) allocation. The final string(*scratch) conversion
+// allocates new memory (strings are immutable in Go), so scratch is safe to
+// return to the pool on defer -- the returned string does not alias scratch.
 func ReadString(r io.Reader) (string, error) {
 	length, err := ReadUint16(r)
 	if err != nil {
@@ -52,11 +59,13 @@ func ReadString(r io.Reader) (string, error) {
 	if length == 0 {
 		return "", nil
 	}
-	data := make([]byte, length)
-	if _, err := io.ReadFull(r, data); err != nil {
+	scratch := bufpool.GetStringBuf(int(length))
+	defer bufpool.PutStringBuf(scratch)
+	*scratch = (*scratch)[:length]
+	if _, err := io.ReadFull(r, *scratch); err != nil {
 		return "", fmt.Errorf("read string data: %w", err)
 	}
-	return string(data), nil
+	return string(*scratch), nil
 }
 
 // ReadQID reads a QID from r in wire format: type[1] + version[4] + path[8].

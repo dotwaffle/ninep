@@ -101,15 +101,28 @@ var stringBufPool = sync.Pool{
 }
 
 // GetStringBuf returns a pointer to a []byte suitable for use as a scratch
-// buffer for up to n bytes. If n exceeds PoolMaxBufSize, a fresh buffer is
-// allocated (not pooled). Callers MUST call PutStringBuf(b) when finished.
+// buffer for up to n bytes. The returned buffer is guaranteed to have
+// capacity >= n. If n exceeds PoolMaxBufSize, a fresh buffer is allocated
+// (not pooled). If a pooled buffer has insufficient capacity for n, it is
+// dropped and a fresh buffer of the required size is allocated; the fresh
+// buffer enters the pool on PutStringBuf (assuming it fits under the cap
+// guard), gradually growing the pool's effective size class.
+// Callers MUST call PutStringBuf(b) when finished.
 // The returned slice has length 0; callers reslice as needed.
 func GetStringBuf(n int) *[]byte {
 	if n > PoolMaxBufSize {
 		b := make([]byte, 0, n)
 		return &b
 	}
-	return stringBufPool.Get().(*[]byte)
+	b := stringBufPool.Get().(*[]byte)
+	if cap(*b) < n {
+		// Pooled buffer too small. Drop it (let GC reclaim) and allocate
+		// one sized to n; caller will Put it back and subsequent callers
+		// will benefit from the larger size class.
+		nb := make([]byte, 0, n)
+		return &nb
+	}
+	return b
 }
 
 // PutStringBuf returns b to the pool iff cap(*b) <= PoolMaxBufSize.
