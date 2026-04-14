@@ -18,9 +18,9 @@ type Server struct {
 	root           Node
 	maxMsize       uint32
 	maxInflight    int
-	maxConnections int64        // 0 = unlimited
-	connCount      atomic.Int64 // active connections (internal bookkeeping)
-	maxFids        int          // 0 = unlimited (per-connection cap)
+	maxConnections int64         // 0 = unlimited
+	connCount      atomic.Int64  // active connections (internal bookkeeping)
+	maxFids        int           // 0 = unlimited (per-connection cap)
 	idleTimeout    time.Duration // 0 = no timeout (GO-SEC-1)
 	logger         *slog.Logger
 	anames         map[string]Node

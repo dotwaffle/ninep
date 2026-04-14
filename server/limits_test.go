@@ -273,7 +273,7 @@ func TestMaxFids_AttachReturnsEMFILE(t *testing.T) {
 	cp := newConnPair(t, root, WithMaxFids(1))
 	t.Cleanup(func() { cp.close(t) })
 
-	cp.attach(t, 1, 0, "u", "")              // 1/1
+	cp.attach(t, 1, 0, "u", "")               // 1/1
 	msg := sendAttachExpectError(t, cp, 2, 1) // 2/1 -> EMFILE
 	isError(t, msg, proto.EMFILE)
 }
@@ -286,8 +286,8 @@ func TestMaxFids_WalkCloneReturnsEMFILE(t *testing.T) {
 	cp := newConnPair(t, root, WithMaxFids(2))
 	t.Cleanup(func() { cp.close(t) })
 
-	cp.attach(t, 1, 0, "u", "")       // 1/2
-	resp := cp.walk(t, 2, 0, 1)       // clone -> 2/2
+	cp.attach(t, 1, 0, "u", "") // 1/2
+	resp := cp.walk(t, 2, 0, 1) // clone -> 2/2
 	if _, ok := resp.(*proto.Rwalk); !ok {
 		t.Fatalf("expected Rwalk for clone, got %T: %+v", resp, resp)
 	}
@@ -304,8 +304,8 @@ func TestMaxFids_WalkMultiEMFILE(t *testing.T) {
 	cp := newConnPair(t, root, WithMaxFids(2))
 	t.Cleanup(func() { cp.close(t) })
 
-	cp.attach(t, 1, 0, "u", "")           // 1/2
-	resp := cp.walk(t, 2, 0, 1)           // clone -> 2/2
+	cp.attach(t, 1, 0, "u", "") // 1/2
+	resp := cp.walk(t, 2, 0, 1) // clone -> 2/2
 	if _, ok := resp.(*proto.Rwalk); !ok {
 		t.Fatalf("expected Rwalk for clone, got %T: %+v", resp, resp)
 	}
@@ -356,7 +356,7 @@ func TestMaxFids_ClunkFreesSlot(t *testing.T) {
 	cp := newConnPair(t, root, WithMaxFids(1))
 	t.Cleanup(func() { cp.close(t) })
 
-	cp.attach(t, 1, 0, "u", "")              // 1/1
+	cp.attach(t, 1, 0, "u", "")               // 1/1
 	msg := sendAttachExpectError(t, cp, 2, 1) // 2/1 -> EMFILE
 	isError(t, msg, proto.EMFILE)
 

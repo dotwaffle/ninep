@@ -430,7 +430,6 @@ func TestXattr_Raw_Set(t *testing.T) {
 	}
 }
 
-
 // --- Negative-path tests (Task 2). Cover Pitfall 6 (ENODATA vs ENOSYS),
 // msize clamp, ENOSPC overflow, and ENOSYS for mixed-capability nodes. ---
 
