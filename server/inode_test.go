@@ -170,6 +170,12 @@ func TestInodeENOSYSDefaults(t *testing.T) {
 			},
 		},
 		{
+			name: "Fsync",
+			fn: func() error {
+				return i.Fsync(ctx)
+			},
+		},
+		{
 			name: "Lock",
 			fn: func() error {
 				status, err := i.Lock(ctx, 0, 0, 0, 0, 0, "")

@@ -137,6 +137,17 @@ type NodeStatFSer interface {
 	StatFS(ctx context.Context) (proto.FSStat, error)
 }
 
+// NodeFSyncer is implemented by nodes that support flushing node-level state
+// to durable storage. When both FileSyncer (on the open file handle) and
+// NodeFSyncer are available for a given fid, the bridge prefers FileSyncer.
+//
+// The Tfsync wire message carries a datasync flag which is decoded but not
+// surfaced here -- implementations always perform a full fsync.
+type NodeFSyncer interface {
+	// Fsync flushes pending writes to durable storage.
+	Fsync(ctx context.Context) error
+}
+
 // NodeLocker is implemented by nodes that support POSIX byte-range locking.
 // Implementations control blocking behavior; the library does not impose any
 // blocking policy. Implementations should respect context deadlines if blocking.

@@ -19,6 +19,7 @@ var (
 	_ server.FileReader   = (*fileHandle)(nil)
 	_ server.FileWriter   = (*fileHandle)(nil)
 	_ server.FileReleaser = (*fileHandle)(nil)
+	_ server.FileSyncer   = (*fileHandle)(nil)
 )
 
 // Read reads up to count bytes starting at offset using Pread.
@@ -44,4 +45,10 @@ func (h *fileHandle) Write(_ context.Context, data []byte, offset uint64) (uint3
 // Release closes the OS file descriptor.
 func (h *fileHandle) Release(_ context.Context) error {
 	return toProtoErr(unix.Close(h.fd))
+}
+
+// Fsync flushes buffered writes on the open file to durable storage via
+// unix.Fsync on the reopened fd. Returns a proto.Errno on failure.
+func (h *fileHandle) Fsync(_ context.Context) error {
+	return toProtoErr(unix.Fsync(h.fd))
 }

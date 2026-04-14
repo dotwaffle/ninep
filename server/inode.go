@@ -42,6 +42,7 @@ var (
 	_ NodeUnlinker     = (*Inode)(nil)
 	_ NodeRenamer      = (*Inode)(nil)
 	_ NodeStatFSer     = (*Inode)(nil)
+	_ NodeFSyncer      = (*Inode)(nil)
 	_ NodeLocker       = (*Inode)(nil)
 	_ NodeXattrGetter  = (*Inode)(nil)
 	_ NodeXattrSetter  = (*Inode)(nil)
@@ -201,6 +202,11 @@ func (i *Inode) Rename(_ context.Context, _ string, _ Node, _ string) error {
 // StatFS returns (proto.FSStat{}, proto.ENOSYS). Override by implementing NodeStatFSer.
 func (i *Inode) StatFS(_ context.Context) (proto.FSStat, error) {
 	return proto.FSStat{}, proto.ENOSYS
+}
+
+// Fsync returns proto.ENOSYS. Override by implementing NodeFSyncer.
+func (i *Inode) Fsync(_ context.Context) error {
+	return proto.ENOSYS
 }
 
 // Lock returns (0, proto.ENOSYS). Override by implementing NodeLocker.
