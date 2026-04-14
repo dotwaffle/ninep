@@ -48,3 +48,75 @@ func PutBuf(b *bytes.Buffer) {
 	}
 	bufPool.Put(b)
 }
+
+// msgBufPool pools raw []byte slices for server.readLoop message bodies.
+// Distinct from bufPool (*bytes.Buffer): readLoop wants a contiguous []byte
+// sized to msize so io.ReadFull can target the slice directly; a growable
+// bytes.Buffer is the wrong shape here. Separate pools keep size classes
+// distinct (per sync.Pool best practice).
+//
+// The pool stores *[]byte rather than []byte because sync.Pool boxes its
+// argument into an `any` interface; a slice header is larger than a word
+// and causes the boxing to allocate. Pooling a pointer avoids the box
+// alloc (see RESEARCH Pitfall: "Pool pointer not value").
+var msgBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, PoolMaxBufSize)
+		return &b
+	},
+}
+
+// GetMsgBuf returns a pointer to a []byte with capacity >= n.
+// If n exceeds PoolMaxBufSize, a fresh buffer is allocated (not pooled);
+// this keeps pool memory proportional to steady-state traffic.
+// Callers MUST call PutMsgBuf(b) when finished (typically via defer).
+func GetMsgBuf(n int) *[]byte {
+	if n > PoolMaxBufSize {
+		b := make([]byte, n)
+		return &b
+	}
+	return msgBufPool.Get().(*[]byte)
+}
+
+// PutMsgBuf returns b to the pool iff cap(*b) <= PoolMaxBufSize.
+// Oversized buffers are dropped and GC'd.
+func PutMsgBuf(b *[]byte) {
+	if cap(*b) > PoolMaxBufSize {
+		return
+	}
+	// Reset length to full capacity so the next caller sees the full slice.
+	*b = (*b)[:cap(*b)]
+	msgBufPool.Put(b)
+}
+
+// stringBufPool pools raw []byte scratch buffers for proto.ReadString.
+// Strings in 9P have a uint16 length prefix, so typical sizes are small
+// (names, paths, version strings, uname). Initial cap is 1024 bytes,
+// well below PoolMaxBufSize; a separate pool keeps the size class tight.
+var stringBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, 1024)
+		return &b
+	},
+}
+
+// GetStringBuf returns a pointer to a []byte suitable for use as a scratch
+// buffer for up to n bytes. If n exceeds PoolMaxBufSize, a fresh buffer is
+// allocated (not pooled). Callers MUST call PutStringBuf(b) when finished.
+// The returned slice has length 0; callers reslice as needed.
+func GetStringBuf(n int) *[]byte {
+	if n > PoolMaxBufSize {
+		b := make([]byte, 0, n)
+		return &b
+	}
+	return stringBufPool.Get().(*[]byte)
+}
+
+// PutStringBuf returns b to the pool iff cap(*b) <= PoolMaxBufSize.
+func PutStringBuf(b *[]byte) {
+	if cap(*b) > PoolMaxBufSize {
+		return
+	}
+	*b = (*b)[:0]
+	stringBufPool.Put(b)
+}
