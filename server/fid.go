@@ -57,11 +57,17 @@ func (ft *fidTable) get(fid proto.Fid) *fidState {
 	return ft.fids[fid]
 }
 
-// add inserts a new fid into the table. Returns ErrFidInUse (wrapped) if the
-// fid is already present. Safe for concurrent use.
-func (ft *fidTable) add(fid proto.Fid, fs *fidState) error {
+// add inserts a new fid into the table. If maxFids > 0 and the current fid
+// count is at or above the cap, add returns ErrFidLimitExceeded and does not
+// insert. Returns ErrFidInUse (wrapped) if the fid is already present. The
+// cap check and dup check both run inside the write lock, making enforcement
+// race-free. Safe for concurrent use.
+func (ft *fidTable) add(fid proto.Fid, fs *fidState, maxFids int) error {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
+	if maxFids > 0 && len(ft.fids) >= maxFids {
+		return ErrFidLimitExceeded
+	}
 	if _, exists := ft.fids[fid]; exists {
 		return fmt.Errorf("add fid %d: %w", fid, ErrFidInUse)
 	}

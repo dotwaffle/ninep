@@ -103,7 +103,10 @@ func (c *conn) handleAttach(ctx context.Context, ta *proto.Tattach) proto.Messag
 		attachPath = "/" + ta.Aname
 	}
 	fs := &fidState{node: node, path: attachPath, state: fidAllocated}
-	if err := c.fids.add(ta.Fid, fs); err != nil {
+	if err := c.fids.add(ta.Fid, fs, c.maxFids); err != nil {
+		if errors.Is(err, ErrFidLimitExceeded) {
+			return c.errorMsg(proto.EMFILE)
+		}
 		return c.errorMsg(proto.EBADF)
 	}
 
@@ -125,7 +128,10 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 		}
 		// Clone: newfid points to same node with same path.
 		fs := &fidState{node: src.node, path: src.path, state: fidAllocated}
-		if err := c.fids.add(tw.NewFid, fs); err != nil {
+		if err := c.fids.add(tw.NewFid, fs, c.maxFids); err != nil {
+			if errors.Is(err, ErrFidLimitExceeded) {
+				return c.errorMsg(proto.EMFILE)
+			}
 			return c.errorMsg(proto.EBADF)
 		}
 		c.otelInst.recordFidChange(1)
@@ -176,7 +182,10 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 			c.fids.setPath(tw.Fid, newPath)
 		} else {
 			fs := &fidState{node: current, path: newPath, state: fidAllocated}
-			if err := c.fids.add(tw.NewFid, fs); err != nil {
+			if err := c.fids.add(tw.NewFid, fs, c.maxFids); err != nil {
+				if errors.Is(err, ErrFidLimitExceeded) {
+					return c.errorMsg(proto.EMFILE)
+				}
 				return c.errorMsg(proto.EBADF)
 			}
 			c.otelInst.recordFidChange(1)

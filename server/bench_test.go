@@ -252,7 +252,7 @@ func BenchmarkFidTableContention(b *testing.B) {
 		b.Run("fids="+strconv.Itoa(n), func(b *testing.B) {
 			ft := newFidTable()
 			for i := range n {
-				if err := ft.add(proto.Fid(i), &fidState{}); err != nil {
+				if err := ft.add(proto.Fid(i), &fidState{}, 0); err != nil {
 					b.Fatalf("pre-populate fid %d: %v", i, err)
 				}
 			}

@@ -69,6 +69,7 @@ type conn struct {
 	server   *Server
 	nc       net.Conn
 	fids     *fidTable
+	maxFids  int // Copied from server.maxFids; 0 = unlimited (per-connection cap).
 	protocol protocol
 	msize    uint32 // Negotiated msize (0 until version negotiation).
 	codec    codec
@@ -108,6 +109,7 @@ func newConn(s *Server, nc net.Conn) *conn {
 		server:    s,
 		nc:        nc,
 		fids:      newFidTable(),
+		maxFids:   s.maxFids,
 		responses: make(chan taggedResponse, s.maxInflight),
 		inflight:  newInflightMap(),
 		semaphore: make(chan struct{}, s.maxInflight),

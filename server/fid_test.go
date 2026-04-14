@@ -27,7 +27,7 @@ func TestFidTable_AddAndGet(t *testing.T) {
 	node := newTestNode(proto.QID{Type: proto.QTFILE, Version: 1, Path: 100})
 	fs := &fidState{node: node, state: fidAllocated}
 
-	if err := ft.add(1, fs); err != nil {
+	if err := ft.add(1, fs, 0); err != nil {
 		t.Fatalf("add fid 1: %v", err)
 	}
 
@@ -50,11 +50,11 @@ func TestFidTable_AddDuplicate(t *testing.T) {
 	node := newTestNode(proto.QID{Path: 1})
 	fs := &fidState{node: node, state: fidAllocated}
 
-	if err := ft.add(1, fs); err != nil {
+	if err := ft.add(1, fs, 0); err != nil {
 		t.Fatalf("first add: %v", err)
 	}
 
-	err := ft.add(1, fs)
+	err := ft.add(1, fs, 0)
 	if err == nil {
 		t.Fatal("second add: got nil error, want ErrFidInUse")
 	}
@@ -80,7 +80,7 @@ func TestFidTable_Clunk(t *testing.T) {
 	node := newTestNode(proto.QID{Path: 2})
 	fs := &fidState{node: node, state: fidAllocated}
 
-	if err := ft.add(1, fs); err != nil {
+	if err := ft.add(1, fs, 0); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 
@@ -114,7 +114,7 @@ func TestFidTable_ClunkAll(t *testing.T) {
 	ft := newFidTable()
 	for i := range 5 {
 		node := newTestNode(proto.QID{Path: uint64(i)})
-		if err := ft.add(proto.Fid(i), &fidState{node: node, state: fidAllocated}); err != nil {
+		if err := ft.add(proto.Fid(i), &fidState{node: node, state: fidAllocated}, 0); err != nil {
 			t.Fatalf("add fid %d: %v", i, err)
 		}
 	}
@@ -137,7 +137,7 @@ func TestFidTable_Update(t *testing.T) {
 	node1 := newTestNode(proto.QID{Path: 10})
 	node2 := newTestNode(proto.QID{Path: 20})
 
-	if err := ft.add(1, &fidState{node: node1, state: fidAllocated}); err != nil {
+	if err := ft.add(1, &fidState{node: node1, state: fidAllocated}, 0); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 
@@ -169,7 +169,7 @@ func TestFidTable_MarkOpened(t *testing.T) {
 
 	ft := newFidTable()
 	node := newTestNode(proto.QID{Path: 1})
-	if err := ft.add(1, &fidState{node: node, state: fidAllocated}); err != nil {
+	if err := ft.add(1, &fidState{node: node, state: fidAllocated}, 0); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 
@@ -207,7 +207,7 @@ func TestFidTable_Len(t *testing.T) {
 
 	for i := range 3 {
 		node := newTestNode(proto.QID{Path: uint64(i)})
-		if err := ft.add(proto.Fid(i), &fidState{node: node, state: fidAllocated}); err != nil {
+		if err := ft.add(proto.Fid(i), &fidState{node: node, state: fidAllocated}, 0); err != nil {
 			t.Fatalf("add fid %d: %v", i, err)
 		}
 	}
@@ -236,7 +236,7 @@ func TestFidTable_ConcurrentAccess(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			node := newTestNode(proto.QID{Path: uint64(id)})
-			_ = ft.add(proto.Fid(id), &fidState{node: node, state: fidAllocated})
+			_ = ft.add(proto.Fid(id), &fidState{node: node, state: fidAllocated}, 0)
 		}(i)
 	}
 

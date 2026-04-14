@@ -40,6 +40,20 @@ func WithMaxConnections(n int) Option {
 	}
 }
 
+// WithMaxFids sets the maximum number of concurrent fids the server will
+// allow per connection. When the cap is reached, fid-creating operations
+// (Tattach, Twalk, Txattrwalk) return EMFILE. The cap check runs inside
+// fidTable.add under the write lock, making enforcement race-free. Values
+// less than 1 disable the limit. Default: 0 (no limit).
+func WithMaxFids(n int) Option {
+	return func(s *Server) {
+		if n < 1 {
+			n = 0
+		}
+		s.maxFids = n
+	}
+}
+
 // WithLogger sets the structured logger for the server. The handler is
 // automatically wrapped with trace ID correlation (see NewTraceHandler).
 // Default: slog.Default() with trace correlation.

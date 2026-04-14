@@ -22,4 +22,9 @@ var (
 	// ErrNotDirectory is returned when a walk targets a node that does not
 	// implement NodeLookuper.
 	ErrNotDirectory = errors.New("not a directory")
+
+	// ErrFidLimitExceeded is returned by fidTable.add when the configured
+	// per-connection fid cap (see WithMaxFids) has been reached. Handlers
+	// map this to proto.EMFILE in the response.
+	ErrFidLimitExceeded = errors.New("fid limit exceeded")
 )

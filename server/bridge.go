@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
@@ -728,7 +729,10 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 			xattrName: m.Name,
 			xattrData: data,
 		}
-		if err := c.fids.add(m.NewFid, xfs); err != nil {
+		if err := c.fids.add(m.NewFid, xfs, c.maxFids); err != nil {
+			if errors.Is(err, ErrFidLimitExceeded) {
+				return c.errorMsg(proto.EMFILE)
+			}
 			return c.errorMsg(proto.EBADF)
 		}
 		return &p9l.Rxattrwalk{Size: uint64(len(data))}
@@ -755,7 +759,10 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 			xattrNode: fs.node,
 			xattrData: buf,
 		}
-		if err := c.fids.add(m.NewFid, xfs); err != nil {
+		if err := c.fids.add(m.NewFid, xfs, c.maxFids); err != nil {
+			if errors.Is(err, ErrFidLimitExceeded) {
+				return c.errorMsg(proto.EMFILE)
+			}
 			return c.errorMsg(proto.EBADF)
 		}
 		return &p9l.Rxattrwalk{Size: uint64(len(buf))}
@@ -777,7 +784,10 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 		xattrName: m.Name,
 		xattrData: data,
 	}
-	if err := c.fids.add(m.NewFid, xfs); err != nil {
+	if err := c.fids.add(m.NewFid, xfs, c.maxFids); err != nil {
+		if errors.Is(err, ErrFidLimitExceeded) {
+			return c.errorMsg(proto.EMFILE)
+		}
 		return c.errorMsg(proto.EBADF)
 	}
 	return &p9l.Rxattrwalk{Size: uint64(len(data))}
