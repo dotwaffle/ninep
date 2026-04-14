@@ -313,6 +313,95 @@ func expectRwrite(t *testing.T, msg proto.Message) uint32 {
 	return rw.Count
 }
 
+// lopen sends Tlopen and returns the raw response (Rlopen or Rlerror).
+//
+// Mirror of open(), exported name for use from fstest_xattr.go and
+// fstest_lock.go where the lowercase name is unavailable to tests in
+// sibling files only by package scope.
+func lopen(t *testing.T, tc *testConn, tag proto.Tag, fid proto.Fid, flags uint32) proto.Message {
+	t.Helper()
+	sendMsg(t, tc.client, tag, &p9l.Tlopen{Fid: fid, Flags: flags})
+	_, msg := readMsg(t, tc.client)
+	return msg
+}
+
+// xattrwalk sends Txattrwalk and returns the raw response.
+func xattrwalk(t *testing.T, tc *testConn, tag proto.Tag, fid, newFid proto.Fid, name string) proto.Message {
+	t.Helper()
+	sendMsg(t, tc.client, tag, &p9l.Txattrwalk{Fid: fid, NewFid: newFid, Name: name})
+	_, msg := readMsg(t, tc.client)
+	return msg
+}
+
+// xattrcreate sends Txattrcreate and returns the raw response.
+func xattrcreate(t *testing.T, tc *testConn, tag proto.Tag, fid proto.Fid, name string, attrSize uint64, flags uint32) proto.Message {
+	t.Helper()
+	sendMsg(t, tc.client, tag, &p9l.Txattrcreate{Fid: fid, Name: name, AttrSize: attrSize, Flags: flags})
+	_, msg := readMsg(t, tc.client)
+	return msg
+}
+
+// tlock sends Tlock and returns the raw response.
+func tlock(t *testing.T, tc *testConn, tag proto.Tag, fid proto.Fid, lockType proto.LockType, flags proto.LockFlags, start, length uint64, procID uint32, clientID string) proto.Message {
+	t.Helper()
+	sendMsg(t, tc.client, tag, &p9l.Tlock{
+		Fid:      fid,
+		LockType: lockType,
+		Flags:    flags,
+		Start:    start,
+		Length:   length,
+		ProcID:   procID,
+		ClientID: clientID,
+	})
+	_, msg := readMsg(t, tc.client)
+	return msg
+}
+
+// tgetlock sends Tgetlock and returns the raw response.
+func tgetlock(t *testing.T, tc *testConn, tag proto.Tag, fid proto.Fid, lockType proto.LockType, start, length uint64, procID uint32, clientID string) proto.Message {
+	t.Helper()
+	sendMsg(t, tc.client, tag, &p9l.Tgetlock{
+		Fid:      fid,
+		LockType: lockType,
+		Start:    start,
+		Length:   length,
+		ProcID:   procID,
+		ClientID: clientID,
+	})
+	_, msg := readMsg(t, tc.client)
+	return msg
+}
+
+// expectRxattrwalk asserts the response is an Rxattrwalk and returns it.
+func expectRxattrwalk(t *testing.T, msg proto.Message) *p9l.Rxattrwalk {
+	t.Helper()
+	rxw, ok := msg.(*p9l.Rxattrwalk)
+	if !ok {
+		t.Fatalf("expected Rxattrwalk, got %T: %+v", msg, msg)
+	}
+	return rxw
+}
+
+// expectRlock asserts the response is an Rlock and returns it.
+func expectRlock(t *testing.T, msg proto.Message) *p9l.Rlock {
+	t.Helper()
+	rl, ok := msg.(*p9l.Rlock)
+	if !ok {
+		t.Fatalf("expected Rlock, got %T: %+v", msg, msg)
+	}
+	return rl
+}
+
+// expectRgetlock asserts the response is an Rgetlock and returns it.
+func expectRgetlock(t *testing.T, msg proto.Message) *p9l.Rgetlock {
+	t.Helper()
+	rgl, ok := msg.(*p9l.Rgetlock)
+	if !ok {
+		t.Fatalf("expected Rgetlock, got %T: %+v", msg, msg)
+	}
+	return rgl
+}
+
 // NewTestTree constructs the standard test tree using memfs for use with
 // Check. The tree layout matches ExpectedTree:
 //
