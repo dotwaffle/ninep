@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -383,4 +384,133 @@ func TestMaxFids_ClonedFidCoversCap(t *testing.T) {
 	}
 	resp = cp.walk(t, 3, 0, 2) // third -> EMFILE
 	isError(t, resp, proto.EMFILE)
+}
+
+// TestLimits_CombinedConfig exercises both WithMaxConnections(2) and
+// WithMaxFids(3) on the same server, validating that the two caps are
+// independent and do not interfere with each other.
+//
+// Each connection owns its own context.WithCancel(testCtx) so closing one
+// does not cascade-cancel the others. t.Cleanup waits on each server
+// goroutine's done channel -- liveness is enforced without relying on the
+// outer test timeout.
+func TestLimits_CombinedConfig(t *testing.T) {
+	t.Parallel()
+	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
+
+	// Server: accept 2 connections, each with 3 fids.
+	srv := New(root, WithMaxConnections(2), WithMaxFids(3), WithLogger(discardLogger()))
+
+	testCtx, testCancel := context.WithTimeout(t.Context(), 10*time.Second)
+	t.Cleanup(testCancel)
+
+	// openConn opens a connection with its OWN context so per-conn teardown
+	// does not cascade. Each returned connPair's cleanup waits on the
+	// ServeConn goroutine's done channel.
+	openConn := func() *connPair {
+		cc, sc := net.Pipe()
+		connCtx, connCancel := context.WithCancel(testCtx)
+		done := make(chan struct{})
+		go func() { defer close(done); srv.ServeConn(connCtx, sc) }()
+		sendTversion(t, cc, 65536, "9P2000.L")
+		_ = readRversion(t, cc)
+		t.Cleanup(func() {
+			_ = cc.Close()
+			connCancel()
+			<-done // wait for ServeConn goroutine to exit
+		})
+		return &connPair{client: cc, done: done, cancel: connCancel}
+	}
+
+	// First connection: attach + 2 clones = 3 fids (at cap).
+	cp1 := openConn()
+	cp1.attach(t, 1, 0, "u", "") // 1/3
+	if _, ok := cp1.walk(t, 2, 0, 1).(*proto.Rwalk); !ok {
+		t.Fatalf("cp1 clone 1 failed")
+	} // 2/3
+	if _, ok := cp1.walk(t, 3, 0, 2).(*proto.Rwalk); !ok {
+		t.Fatalf("cp1 clone 2 failed")
+	} // 3/3
+	// 4th fid on cp1 -> EMFILE.
+	resp := cp1.walk(t, 4, 0, 3)
+	isError(t, resp, proto.EMFILE)
+
+	// Second connection: accepted, independent ctx from cp1. Its own fid
+	// budget is independent of cp1's -- attach must succeed despite cp1
+	// being at its cap.
+	cp2 := openConn()
+	cp2.attach(t, 1, 0, "u", "")
+
+	// Third connection: rejected by the connection cap. Its ctx/cancel
+	// are independent so we can wait on done without relying on testCtx.
+	c3Client, c3Server := net.Pipe()
+	c3Ctx, c3Cancel := context.WithCancel(testCtx)
+	t.Cleanup(func() { c3Cancel(); _ = c3Client.Close() })
+	done3 := make(chan struct{})
+	go func() { defer close(done3); srv.ServeConn(c3Ctx, c3Server) }()
+	select {
+	case <-done3:
+		// ok -- server rejected and returned
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("3rd ServeConn did not return; conn-cap not enforced")
+	}
+}
+
+// TestLimits_ConcurrentWalkClunkStress runs G goroutines, each owning its
+// own dedicated connPair, doing N iterations of walk+clunk under
+// WithMaxFids(5). Each goroutine owns a single connection exclusively --
+// no cross-goroutine wire interleaving -- so this test exercises
+// server-side concurrency: G parallel ServeConn goroutines sharing one
+// Server, each with its own fidTable, contending on fidTable.add's cap
+// branch under -race.
+//
+// Per-conn fid budget is 5 (fid 0 = attach, fids 1..4 cycle through
+// walk+clunk). The tight clone+clunk loop never hits the cap, so every
+// walk MUST succeed. A returned EMFILE would indicate cross-connection
+// state leakage -- a bug.
+func TestLimits_ConcurrentWalkClunkStress(t *testing.T) {
+	t.Parallel()
+	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
+
+	const G = 4  // goroutines (and connections)
+	const N = 50 // iterations per goroutine
+
+	var wg sync.WaitGroup
+	errs := make(chan error, G*N*2)
+	for g := range G {
+		wg.Add(1)
+		go func(gID int) {
+			defer wg.Done()
+			// Each goroutine owns its connection exclusively -- sendMessage
+			// and readResponse pairs never interleave across goroutines.
+			cp := newConnPair(t, root, WithMaxFids(5))
+			defer cp.close(t)
+
+			// Attach fid 0 on this connection (1/5).
+			cp.attach(t, proto.Tag(gID*10_000+1), 0, "u", "")
+
+			for i := range N {
+				// Reuse a small set of fids; clunk immediately after clone
+				// so this connection never reaches the per-conn cap.
+				newFid := proto.Fid(1 + (i % 4))
+				tag := proto.Tag(gID*10_000 + 100 + i)
+
+				resp := cp.walk(t, tag, 0, newFid)
+				if _, ok := resp.(*proto.Rwalk); !ok {
+					errs <- fmt.Errorf("g%d i%d: walk got %T, want *proto.Rwalk", gID, i, resp)
+					return
+				}
+				cresp := cp.clunk(t, proto.Tag(int(tag)+1), newFid)
+				if _, ok := cresp.(*proto.Rclunk); !ok {
+					errs <- fmt.Errorf("g%d i%d: clunk got %T, want *proto.Rclunk", gID, i, cresp)
+					return
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("goroutine error: %v", err)
+	}
 }
