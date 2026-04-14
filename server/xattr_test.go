@@ -632,3 +632,166 @@ func TestXattr_Overwrite_ENOSPC(t *testing.T) {
 	msg = cp.clunk(t, 6, 3)
 	isError(t, msg, proto.EIO)
 }
+
+// --- Positive-path + priority tests (Task 3). ---
+
+// TestXattr_Remove verifies the simple-interface remove flow: Txattrcreate
+// with AttrSize=0 followed by Tclunk (no intermediate Twrite) invokes
+// NodeXattrRemover.RemoveXattr. The removal is observable because a
+// subsequent Txattrwalk for the removed key surfaces ENODATA. Covers the
+// dispatch.go:221-228 branch and RESEARCH gap #1.
+func TestXattr_Remove(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+	xf := &xattrFile{xattrs: map[string][]byte{"user.doomed": []byte("bye")}}
+	xf.Init(gen.Next(proto.QTFILE), xf)
+	root.AddChild("xfile", xf.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	cp.walk(t, 2, 0, 2, "xfile")
+	cp.walk(t, 3, 2, 3) // clone for xattrcreate
+
+	// Txattrcreate AttrSize=0 on the cloned fid.
+	sendMessage(t, cp.client, 4, &p9l.Txattrcreate{Fid: 3, Name: "user.doomed", AttrSize: 0, Flags: 0})
+	_, msg := readResponse(t, cp.client)
+	if _, ok := msg.(*p9l.Rxattrcreate); !ok {
+		t.Fatalf("expected Rxattrcreate, got %T: %+v", msg, msg)
+	}
+
+	// No Twrite — clunk triggers RemoveXattr on the simple interface.
+	msg = cp.clunk(t, 5, 3)
+	if _, ok := msg.(*proto.Rclunk); !ok {
+		t.Fatalf("expected Rclunk, got %T: %+v", msg, msg)
+	}
+
+	// Verify: a fresh Txattrwalk on the removed key returns ENODATA
+	// (xattrFile.GetXattr surfaces the sentinel from the now-empty map).
+	sendMessage(t, cp.client, 6, &p9l.Txattrwalk{Fid: 2, NewFid: 10, Name: "user.doomed"})
+	_, msg = readResponse(t, cp.client)
+	isError(t, msg, proto.ENODATA)
+}
+
+// TestXattr_EmptyList verifies NodeXattrLister with an empty attribute set:
+// Rxattrwalk reports Size=0, a subsequent Tread returns an empty body, and
+// Tclunk succeeds. Covers the empty-list edge case in bridge.go:789-806.
+func TestXattr_EmptyList(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+	xf := &xattrFile{xattrs: map[string][]byte{}}
+	xf.Init(gen.Next(proto.QTFILE), xf)
+	root.AddChild("xfile", xf.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	cp.walk(t, 2, 0, 2, "xfile")
+
+	// Txattrwalk in list mode (Name="") on an empty-xattr node.
+	sendMessage(t, cp.client, 3, &p9l.Txattrwalk{Fid: 2, NewFid: 10, Name: ""})
+	_, msg := readResponse(t, cp.client)
+	rxw, ok := msg.(*p9l.Rxattrwalk)
+	if !ok {
+		t.Fatalf("expected Rxattrwalk, got %T: %+v", msg, msg)
+	}
+	if rxw.Size != 0 {
+		t.Errorf("empty-list Rxattrwalk.Size = %d, want 0", rxw.Size)
+	}
+
+	// Read from the fid — expect empty payload, not an error.
+	msg = cp.read(t, 4, 10, 0, 1024)
+	rr, ok := msg.(*proto.Rread)
+	if !ok {
+		t.Fatalf("expected Rread, got %T: %+v", msg, msg)
+	}
+	if len(rr.Data) != 0 {
+		t.Errorf("empty-list Rread.Data = %q, want empty", string(rr.Data))
+	}
+
+	if _, ok := cp.clunk(t, 5, 10).(*proto.Rclunk); !ok {
+		t.Fatalf("clunk after empty-list read did not return Rclunk")
+	}
+}
+
+// TestXattr_Priority verifies the precedence rule at bridge.go:758 and :849:
+// when a node satisfies BOTH RawXattrer and the simple NodeXattr* interfaces,
+// Txattrwalk and Txattrcreate MUST route through the RawXattrer methods. The
+// simple interfaces must never be invoked — bothXattrFile records any such
+// invocation in simpleCalls, so len(simpleCalls) == 0 after the full flow
+// proves the routing is exclusive. Covers T-11-01-02 (Information Disclosure
+// via priority-dispatch regression).
+func TestXattr_Priority(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+	bxf := &bothXattrFile{xattrs: map[string][]byte{}}
+	bxf.Init(gen.Next(proto.QTFILE), bxf)
+	root.AddChild("both", bxf.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	cp.walk(t, 2, 0, 2, "both")
+
+	// Txattrwalk — RawXattrer.HandleXattrwalk returns "from-raw" (8 bytes).
+	// If priority were broken, GetXattr would run and return "from-simple".
+	sendMessage(t, cp.client, 3, &p9l.Txattrwalk{Fid: 2, NewFid: 10, Name: "probe"})
+	_, msg := readResponse(t, cp.client)
+	rxw, ok := msg.(*p9l.Rxattrwalk)
+	if !ok {
+		t.Fatalf("expected Rxattrwalk, got %T: %+v", msg, msg)
+	}
+	if rxw.Size != 8 {
+		t.Errorf("priority Rxattrwalk.Size = %d, want 8 (from-raw)", rxw.Size)
+	}
+	msg = cp.read(t, 4, 10, 0, 100)
+	rr, ok := msg.(*proto.Rread)
+	if !ok {
+		t.Fatalf("expected Rread, got %T: %+v", msg, msg)
+	}
+	if string(rr.Data) != "from-raw" {
+		t.Errorf("priority Rread.Data = %q, want %q", string(rr.Data), "from-raw")
+	}
+	cp.clunk(t, 5, 10)
+
+	// Txattrcreate + Twrite + Tclunk — RawXattrer.HandleXattrcreate returns
+	// a bothXattrWriter. Commit writes back to bxf.lastWriteName/lastWriteData.
+	// If priority were broken, SetXattr would be called on clunk instead.
+	cp.walk(t, 6, 2, 3) // clone
+	sendMessage(t, cp.client, 7, &p9l.Txattrcreate{Fid: 3, Name: "new", AttrSize: 4, Flags: 0})
+	_, msg = readResponse(t, cp.client)
+	if _, ok := msg.(*p9l.Rxattrcreate); !ok {
+		t.Fatalf("expected Rxattrcreate, got %T: %+v", msg, msg)
+	}
+	if _, ok := cp.write(t, 8, 3, 0, []byte("data")).(*proto.Rwrite); !ok {
+		t.Fatal("expected Rwrite")
+	}
+	if _, ok := cp.clunk(t, 9, 3).(*proto.Rclunk); !ok {
+		t.Fatal("expected Rclunk")
+	}
+
+	// Raw-path observation: writer.Commit recorded these on bxf.
+	if bxf.lastWriteName != "new" {
+		t.Errorf("bxf.lastWriteName = %q, want %q", bxf.lastWriteName, "new")
+	}
+	if string(bxf.lastWriteData) != "data" {
+		t.Errorf("bxf.lastWriteData = %q, want %q", string(bxf.lastWriteData), "data")
+	}
+
+	// The critical priority assertion: no simple-interface method was ever
+	// called. Any entry here means the bridge dispatched to the simple
+	// path despite RawXattrer being present — a regression of the precedence
+	// rule that would leak state via whichever simple method got called.
+	if len(bxf.simpleCalls) != 0 {
+		t.Errorf("simple interfaces called despite RawXattrer: %v", bxf.simpleCalls)
+	}
+}
