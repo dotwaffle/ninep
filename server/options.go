@@ -26,6 +26,20 @@ func WithMaxInflight(n int) Option {
 	}
 }
 
+// WithMaxConnections sets the maximum number of concurrent connections the
+// server will serve. When the limit is reached, ServeConn closes the new
+// connection immediately, logs a warning, and increments the
+// ninep.server.connections_rejected OTel counter. Values less than 1 disable
+// the limit. Default: 0 (no limit).
+func WithMaxConnections(n int) Option {
+	return func(s *Server) {
+		if n < 1 {
+			n = 0
+		}
+		s.maxConnections = int64(n)
+	}
+}
+
 // WithLogger sets the structured logger for the server. The handler is
 // automatically wrapped with trace ID correlation (see NewTraceHandler).
 // Default: slog.Default() with trace correlation.
