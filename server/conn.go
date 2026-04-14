@@ -10,6 +10,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/dotwaffle/ninep/internal/bufpool"
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
 	"github.com/dotwaffle/ninep/proto/p9u"
@@ -286,8 +287,14 @@ func (c *conn) writeRaw(tag proto.Tag, msg proto.Message) error {
 		}
 	}
 
-	var body bytes.Buffer
-	if err := msg.EncodeTo(&body); err != nil {
+	// Body buffer is borrowed from the shared pool and returned via defer.
+	// Passing the pooled *bytes.Buffer into msg.EncodeTo triggers the
+	// proto.Write* zero-alloc fast path (plan 08-02). PutBuf runs AFTER
+	// c.nc.Write returns; net.Conn.Write copies its input synchronously,
+	// so the buffer is no longer referenced when it returns to the pool.
+	body := bufpool.GetBuf()
+	defer bufpool.PutBuf(body)
+	if err := msg.EncodeTo(body); err != nil {
 		return fmt.Errorf("encode %s body: %w", msg.Type(), err)
 	}
 

@@ -1,18 +1,27 @@
 package p9u
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 
+	"github.com/dotwaffle/ninep/internal/bufpool"
 	"github.com/dotwaffle/ninep/proto"
 )
 
 // Encode writes a complete 9P2000.u message to w, including the size[4] +
 // type[1] + tag[2] header followed by the message body.
+//
+// The body buffer is borrowed from proto/internal/bufpool and returned via
+// defer. Passing the pooled *bytes.Buffer into msg.EncodeTo lets the
+// proto.Write* helpers take their zero-alloc *bytes.Buffer fast path
+// (established in plan 08-02). Put-after-Write is safe: w.Write(body.Bytes())
+// returns synchronously — both bytes.Buffer and net.Conn copy input before
+// returning, so the pooled buffer is no longer referenced when PutBuf runs.
 func Encode(w io.Writer, tag proto.Tag, msg proto.Message) error {
-	var body bytes.Buffer
-	if err := msg.EncodeTo(&body); err != nil {
+	body := bufpool.GetBuf()
+	defer bufpool.PutBuf(body)
+
+	if err := msg.EncodeTo(body); err != nil {
 		return fmt.Errorf("encode %s body: %w", msg.Type(), err)
 	}
 

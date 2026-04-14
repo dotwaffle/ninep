@@ -1,9 +1,9 @@
 // Package bufpool provides a process-wide *bytes.Buffer pool for the
-// encode, decode, and readLoop hot paths. It lives under proto/internal/
-// so only github.com/dotwaffle/ninep/... may import it -- Go's internal/
-// rule gives us the "internal only" property that CONTEXT.md requires
-// while still letting cross-package consumers (proto/p9l, proto/p9u,
-// server) share a single pool.
+// encode, decode, and readLoop hot paths. It lives under internal/
+// at the module root so only github.com/dotwaffle/ninep/... may import
+// it -- Go's internal/ rule gives us the "internal only" property that
+// CONTEXT.md requires while still letting cross-package consumers
+// (proto/p9l, proto/p9u, server) share a single pool.
 //
 // See .planning/phases/08/08-RESEARCH.md Architecture Patterns §1 for
 // the pool-shape rationale and Pitfall 2 for the cap-guard rationale.
