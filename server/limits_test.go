@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dotwaffle/ninep/proto"
+	"github.com/dotwaffle/ninep/proto/p9l"
 )
 
 // TestMaxConnections_RejectsExcess verifies that ServeConn rejects the
@@ -228,4 +229,158 @@ func readRversionOrErr(r net.Conn) (*proto.Rversion, error) {
 		return nil, err
 	}
 	return &rv, nil
+}
+
+// sendAttachExpectError sends a Tattach and returns the raw response. Unlike
+// connPair.attach it does not fail on non-Rattach responses -- the caller
+// inspects the returned message (typically expecting Rlerror{EMFILE}).
+func sendAttachExpectError(t *testing.T, cp *connPair, tag proto.Tag, fid proto.Fid) proto.Message {
+	t.Helper()
+	sendMessage(t, cp.client, tag, &proto.Tattach{
+		Fid:   fid,
+		Afid:  proto.NoFid,
+		Uname: "u",
+		Aname: "",
+	})
+	_, msg := readResponse(t, cp.client)
+	return msg
+}
+
+// TestMaxFids_ZeroUnlimited verifies that WithMaxFids(0) imposes no limit:
+// many sequential fid-creating operations all succeed.
+func TestMaxFids_ZeroUnlimited(t *testing.T) {
+	t.Parallel()
+	root := testTree()
+	cp := newConnPair(t, root, WithMaxFids(0))
+	t.Cleanup(func() { cp.close(t) })
+
+	// Attach fid 0, then clone to fids 1..9. All must succeed.
+	cp.attach(t, 1, 0, "u", "")
+	for i := proto.Fid(1); i <= 9; i++ {
+		resp := cp.walk(t, proto.Tag(10+i), 0, i)
+		if _, ok := resp.(*proto.Rwalk); !ok {
+			t.Fatalf("clone to fid %d: expected Rwalk, got %T: %+v", i, resp, resp)
+		}
+	}
+}
+
+// TestMaxFids_AttachReturnsEMFILE verifies that Tattach at the fid cap
+// returns Rlerror{EMFILE} rather than silently succeeding.
+func TestMaxFids_AttachReturnsEMFILE(t *testing.T) {
+	t.Parallel()
+	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
+	cp := newConnPair(t, root, WithMaxFids(1))
+	t.Cleanup(func() { cp.close(t) })
+
+	cp.attach(t, 1, 0, "u", "")              // 1/1
+	msg := sendAttachExpectError(t, cp, 2, 1) // 2/1 -> EMFILE
+	isError(t, msg, proto.EMFILE)
+}
+
+// TestMaxFids_WalkCloneReturnsEMFILE verifies that a Twalk clone
+// (nwname=0) at the fid cap returns Rlerror{EMFILE}.
+func TestMaxFids_WalkCloneReturnsEMFILE(t *testing.T) {
+	t.Parallel()
+	root := testTree()
+	cp := newConnPair(t, root, WithMaxFids(2))
+	t.Cleanup(func() { cp.close(t) })
+
+	cp.attach(t, 1, 0, "u", "")       // 1/2
+	resp := cp.walk(t, 2, 0, 1)       // clone -> 2/2
+	if _, ok := resp.(*proto.Rwalk); !ok {
+		t.Fatalf("expected Rwalk for clone, got %T: %+v", resp, resp)
+	}
+	resp = cp.walk(t, 3, 0, 2) // third clone -> EMFILE
+	isError(t, resp, proto.EMFILE)
+}
+
+// TestMaxFids_WalkMultiEMFILE verifies that a multi-name Twalk at the fid
+// cap returns Rlerror{EMFILE} and NOT a partial Rwalk with QIDs.
+// Pitfall 3 defensive assertion: "not an Rwalk".
+func TestMaxFids_WalkMultiEMFILE(t *testing.T) {
+	t.Parallel()
+	root := testTree()
+	cp := newConnPair(t, root, WithMaxFids(2))
+	t.Cleanup(func() { cp.close(t) })
+
+	cp.attach(t, 1, 0, "u", "")           // 1/2
+	resp := cp.walk(t, 2, 0, 1)           // clone -> 2/2
+	if _, ok := resp.(*proto.Rwalk); !ok {
+		t.Fatalf("expected Rwalk for clone, got %T: %+v", resp, resp)
+	}
+	// Multi-name walk at cap must fail with EMFILE, not return a partial Rwalk.
+	resp = cp.walk(t, 3, 0, 2, "sub")
+	if _, ok := resp.(*proto.Rwalk); ok {
+		t.Fatalf("got Rwalk when EMFILE expected (partial-walk contract broken): %+v", resp)
+	}
+	isError(t, resp, proto.EMFILE)
+}
+
+// TestMaxFids_XattrwalkEMFILE verifies that a Txattrwalk at the fid cap
+// returns Rlerror{EMFILE} and NOT Rxattrwalk{Size:0}.
+// Pitfall 4 defensive assertion: "not an Rxattrwalk".
+//
+// The root node must implement at least one xattr interface so the cap
+// check (which runs AFTER the interface dispatch in handleXattrwalk) is
+// reached. We use xattrFile as root -- it satisfies NodeXattrLister,
+// so Txattrwalk with Name="" enters the list-mode branch and calls add().
+func TestMaxFids_XattrwalkEMFILE(t *testing.T) {
+	t.Parallel()
+	root := &xattrFile{xattrs: map[string][]byte{"user.color": []byte("red")}}
+	root.Init(proto.QID{Type: proto.QTFILE, Path: 1}, root)
+	cp := newConnPair(t, root, WithMaxFids(1))
+	t.Cleanup(func() { cp.close(t) })
+
+	cp.attach(t, 1, 0, "u", "") // 1/1
+
+	sendMessage(t, cp.client, 2, &p9l.Txattrwalk{
+		Fid:    0,
+		NewFid: 1,
+		Name:   "",
+	})
+	_, msg := readResponse(t, cp.client)
+	// Must be Rlerror{EMFILE}, NOT Rxattrwalk{Size: 0}.
+	if _, ok := msg.(*p9l.Rxattrwalk); ok {
+		t.Fatalf("got Rxattrwalk when EMFILE expected (Pitfall 4 regression): %+v", msg)
+	}
+	isError(t, msg, proto.EMFILE)
+}
+
+// TestMaxFids_ClunkFreesSlot verifies that Tclunk releases a fid slot:
+// an attach that previously hit EMFILE succeeds after the existing fid
+// is clunked.
+func TestMaxFids_ClunkFreesSlot(t *testing.T) {
+	t.Parallel()
+	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
+	cp := newConnPair(t, root, WithMaxFids(1))
+	t.Cleanup(func() { cp.close(t) })
+
+	cp.attach(t, 1, 0, "u", "")              // 1/1
+	msg := sendAttachExpectError(t, cp, 2, 1) // 2/1 -> EMFILE
+	isError(t, msg, proto.EMFILE)
+
+	resp := cp.clunk(t, 3, 0) // free slot
+	if _, ok := resp.(*proto.Rclunk); !ok {
+		t.Fatalf("expected Rclunk, got %T: %+v", resp, resp)
+	}
+
+	// Now fid 1 should succeed.
+	cp.attach(t, 4, 1, "u", "")
+}
+
+// TestMaxFids_ClonedFidCoversCap verifies that cloned fids count against
+// the cap identically to attached fids.
+func TestMaxFids_ClonedFidCoversCap(t *testing.T) {
+	t.Parallel()
+	root := testTree()
+	cp := newConnPair(t, root, WithMaxFids(2))
+	t.Cleanup(func() { cp.close(t) })
+
+	cp.attach(t, 1, 0, "u", "") // 1/2
+	resp := cp.walk(t, 2, 0, 1) // clone -> 2/2
+	if _, ok := resp.(*proto.Rwalk); !ok {
+		t.Fatalf("expected Rwalk for clone, got %T: %+v", resp, resp)
+	}
+	resp = cp.walk(t, 3, 0, 2) // third -> EMFILE
+	isError(t, resp, proto.EMFILE)
 }
