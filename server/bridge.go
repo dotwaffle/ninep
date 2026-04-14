@@ -519,7 +519,7 @@ func (c *conn) handleStatfs(ctx context.Context, m *p9l.Tstatfs) proto.Message {
 }
 
 // handleFsync dispatches Tfsync to FileSyncer on the open handle first,
-// falling back to NodeFSyncer on the underlying node. DataSync from the
+// falling back to NodeFsyncer on the underlying node. DataSync from the
 // wire is decoded but not forwarded: implementations always perform a
 // full fsync (see CONTEXT.md D-QMIG-01).
 //
@@ -546,7 +546,7 @@ func (c *conn) handleFsync(ctx context.Context, m *p9l.Tfsync) proto.Message {
 	}
 
 	// Node-level fallback.
-	if syncer, ok := fs.node.(NodeFSyncer); ok {
+	if syncer, ok := fs.node.(NodeFsyncer); ok {
 		if err := syncer.Fsync(ctx); err != nil {
 			return c.errorMsg(errnoFromError(err))
 		}

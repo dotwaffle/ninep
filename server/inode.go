@@ -42,7 +42,7 @@ var (
 	_ NodeUnlinker     = (*Inode)(nil)
 	_ NodeRenamer      = (*Inode)(nil)
 	_ NodeStatFSer     = (*Inode)(nil)
-	_ NodeFSyncer      = (*Inode)(nil)
+	_ NodeFsyncer      = (*Inode)(nil)
 	_ NodeLocker       = (*Inode)(nil)
 	_ NodeXattrGetter  = (*Inode)(nil)
 	_ NodeXattrSetter  = (*Inode)(nil)
@@ -204,7 +204,7 @@ func (i *Inode) StatFS(_ context.Context) (proto.FSStat, error) {
 	return proto.FSStat{}, proto.ENOSYS
 }
 
-// Fsync returns proto.ENOSYS. Override by implementing NodeFSyncer.
+// Fsync returns proto.ENOSYS. Override by implementing NodeFsyncer.
 func (i *Inode) Fsync(_ context.Context) error {
 	return proto.ENOSYS
 }

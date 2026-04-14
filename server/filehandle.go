@@ -29,10 +29,10 @@ type FileReleaser interface {
 }
 
 // FileSyncer is implemented by file handles that support flushing buffered
-// writes on the open handle to durable storage. Checked before NodeFSyncer
+// writes on the open handle to durable storage. Checked before NodeFsyncer
 // by the bridge: Tfsync on an opened fid with a handle that implements
 // FileSyncer takes the handle path; only if the handle does not implement
-// FileSyncer does the bridge fall back to NodeFSyncer on the underlying
+// FileSyncer does the bridge fall back to NodeFsyncer on the underlying
 // node.
 type FileSyncer interface {
 	// Fsync flushes pending writes on the open file to durable storage.

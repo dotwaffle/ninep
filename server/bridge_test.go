@@ -1415,7 +1415,7 @@ func TestBridge_ENOSYS_Symlink(t *testing.T) {
 // --- Fsync test node types ---
 
 // fsyncingNode embeds Inode and overrides Fsync to record calls. Open
-// returns nil handle so the bridge falls back to NodeFSyncer.
+// returns nil handle so the bridge falls back to NodeFsyncer.
 type fsyncingNode struct {
 	Inode
 	fsyncCalled int
@@ -1442,9 +1442,9 @@ func (h *fsyncingHandle) Fsync(_ context.Context) error {
 	return h.fsyncErr
 }
 
-// bothFsyncingNode implements NodeFSyncer and returns a FileSyncer-
+// bothFsyncingNode implements NodeFsyncer and returns a FileSyncer-
 // implementing handle from Open. Used to verify FileSyncer precedence
-// over NodeFSyncer.
+// over NodeFsyncer.
 type bothFsyncingNode struct {
 	Inode
 	fsyncCalled int
@@ -1463,13 +1463,13 @@ func (n *bothFsyncingNode) Fsync(_ context.Context) error {
 
 var (
 	_ NodeOpener    = (*fsyncingNode)(nil)
-	_ NodeFSyncer   = (*fsyncingNode)(nil)
+	_ NodeFsyncer   = (*fsyncingNode)(nil)
 	_ InodeEmbedder = (*fsyncingNode)(nil)
 
 	_ FileSyncer = (*fsyncingHandle)(nil)
 
 	_ NodeOpener    = (*bothFsyncingNode)(nil)
-	_ NodeFSyncer   = (*bothFsyncingNode)(nil)
+	_ NodeFsyncer   = (*bothFsyncingNode)(nil)
 	_ InodeEmbedder = (*bothFsyncingNode)(nil)
 )
 
@@ -1485,7 +1485,7 @@ func TestHandleFsync_ENOSYS(t *testing.T) {
 	t.Parallel()
 
 	// bridgeFile embeds Inode; Inode.Fsync returns proto.ENOSYS. Open
-	// returns a nil handle, so the bridge takes the NodeFSyncer path and
+	// returns a nil handle, so the bridge takes the NodeFsyncer path and
 	// gets ENOSYS back through errnoFromError.
 	file := &bridgeFile{content: []byte("data"), mode: 0o644}
 	file.Init(proto.QID{Type: proto.QTFILE, Path: 10}, file)
@@ -1540,7 +1540,7 @@ func TestHandleFsync_EBADF_NoFid(t *testing.T) {
 	isError(t, msg, proto.EBADF)
 }
 
-func TestHandleFsync_NodeFSyncer(t *testing.T) {
+func TestHandleFsync_NodeFsyncer(t *testing.T) {
 	t.Parallel()
 
 	fn := &fsyncingNode{}

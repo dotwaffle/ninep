@@ -137,13 +137,13 @@ type NodeStatFSer interface {
 	StatFS(ctx context.Context) (proto.FSStat, error)
 }
 
-// NodeFSyncer is implemented by nodes that support flushing node-level state
+// NodeFsyncer is implemented by nodes that support flushing node-level state
 // to durable storage. When both FileSyncer (on the open file handle) and
-// NodeFSyncer are available for a given fid, the bridge prefers FileSyncer.
+// NodeFsyncer are available for a given fid, the bridge prefers FileSyncer.
 //
 // The Tfsync wire message carries a datasync flag which is decoded but not
 // surfaced here -- implementations always perform a full fsync.
-type NodeFSyncer interface {
+type NodeFsyncer interface {
 	// Fsync flushes pending writes to durable storage.
 	Fsync(ctx context.Context) error
 }
@@ -151,6 +151,11 @@ type NodeFSyncer interface {
 // NodeLocker is implemented by nodes that support POSIX byte-range locking.
 // Implementations control blocking behavior; the library does not impose any
 // blocking policy. Implementations should respect context deadlines if blocking.
+//
+// NodeLocker is the only lock interface -- Lock and GetLock are two halves of
+// the same 9P Tlock/Tgetlock pair, always co-implemented in practice, so
+// splitting them into separate single-method interfaces would force every
+// lock implementer to satisfy two interfaces with no separation benefit.
 type NodeLocker interface {
 	// Lock acquires, tests, or releases a POSIX byte-range lock.
 	Lock(ctx context.Context, lockType proto.LockType, flags proto.LockFlags, start, length uint64, procID uint32, clientID string) (proto.LockStatus, error)
@@ -195,6 +200,10 @@ type NodeXattrRemover interface {
 // XattrWriter accumulates xattr write data and commits on Close.
 // Returned by RawXattrer.HandleXattrcreate. The library calls Write
 // for each Twrite on the xattr fid, then Commit on Tclunk.
+//
+// Write and Commit form an accumulator lifecycle (write-phase then
+// commit-phase); they are always used together per the 9P xattr
+// two-phase protocol, so XattrWriter is intentionally two-method.
 type XattrWriter interface {
 	Write(ctx context.Context, data []byte) (int, error)
 	Commit(ctx context.Context) error
@@ -202,13 +211,21 @@ type XattrWriter interface {
 
 // RawXattrer provides protocol-level control over the xattr two-phase
 // flow. When a node implements RawXattrer, it takes precedence over
-// the simple xattr interfaces (NodeXattrGetter, NodeXattrLister, etc.).
+// the simple xattr interfaces (NodeXattrGetter, NodeXattrSetter,
+// NodeXattrLister, NodeXattrRemover) -- a node implementing RawXattrer
+// need not implement any of those.
 //
 // HandleXattrwalk is called for both get (name != "") and list (name == "").
 // It returns the full xattr data that will be served to Tread calls.
 //
 // HandleXattrcreate returns an XattrWriter that accumulates Twrite data
 // and commits the xattr on Tclunk.
+//
+// RawXattrer is intentionally two-method: HandleXattrwalk and
+// HandleXattrcreate are the two halves of the 9P xattr two-phase protocol
+// (read-side and write-side). A node implementing only one half would be
+// ill-defined. For the high-level alternative (one method per operation),
+// implement NodeXattrGetter/Setter/Lister/Remover instead.
 type RawXattrer interface {
 	HandleXattrwalk(ctx context.Context, name string) ([]byte, error)
 	HandleXattrcreate(ctx context.Context, name string, size uint64, flags uint32) (XattrWriter, error)
