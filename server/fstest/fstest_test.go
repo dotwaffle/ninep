@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/dotwaffle/ninep/proto"
@@ -221,3 +223,156 @@ func TestCasesSelective(t *testing.T) {
 		})
 	}
 }
+
+// --- CheckXattr self-test fixtures ---
+
+// xattrMockFile implements the four simple xattr capabilities required
+// by XattrExpectedTree plus NodeOpener (for fid state transitions
+// needed by the xattr two-phase protocol).
+type xattrMockFile struct {
+	server.Inode
+	mu     sync.Mutex
+	xattrs map[string][]byte
+}
+
+func (*xattrMockFile) Open(_ context.Context, _ uint32) (server.FileHandle, uint32, error) {
+	return nil, 0, nil
+}
+
+func (f *xattrMockFile) GetXattr(_ context.Context, name string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, ok := f.xattrs[name]
+	if !ok {
+		return nil, proto.ENODATA
+	}
+	return slices.Clone(v), nil
+}
+
+func (f *xattrMockFile) SetXattr(_ context.Context, name string, data []byte, _ uint32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.xattrs == nil {
+		f.xattrs = make(map[string][]byte)
+	}
+	f.xattrs[name] = slices.Clone(data)
+	return nil
+}
+
+func (f *xattrMockFile) ListXattrs(_ context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	names := make([]string, 0, len(f.xattrs))
+	for n := range f.xattrs {
+		names = append(names, n)
+	}
+	return names, nil
+}
+
+func (f *xattrMockFile) RemoveXattr(_ context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.xattrs, name)
+	return nil
+}
+
+// xattrMockRoot is a directory containing xfile. It implements
+// NodeOpener (required to satisfy Tattach/Tlopen on the root) and
+// relies on Inode's AddChild-backed Lookup for child resolution.
+type xattrMockRoot struct {
+	server.Inode
+}
+
+func (*xattrMockRoot) Open(_ context.Context, _ uint32) (server.FileHandle, uint32, error) {
+	return nil, 0, nil
+}
+
+func newXattrMockRoot(t *testing.T) server.Node {
+	t.Helper()
+	var gen server.QIDGenerator
+
+	root := &xattrMockRoot{}
+	root.Init(gen.Next(proto.QTDIR), root)
+
+	xf := &xattrMockFile{
+		xattrs: map[string][]byte{"user.existing": []byte("existing-value")},
+	}
+	xf.Init(gen.Next(proto.QTFILE), xf)
+	root.AddChild("xfile", xf.EmbeddedInode())
+	return root
+}
+
+// TestCheckXattr proves CheckXattr runs against any root satisfying
+// XattrExpectedTree. Uses an in-test mock implementing all four simple
+// xattr capabilities.
+func TestCheckXattr(t *testing.T) {
+	t.Parallel()
+	CheckXattr(t, newXattrMockRoot)
+}
+
+// --- CheckLock self-test fixtures ---
+
+// lockMockFile implements NodeOpener + NodeLocker with always-OK
+// semantics and GetLock returning Unlck (no conflict). Sufficient for
+// single-connection CheckLock cases.
+type lockMockFile struct {
+	server.Inode
+}
+
+func (*lockMockFile) Open(_ context.Context, _ uint32) (server.FileHandle, uint32, error) {
+	return nil, 0, nil
+}
+
+func (*lockMockFile) Lock(_ context.Context, _ proto.LockType, _ proto.LockFlags, _, _ uint64, _ uint32, _ string) (proto.LockStatus, error) {
+	return proto.LockStatusOK, nil
+}
+
+func (*lockMockFile) GetLock(_ context.Context, _ proto.LockType, start, length uint64, procID uint32, clientID string) (proto.LockType, uint64, uint64, uint32, string, error) {
+	return proto.LockTypeUnlck, start, length, procID, clientID, nil
+}
+
+type lockMockRoot struct {
+	server.Inode
+}
+
+func (*lockMockRoot) Open(_ context.Context, _ uint32) (server.FileHandle, uint32, error) {
+	return nil, 0, nil
+}
+
+func newLockMockRoot(t *testing.T) server.Node {
+	t.Helper()
+	var gen server.QIDGenerator
+
+	root := &lockMockRoot{}
+	root.Init(gen.Next(proto.QTDIR), root)
+
+	lf := &lockMockFile{}
+	lf.Init(gen.Next(proto.QTFILE), lf)
+	root.AddChild("lockfile", lf.EmbeddedInode())
+	return root
+}
+
+// TestCheckLock proves CheckLock runs against any root satisfying
+// LockExpectedTree. Uses an in-test mock implementing NodeOpener +
+// NodeLocker with always-OK semantics.
+func TestCheckLock(t *testing.T) {
+	t.Parallel()
+	CheckLock(t, newLockMockRoot)
+}
+
+// Compile-time assertions: verify the mock types satisfy the required
+// capability interfaces. A missing method here is a build error.
+var (
+	_ server.NodeOpener       = (*xattrMockFile)(nil)
+	_ server.NodeXattrGetter  = (*xattrMockFile)(nil)
+	_ server.NodeXattrSetter  = (*xattrMockFile)(nil)
+	_ server.NodeXattrLister  = (*xattrMockFile)(nil)
+	_ server.NodeXattrRemover = (*xattrMockFile)(nil)
+	_ server.InodeEmbedder    = (*xattrMockFile)(nil)
+	_ server.InodeEmbedder    = (*xattrMockRoot)(nil)
+
+	_ server.NodeOpener    = (*lockMockFile)(nil)
+	_ server.NodeLocker    = (*lockMockFile)(nil)
+	_ server.InodeEmbedder = (*lockMockFile)(nil)
+	_ server.InodeEmbedder = (*lockMockRoot)(nil)
+)
