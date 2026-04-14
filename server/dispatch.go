@@ -53,6 +53,8 @@ func (c *conn) dispatch(ctx context.Context, tag proto.Tag, msg proto.Message) p
 		return c.handleReadlink(ctx, m)
 	case *p9l.Tstatfs:
 		return c.handleStatfs(ctx, m)
+	case *p9l.Tfsync:
+		return c.handleFsync(ctx, m)
 	case *p9l.Tunlinkat:
 		return c.handleUnlinkat(ctx, m)
 	case *p9l.Trenameat:

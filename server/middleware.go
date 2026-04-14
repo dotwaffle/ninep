@@ -88,6 +88,8 @@ func fidFromMessage(msg proto.Message) (proto.Fid, bool) {
 		return m.Fid, true
 	case *p9l.Tstatfs:
 		return m.Fid, true
+	case *p9l.Tfsync:
+		return m.Fid, true
 	case *p9l.Tunlinkat:
 		return m.DirFid, true
 	case *p9l.Trenameat:

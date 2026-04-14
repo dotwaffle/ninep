@@ -591,6 +591,8 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 		return &p9l.Treadlink{}, nil
 	case proto.TypeTstatfs:
 		return &p9l.Tstatfs{}, nil
+	case proto.TypeTfsync:
+		return &p9l.Tfsync{}, nil
 	case proto.TypeTunlinkat:
 		return &p9l.Tunlinkat{}, nil
 	case proto.TypeTrenameat:

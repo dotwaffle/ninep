@@ -518,6 +518,44 @@ func (c *conn) handleStatfs(ctx context.Context, m *p9l.Tstatfs) proto.Message {
 	return &p9l.Rstatfs{Stat: stat}
 }
 
+// handleFsync dispatches Tfsync to FileSyncer on the open handle first,
+// falling back to NodeFSyncer on the underlying node. DataSync from the
+// wire is decoded but not forwarded: implementations always perform a
+// full fsync (see CONTEXT.md D-QMIG-01).
+//
+// Requires the fid to be in opened state: the Linux v9fs kernel client
+// only issues Tfsync on opened fids, and returning EBADF on unopened
+// fids matches existing bridge conventions (handleLock, handleGetlock).
+func (c *conn) handleFsync(ctx context.Context, m *p9l.Tfsync) proto.Message {
+	fs := c.fids.get(m.Fid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+	if fs.state != fidOpened {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	// FileSyncer on the open handle takes precedence (matches handleRead/handleWrite).
+	if fs.handle != nil {
+		if syncer, ok := fs.handle.(FileSyncer); ok {
+			if err := syncer.Fsync(ctx); err != nil {
+				return c.errorMsg(errnoFromError(err))
+			}
+			return &p9l.Rfsync{}
+		}
+	}
+
+	// Node-level fallback.
+	if syncer, ok := fs.node.(NodeFSyncer); ok {
+		if err := syncer.Fsync(ctx); err != nil {
+			return c.errorMsg(errnoFromError(err))
+		}
+		return &p9l.Rfsync{}
+	}
+
+	return c.errorMsg(proto.ENOSYS)
+}
+
 // handleUnlinkat dispatches to NodeUnlinker and removes the child from the
 // Inode tree on success.
 func (c *conn) handleUnlinkat(ctx context.Context, m *p9l.Tunlinkat) proto.Message {
