@@ -236,3 +236,20 @@ func BenchmarkGetMsgBuf_SmallUnderGC(b *testing.B) {
 		i++
 	}
 }
+
+// BenchmarkGetMsgBuf_4KSteady measures steady-state 4 KiB bucket cycling
+// without GC pressure. The MB/s column is what "at or above the pre-size-class
+// baseline" (PERF-04.2) refers to; allocs/op is the correctness gate (0).
+// Pattern anchor: TestMsgBufCycle_ZeroAllocs (bufpool_test.go:147-162).
+func BenchmarkGetMsgBuf_4KSteady(b *testing.B) {
+	// Warm the 4 KiB bucket (msgBucketSizes[1]) to prime sync.Pool.New.
+	for range 100 {
+		PutMsgBuf(GetMsgBuf(4096))
+	}
+	b.ReportAllocs()
+	b.SetBytes(4096)
+	for b.Loop() {
+		buf := GetMsgBuf(4096)
+		PutMsgBuf(buf)
+	}
+}
