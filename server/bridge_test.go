@@ -489,43 +489,99 @@ func decodeDirents(t *testing.T, data []byte) []proto.Dirent {
 func TestBridge_OpenRead(t *testing.T) {
 	t.Parallel()
 
-	file := &bridgeFile{content: []byte("hello"), mode: 0o644}
-	file.Init(proto.QID{Type: proto.QTFILE, Path: 10}, file)
+	for _, transport := range []string{"pipe", "unix"} {
+		t.Run("transport="+transport, func(t *testing.T) {
+			t.Parallel()
 
-	root := &testDir{}
-	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
-	root.AddChild("file.txt", file.EmbeddedInode())
+			file := &bridgeFile{content: []byte("hello"), mode: 0o644}
+			file.Init(proto.QID{Type: proto.QTFILE, Path: 10}, file)
 
-	cp := setupBridgeConn(t, root)
-	defer cp.close(t)
+			root := &testDir{}
+			root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+			root.AddChild("file.txt", file.EmbeddedInode())
 
-	// Walk to file.
-	msg := cp.walk(t, 2, 0, 1, "file.txt")
-	if _, ok := msg.(*proto.Rwalk); !ok {
-		t.Fatalf("expected Rwalk, got %T: %+v", msg, msg)
-	}
+			// Large-read fixture: only used by the transport=unix subtest to
+			// exercise the 3-iovec writev fast path with a non-trivial (>=4 KiB)
+			// payload. See .planning/phases/14/14-RESEARCH.md §Pitfall 2 for
+			// why iovcnt is 3 when len(payload) > 0 and 2 when it's empty.
+			// Contents are deterministic (byte(i % 251) avoids all-zero runs and
+			// keeps the test hermetic).
+			var bigFile *bridgeFile
+			if transport == "unix" {
+				bigContent := make([]byte, 8192)
+				for i := range bigContent {
+					bigContent[i] = byte(i % 251)
+				}
+				bigFile = &bridgeFile{content: bigContent, mode: 0o644}
+				bigFile.Init(proto.QID{Type: proto.QTFILE, Path: 11}, bigFile)
+				root.AddChild("big.bin", bigFile.EmbeddedInode())
+			}
 
-	// Open file.
-	msg = cp.lopen(t, 3, 1, 0)
-	rl, ok := msg.(*p9l.Rlopen)
-	if !ok {
-		t.Fatalf("expected Rlopen, got %T: %+v", msg, msg)
-	}
-	if rl.QID.Path != 10 {
-		t.Errorf("open QID.Path = %d, want 10", rl.QID.Path)
-	}
-	if rl.IOUnit == 0 {
-		t.Error("IOUnit should not be zero")
-	}
+			// Use newConnPairTransport directly instead of setupBridgeConn
+			// (which is pipe-only via newConnPair) so this subtest can also
+			// cover the unix-socket writev fast path in sendResponseInline.
+			cp := newConnPairTransport(t, transport, root)
+			defer cp.close(t)
+			cp.attach(t, 1, 0, "test", "")
 
-	// Read all content.
-	msg = cp.read(t, 4, 1, 0, 1024)
-	rr, ok := msg.(*proto.Rread)
-	if !ok {
-		t.Fatalf("expected Rread, got %T: %+v", msg, msg)
-	}
-	if string(rr.Data) != "hello" {
-		t.Errorf("read data = %q, want %q", string(rr.Data), "hello")
+			// Walk to file.
+			msg := cp.walk(t, 2, 0, 1, "file.txt")
+			if _, ok := msg.(*proto.Rwalk); !ok {
+				t.Fatalf("expected Rwalk, got %T: %+v", msg, msg)
+			}
+
+			// Open file.
+			msg = cp.lopen(t, 3, 1, 0)
+			rl, ok := msg.(*p9l.Rlopen)
+			if !ok {
+				t.Fatalf("expected Rlopen, got %T: %+v", msg, msg)
+			}
+			if rl.QID.Path != 10 {
+				t.Errorf("open QID.Path = %d, want 10", rl.QID.Path)
+			}
+			if rl.IOUnit == 0 {
+				t.Error("IOUnit should not be zero")
+			}
+
+			// Read all content.
+			msg = cp.read(t, 4, 1, 0, 1024)
+			rr, ok := msg.(*proto.Rread)
+			if !ok {
+				t.Fatalf("expected Rread, got %T: %+v", msg, msg)
+			}
+			if string(rr.Data) != "hello" {
+				t.Errorf("read data = %q, want %q", string(rr.Data), "hello")
+			}
+
+			// Large-read variant: transport=unix only. Exercises the
+			// net.Buffers.WriteTo -> pfd.Writev single-syscall fast path with
+			// iovcnt=3 (hdr + 4-byte count prefix + payload). transport=pipe
+			// falls into the sequential-Write loop in net/net.go:851-864 via
+			// the 5-byte "hello" read above, so this extra coverage is specific
+			// to the writev path (PERF-07.4 canary for Pitfall 3: if the pooled
+			// buffer were released before writev completed, the bytes.Equal
+			// check below would fail intermittently under -race).
+			if transport == "unix" {
+				// Fresh fid (5) to avoid colliding with the "hello" fid (1).
+				msg = cp.walk(t, 5, 0, 5, "big.bin")
+				if _, ok := msg.(*proto.Rwalk); !ok {
+					t.Fatalf("big.bin walk: expected Rwalk, got %T: %+v", msg, msg)
+				}
+				msg = cp.lopen(t, 6, 5, 0)
+				if _, ok := msg.(*p9l.Rlopen); !ok {
+					t.Fatalf("big.bin lopen: expected Rlopen, got %T: %+v", msg, msg)
+				}
+				msg = cp.read(t, 7, 5, 0, uint32(len(bigFile.content)))
+				rr2, ok := msg.(*proto.Rread)
+				if !ok {
+					t.Fatalf("big.bin read: expected Rread, got %T: %+v", msg, msg)
+				}
+				if !bytes.Equal(rr2.Data, bigFile.content) {
+					t.Errorf("big.bin read mismatch: got %d bytes, want %d bytes (byte-equality failed -- payload-lifetime invariant may have regressed)",
+						len(rr2.Data), len(bigFile.content))
+				}
+			}
+		})
 	}
 }
 
