@@ -759,7 +759,7 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 	case proto.TypeTlopen:
 		return getCachedTlopen(), nil
 	case proto.TypeTlcreate:
-		return &p9l.Tlcreate{}, nil
+		return getCachedTlcreate(), nil
 	case proto.TypeTgetattr:
 		return getCachedTgetattr(), nil
 	case proto.TypeTsetattr:

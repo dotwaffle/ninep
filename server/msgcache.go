@@ -44,6 +44,7 @@ var (
 	tclunkCache   = make(chan *proto.Tclunk, msgCacheCap)
 	tlopenCache   = make(chan *p9l.Tlopen, msgCacheCap)
 	tgetattrCache = make(chan *p9l.Tgetattr, msgCacheCap)
+	tlcreateCache = make(chan *p9l.Tlcreate, msgCacheCap)
 )
 
 // getCachedTread returns a *proto.Tread from the cache (zeroed) or a fresh
@@ -109,6 +110,21 @@ func getCachedTgetattr() *p9l.Tgetattr {
 	}
 }
 
+// getCachedTlcreate returns a *p9l.Tlcreate from the cache (zeroed) or a fresh
+// allocation if the cache is empty. Tlcreate has only scalar + string fields
+// (Fid, Name, Flags, Mode, GID); Go strings are immutable, so the zero-struct
+// reset is sufficient — no slice/[]byte aliasing risk. Added per 13-05 audit
+// (handoff-named; 1.50% of allocs in narrow BenchmarkCreateWriteClose profile).
+func getCachedTlcreate() *p9l.Tlcreate {
+	select {
+	case m := <-tlcreateCache:
+		*m = p9l.Tlcreate{}
+		return m
+	default:
+		return &p9l.Tlcreate{}
+	}
+}
+
 // putCachedMsg returns msg to its type-specific cache if one exists, via a
 // non-blocking send. No-op for types not in the cache set or when the cache
 // is full. Called from dispatchInline's defer after the handler has finished
@@ -150,6 +166,13 @@ func putCachedMsg(msg proto.Message) {
 	case *p9l.Tgetattr:
 		select {
 		case tgetattrCache <- m:
+		default:
+		}
+	case *p9l.Tlcreate:
+		// Name is a string (immutable); no aliasing risk. No nil-out needed;
+		// getCachedTlcreate's *m = p9l.Tlcreate{} reset covers re-borrow.
+		select {
+		case tlcreateCache <- m:
 		default:
 		}
 	}

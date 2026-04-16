@@ -17,12 +17,13 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9l"
 )
 
-func getCachedTread() *proto.Tread       { return &proto.Tread{} }
-func getCachedTwrite() *proto.Twrite     { return &proto.Twrite{} }
-func getCachedTwalk() *proto.Twalk       { return &proto.Twalk{} }
-func getCachedTclunk() *proto.Tclunk     { return &proto.Tclunk{} }
-func getCachedTlopen() *p9l.Tlopen       { return &p9l.Tlopen{} }
-func getCachedTgetattr() *p9l.Tgetattr   { return &p9l.Tgetattr{} }
+func getCachedTread() *proto.Tread     { return &proto.Tread{} }
+func getCachedTwrite() *proto.Twrite   { return &proto.Twrite{} }
+func getCachedTwalk() *proto.Twalk     { return &proto.Twalk{} }
+func getCachedTclunk() *proto.Tclunk   { return &proto.Tclunk{} }
+func getCachedTlopen() *p9l.Tlopen     { return &p9l.Tlopen{} }
+func getCachedTgetattr() *p9l.Tgetattr { return &p9l.Tgetattr{} }
+func getCachedTlcreate() *p9l.Tlcreate { return &p9l.Tlcreate{} }
 
 func putCachedMsg(msg proto.Message) {
 	// No-op. The cache-on build returns structs to bounded chans here;
