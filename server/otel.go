@@ -67,6 +67,16 @@ func newOTelMiddleware(tp trace.TracerProvider, mp metric.MeterProvider, c *conn
 		)),
 	}
 
+	// Build a per-message-type cache of metric.MeasurementOption holding the
+	// rpc.method attribute. Constructed once at middleware build time so the
+	// hot path's duration.Record call avoids the allocation that
+	// metric.WithAttributes(attribute.String(...)) would otherwise impose
+	// every request. The set of T-message types is closed and known at
+	// compile time; iterate the proto.MessageType "Type*" constants used by
+	// dispatch and skip the R-prefixed responses (responses never enter
+	// middleware as msg).
+	opNameAttrs := buildOpNameAttrs()
+
 	return func(next Handler) Handler {
 		return func(ctx context.Context, tag proto.Tag, msg proto.Message) proto.Message {
 			opName := msg.Type().String()
@@ -81,9 +91,14 @@ func newOTelMiddleware(tp trace.TracerProvider, mp metric.MeterProvider, c *conn
 			)
 			defer span.End()
 
-			// Active request gauge.
-			inst.activeReqs.Add(ctx, 1)
-			defer inst.activeReqs.Add(ctx, -1)
+			// Active request gauge -- gated so noop meters skip both the
+			// Add(+1) and the cost of registering the deferred Add(-1).
+			// The defer must live inside the guard so it only runs when
+			// the +1 ran.
+			if inst.activeReqs.Enabled(ctx) {
+				inst.activeReqs.Add(ctx, 1)
+				defer inst.activeReqs.Add(ctx, -1)
+			}
 
 			// Guard expensive attribute computation behind IsRecording.
 			if span.IsRecording() {
@@ -110,10 +125,18 @@ func newOTelMiddleware(tp trace.TracerProvider, mp metric.MeterProvider, c *conn
 			resp := next(ctx, tag, msg)
 			elapsed := time.Since(start).Seconds()
 
-			// Record duration with rpc.method attribute.
-			inst.duration.Record(ctx, elapsed,
-				metric.WithAttributes(attribute.String("rpc.method", opName)),
-			)
+			// Record duration with cached rpc.method attribute. Gated so
+			// noop histograms skip the Record call entirely.
+			if inst.duration.Enabled(ctx) {
+				opt, ok := opNameAttrs[msg.Type()]
+				if !ok {
+					// Defensive fallback for message types not enumerated
+					// in buildOpNameAttrs (should not happen for valid
+					// T-messages reaching dispatch).
+					opt = metric.WithAttributes(attribute.String("rpc.method", opName))
+				}
+				inst.duration.Record(ctx, elapsed, opt)
+			}
 
 			// Measure response size (same zero-alloc ByteCounter path).
 			if resp != nil {
@@ -133,6 +156,60 @@ func newOTelMiddleware(tp trace.TracerProvider, mp metric.MeterProvider, c *conn
 			return resp
 		}
 	}
+}
+
+// requestMessageTypes lists every T-message type the server may dispatch.
+// Used by buildOpNameAttrs to pre-build the metric.MeasurementOption cache.
+// Responses (R-prefixed types) and Tlerror (never sent on the wire) are
+// excluded -- only request types ever appear as msg in middleware.
+var requestMessageTypes = [...]proto.MessageType{
+	// Shared base T-messages.
+	proto.TypeTversion,
+	proto.TypeTauth,
+	proto.TypeTattach,
+	proto.TypeTflush,
+	proto.TypeTwalk,
+	proto.TypeTopen,
+	proto.TypeTcreate,
+	proto.TypeTread,
+	proto.TypeTwrite,
+	proto.TypeTclunk,
+	proto.TypeTremove,
+	proto.TypeTstat,
+	proto.TypeTwstat,
+
+	// 9P2000.L T-messages.
+	proto.TypeTstatfs,
+	proto.TypeTlopen,
+	proto.TypeTlcreate,
+	proto.TypeTsymlink,
+	proto.TypeTmknod,
+	proto.TypeTrename,
+	proto.TypeTreadlink,
+	proto.TypeTgetattr,
+	proto.TypeTsetattr,
+	proto.TypeTxattrwalk,
+	proto.TypeTxattrcreate,
+	proto.TypeTreaddir,
+	proto.TypeTfsync,
+	proto.TypeTlock,
+	proto.TypeTgetlock,
+	proto.TypeTlink,
+	proto.TypeTmkdir,
+	proto.TypeTrenameat,
+	proto.TypeTunlinkat,
+}
+
+// buildOpNameAttrs returns a per-T-message-type metric.MeasurementOption map
+// holding the rpc.method attribute. Constructing this once at middleware
+// build time eliminates the per-request metric.WithAttributes allocation on
+// the duration.Record hot path.
+func buildOpNameAttrs() map[proto.MessageType]metric.MeasurementOption {
+	m := make(map[proto.MessageType]metric.MeasurementOption, len(requestMessageTypes))
+	for _, t := range requestMessageTypes {
+		m[t] = metric.WithAttributes(attribute.String("rpc.method", t.String()))
+	}
+	return m
 }
 
 // connOTelInstruments holds connection-level and fid-level gauge instruments.
