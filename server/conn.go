@@ -118,6 +118,16 @@ type conn struct {
 	// this mutex prevents interleaved wire frames (GO-CC-3).
 	writeMu sync.Mutex
 
+	// hdrBuf is reused for reading 4-byte frame size headers from nc.
+	// Stored on conn (heap-allocated) so hdrBuf[:] does not escape to
+	// the heap on each readLoop iteration.
+	hdrBuf [4]byte
+
+	// bodyReader is reused for wrapping the pooled message body buffer
+	// as an io.Reader for DecodeFrom. Reset() instead of bytes.NewReader
+	// avoids a per-message allocation.
+	bodyReader bytes.Reader
+
 	// responses carries encoded responses to the writeLoop goroutine.
 	// The sender (readLoop/dispatch) closes this channel; the writer drains it.
 	responses chan taggedResponse
@@ -354,14 +364,15 @@ func (c *conn) readLoop(ctx context.Context) {
 			}
 		}
 
-		// Read message size.
-		size, err := proto.ReadUint32(c.nc)
-		if err != nil {
+		// Read message size. Uses conn's hdrBuf to avoid heap escape of
+		// the temp buffer through the io.Reader interface.
+		if _, err := io.ReadFull(c.nc, c.hdrBuf[:]); err != nil {
 			if !isExpectedCloseError(err) {
 				c.logger.Debug("read error", slog.Any("error", err))
 			}
 			return
 		}
+		size := binary.LittleEndian.Uint32(c.hdrBuf[:])
 		if size < uint32(proto.HeaderSize) {
 			c.logger.Warn("message too small", slog.Uint64("size", uint64(size)))
 			return
@@ -434,7 +445,8 @@ func (c *conn) readLoop(ctx context.Context) {
 			c.sendError(tag, proto.ENOSYS)
 			continue
 		}
-		if err := msg.DecodeFrom(bytes.NewReader(b[3:])); err != nil {
+		c.bodyReader.Reset(b[3:])
+		if err := msg.DecodeFrom(&c.bodyReader); err != nil {
 			bufpool.PutMsgBuf(bufPtr)
 			c.logger.Warn("decode error",
 				slog.String("type", msgType.String()),

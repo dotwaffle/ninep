@@ -1,6 +1,7 @@
 package proto
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -9,7 +10,13 @@ import (
 )
 
 // ReadUint8 reads a single byte from r.
+// When r is a *bytes.Reader, uses ReadByte to avoid the temp-buffer heap
+// escape that io.ReadFull causes through the io.Reader interface.
 func ReadUint8(r io.Reader) (uint8, error) {
+	if br, ok := r.(*bytes.Reader); ok {
+		b, err := br.ReadByte()
+		return b, err
+	}
 	var buf [1]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		return 0, err
@@ -19,6 +26,14 @@ func ReadUint8(r io.Reader) (uint8, error) {
 
 // ReadUint16 reads a little-endian uint16 from r.
 func ReadUint16(r io.Reader) (uint16, error) {
+	if br, ok := r.(*bytes.Reader); ok {
+		if br.Len() < 2 {
+			return 0, io.ErrUnexpectedEOF
+		}
+		b0, _ := br.ReadByte()
+		b1, _ := br.ReadByte()
+		return uint16(b0) | uint16(b1)<<8, nil
+	}
 	var buf [2]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		return 0, err
@@ -28,6 +43,16 @@ func ReadUint16(r io.Reader) (uint16, error) {
 
 // ReadUint32 reads a little-endian uint32 from r.
 func ReadUint32(r io.Reader) (uint32, error) {
+	if br, ok := r.(*bytes.Reader); ok {
+		if br.Len() < 4 {
+			return 0, io.ErrUnexpectedEOF
+		}
+		b0, _ := br.ReadByte()
+		b1, _ := br.ReadByte()
+		b2, _ := br.ReadByte()
+		b3, _ := br.ReadByte()
+		return uint32(b0) | uint32(b1)<<8 | uint32(b2)<<16 | uint32(b3)<<24, nil
+	}
 	var buf [4]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		return 0, err
@@ -37,6 +62,21 @@ func ReadUint32(r io.Reader) (uint32, error) {
 
 // ReadUint64 reads a little-endian uint64 from r.
 func ReadUint64(r io.Reader) (uint64, error) {
+	if br, ok := r.(*bytes.Reader); ok {
+		if br.Len() < 8 {
+			return 0, io.ErrUnexpectedEOF
+		}
+		b0, _ := br.ReadByte()
+		b1, _ := br.ReadByte()
+		b2, _ := br.ReadByte()
+		b3, _ := br.ReadByte()
+		b4, _ := br.ReadByte()
+		b5, _ := br.ReadByte()
+		b6, _ := br.ReadByte()
+		b7, _ := br.ReadByte()
+		return uint64(b0) | uint64(b1)<<8 | uint64(b2)<<16 | uint64(b3)<<24 |
+			uint64(b4)<<32 | uint64(b5)<<40 | uint64(b6)<<48 | uint64(b7)<<56, nil
+	}
 	var buf [8]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		return 0, err
