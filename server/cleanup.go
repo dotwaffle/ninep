@@ -13,8 +13,9 @@ const cleanupDeadline = 5 * time.Second
 // cleanup performs orderly connection shutdown:
 //  1. Cancel all inflight request contexts.
 //  2. Wait for inflight handlers to finish (with deadline).
-//  3. Clunk all fids.
-//  4. Close the responses channel (terminates writer goroutine).
+//  3. Close the work channel and wait for workers to exit.
+//  4. Clunk all fids.
+//  5. Close the responses channel (terminates writer goroutine).
 func (c *conn) cleanup() {
 	// Step 1: Cancel all inflight requests.
 	c.inflight.cancelAll()
@@ -29,7 +30,32 @@ func (c *conn) cleanup() {
 		)
 	}
 
-	// Step 3: Clunk all fids and release handles.
+	// Step 3: Close the work channel and wait for workers to exit, but
+	// only up to the cleanup deadline. If a handler is stuck ignoring
+	// context cancellation, we must not hang cleanup — the old
+	// goroutine-per-request model also orphaned stuck handlers after
+	// the deadline (they remained until the process exited or they
+	// eventually returned). Same semantics here.
+	//
+	// readLoop has already returned (serve calls cleanup after it), so
+	// no further sends to workCh are possible. Idle workers see the
+	// closed channel and exit immediately; workers currently running a
+	// handler exit when the handler returns.
+	close(c.workCh)
+	workerDone := make(chan struct{})
+	go func() {
+		c.workerWG.Wait()
+		close(workerDone)
+	}()
+	select {
+	case <-workerDone:
+	case <-deadlineCtx.Done():
+		c.logger.Warn("cleanup: timed out waiting for workers to exit",
+			slog.Int("remaining_workers", int(c.workerCount.Load())),
+		)
+	}
+
+	// Step 4: Clunk all fids and release handles.
 	// Use swap-and-clear pattern: clunkAll returns all states, iterate outside lock.
 	states := c.fids.clunkAll()
 	if len(states) > 0 {
@@ -49,6 +75,6 @@ func (c *conn) cleanup() {
 		)
 	}
 
-	// Step 4: Close responses channel to terminate writer goroutine.
+	// Step 5: Close responses channel to terminate writer goroutine.
 	close(c.responses)
 }

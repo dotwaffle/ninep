@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/dotwaffle/ninep/internal/bufpool"
@@ -114,6 +115,16 @@ type releaser interface {
 	Release()
 }
 
+// workItem is a decoded request ready for handler dispatch. The readLoop
+// populates it and sends to conn.workCh; an idle worker picks it up and
+// runs the handler chain synchronously, then loops back for the next item.
+type workItem struct {
+	ctx     context.Context
+	tag     proto.Tag
+	msg     proto.Message
+	release func() // called after handler returns; nil when no pooled buffer held
+}
+
 // conn represents a single client connection to the server.
 type conn struct {
 	server   *Server
@@ -161,9 +172,15 @@ type conn struct {
 	// drain-on-disconnect.
 	inflight *inflightMap
 
-	// semaphore limits concurrent request goroutines to MaxInflight.
-	// A buffered channel of size maxInflight acts as a counting semaphore.
-	semaphore chan struct{}
+	// Worker pool (lazy-spawn, bounded by maxInflight). Replaces the
+	// previous goroutine-per-request model. Workers compete for items
+	// on workCh, stay alive for the connection lifetime, and are spawned
+	// on demand when no idle worker is available and we're still under
+	// cap.
+	workCh      chan workItem
+	workerCount atomic.Int32   // total workers alive
+	idleCount   atomic.Int32   // workers currently waiting on workCh
+	workerWG    sync.WaitGroup // tracks workers for cleanup drain
 
 	logger *slog.Logger
 
@@ -191,7 +208,7 @@ func newConn(s *Server, nc net.Conn) *conn {
 		encBufs: make(net.Buffers, 0, 2*s.maxInflight),
 		bodies:  make([]*bytes.Buffer, 0, s.maxInflight),
 		batch:   make([]taggedResponse, 0, s.maxInflight),
-		semaphore: make(chan struct{}, s.maxInflight),
+		workCh:    make(chan workItem, s.maxInflight),
 		logger:    s.logger.With(slog.String("remote", nc.RemoteAddr().String())),
 	}
 	// Build the middleware-wrapped dispatch chain. The closure captures c so
@@ -512,52 +529,83 @@ func (c *conn) readLoop(ctx context.Context) {
 			bufpool.PutMsgBuf(bufPtr)
 		}
 
-		// Acquire semaphore slot (blocks if MaxInflight reached).
-		select {
-		case c.semaphore <- struct{}{}:
-		case <-ctx.Done():
-			if msgRelease != nil {
-				msgRelease()
-			}
-			return
-		}
-
 		// Create per-request context with cancellation for flush support.
 		reqCtx, cancel := context.WithCancel(ctx)
 		c.inflight.start(tag, cancel)
 
-		go c.handleRequest(reqCtx, tag, msg, msgRelease)
+		// Spawn a worker if nobody is idle and we're under the maxInflight
+		// cap. Lazy spawn keeps the worker pool sized to actual concurrency
+		// demand; existing workers stay alive for the connection lifetime.
+		if c.idleCount.Load() == 0 && c.workerCount.Load() < int32(c.server.maxInflight) {
+			c.workerCount.Add(1)
+			c.workerWG.Add(1)
+			go c.worker(ctx)
+		}
+
+		// Dispatch. Blocks if workCh is full (all workers busy + cap
+		// reached), providing the same back-pressure the old semaphore
+		// offered. On ctx cancellation, clean up the request state.
+		select {
+		case c.workCh <- workItem{ctx: reqCtx, tag: tag, msg: msg, release: msgRelease}:
+		case <-ctx.Done():
+			if msgRelease != nil {
+				msgRelease()
+			}
+			c.inflight.finish(tag)
+			return
+		}
 	}
 }
 
-// handleRequest runs a single request in its own goroutine with panic recovery.
-// It releases the semaphore slot and clears the inflight entry when done.
-// msgRelease, when non-nil, is called after the handler returns to return
-// any pooled buffers aliased by the request (e.g. Twrite.Data).
-func (c *conn) handleRequest(ctx context.Context, tag proto.Tag, msg proto.Message, msgRelease func()) {
+// worker is a long-lived goroutine that processes request work items from
+// workCh until the channel is closed (by cleanup). Panic recovery is
+// per-request (inside handleWorkItem) so one bad handler does not
+// terminate the worker. connCtx is accepted for symmetry with future
+// uses but not needed for exit — cleanup always runs after readLoop and
+// unconditionally closes workCh.
+func (c *conn) worker(_ context.Context) {
+	defer c.workerWG.Done()
+	defer c.workerCount.Add(-1)
+
+	for {
+		c.idleCount.Add(1)
+		item, ok := <-c.workCh
+		c.idleCount.Add(-1)
+		if !ok {
+			return // channel closed by cleanup
+		}
+		c.handleWorkItem(item)
+	}
+}
+
+// handleWorkItem runs one request through the middleware + dispatch chain
+// with panic recovery. Invoked synchronously by worker(); a panic is
+// caught, turned into an EIO response, and the worker loop continues.
+// release, when non-nil, returns any pooled buffers aliased by the request
+// (e.g. Twrite.Data) after the handler returns.
+func (c *conn) handleWorkItem(item workItem) {
 	defer func() {
-		if msgRelease != nil {
-			msgRelease()
+		if item.release != nil {
+			item.release()
 		}
 		if r := recover(); r != nil {
 			// SERV-06: Handler panic -> EIO, never crash the server.
 			c.logger.Error("handler panic",
 				slog.Any("panic", r),
-				slog.String("message_type", msg.Type().String()),
+				slog.String("message_type", item.msg.Type().String()),
 			)
-			c.sendResponse(tag, c.errorMsg(proto.EIO))
+			c.sendResponse(item.tag, c.errorMsg(proto.EIO))
 		}
-		c.inflight.finish(tag)
-		<-c.semaphore // Release semaphore slot.
+		c.inflight.finish(item.tag)
 	}()
 
-	resp := c.handler(ctx, tag, msg)
+	resp := c.handler(item.ctx, item.tag, item.msg)
 	if resp != nil {
 		var release func()
 		if r, ok := resp.(releaser); ok {
 			release = r.Release
 		}
-		c.sendResponseWithRelease(tag, resp, release)
+		c.sendResponseWithRelease(item.tag, resp, release)
 	}
 }
 
