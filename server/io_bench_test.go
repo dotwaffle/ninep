@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"net"
@@ -231,6 +232,61 @@ func BenchmarkRead(b *testing.B) {
 					b.Fatalf("drain: %v", err)
 				}
 				idx++
+			}
+		})
+	}
+}
+
+// BenchmarkReadPipelined sends a burst of N Tread requests before draining
+// any responses. This exercises the writeLoop coalescing path: at the moment
+// the writeLoop wakes for response 1, responses 2..N may already be queued,
+// letting flushBatch writev them all in one syscall.
+//
+// The burst size (BurstN) maps directly to the expected writev coalescing
+// factor. The benchmark reports MB/s for the full batch and allocs/op for
+// a single request (divides total by BurstN).
+func BenchmarkReadPipelined(b *testing.B) {
+	const readSize uint32 = 4096
+	for _, burstN := range []int{1, 4, 16, 64} {
+		b.Run(fmt.Sprintf("burst=%d", burstN), func(b *testing.B) {
+			root := newBenchTree(b)
+			cp := newConnPairMsize(b, root, 65536)
+			b.Cleanup(func() { cp.close(b) })
+
+			benchAttachFid0(b, cp)
+			benchWalkOpen(b, cp, 0, 1, "data")
+
+			// Pre-encode one Tread frame and patch the offset per request.
+			frame := mustEncode(b, proto.Tag(1), &proto.Tread{
+				Fid:    1,
+				Offset: 0,
+				Count:  readSize,
+			})
+
+			offsets := make([]uint64, numOffsets)
+			maxOffset := uint64(benchFileSize) - uint64(readSize)
+			for i := range offsets {
+				offsets[i] = (uint64(i) * uint64(readSize)) % (maxOffset + 1)
+			}
+
+			b.ReportAllocs()
+			b.SetBytes(int64(readSize) * int64(burstN))
+			var idx int
+			for b.Loop() {
+				// Send burstN requests without reading any responses yet.
+				for range burstN {
+					binary.LittleEndian.PutUint64(frame[treadOffsetPos:], offsets[idx%numOffsets])
+					if _, err := cp.client.Write(frame); err != nil {
+						b.Fatalf("write: %v", err)
+					}
+					idx++
+				}
+				// Drain all burstN responses.
+				for range burstN {
+					if err := drainResponse(cp.client); err != nil {
+						b.Fatalf("drain: %v", err)
+					}
+				}
 			}
 		})
 	}

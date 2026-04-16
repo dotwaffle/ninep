@@ -139,25 +139,19 @@ type conn struct {
 	// avoids a per-message allocation.
 	bodyReader bytes.Reader
 
-	// encHdr is reused for writing the 7-byte response header
-	// (size[4]+type[1]+tag[2]) to nc. Writing all header fields in a
-	// single nc.Write avoids three separate Write* calls that each
-	// allocate a temp buffer via the io.Writer interface fallback path.
-	encHdr [proto.HeaderSize]byte
-
-	// encBufsArr is the backing array for a net.Buffers slice built in
-	// encodeResponse for vectored I/O. Storing the array on conn keeps
-	// the backing memory heap-resident so only the slice header needs
-	// to be created per call (and that slice header is short-lived —
-	// modern escape analysis often keeps it on the stack, but when it
-	// does escape the allocation is tiny and amortised by the syscall
-	// savings on TCP/unix-domain sockets that support writev).
+	// Write coalescing: the writeLoop drains pending responses non-
+	// blockingly and writev()s them in a single syscall. Slabs are
+	// sized to maxInflight (the upper bound on queued responses) so
+	// batching never needs to allocate.
 	//
-	// A fresh slice header each call is necessary because
-	// net.Buffers.WriteTo consumes its slice (reducing both len AND
-	// cap via v.consume); the array survives, the slice header does
-	// not.
-	encBufsArr [2][]byte
+	//   hdrSlab:   raw bytes for per-response 7-byte headers
+	//   encBufs:   [][]byte alternating hdr/body, 2*maxInflight entries
+	//   bodies:    pooled body buffers for post-write release tracking
+	//   batch:     captured taggedResponse entries, for release callbacks
+	hdrSlab []byte
+	encBufs net.Buffers
+	bodies  []*bytes.Buffer
+	batch   []taggedResponse
 
 	// responses carries encoded responses to the writeLoop goroutine.
 	// The sender (readLoop/dispatch) closes this channel; the writer drains it.
@@ -192,6 +186,11 @@ func newConn(s *Server, nc net.Conn) *conn {
 		maxFids:   s.maxFids,
 		responses: make(chan taggedResponse, s.maxInflight),
 		inflight:  newInflightMap(),
+		// Coalescing slabs sized to maxInflight responses.
+		hdrSlab: make([]byte, s.maxInflight*int(proto.HeaderSize)),
+		encBufs: make(net.Buffers, 0, 2*s.maxInflight),
+		bodies:  make([]*bytes.Buffer, 0, s.maxInflight),
+		batch:   make([]taggedResponse, 0, s.maxInflight),
 		semaphore: make(chan struct{}, s.maxInflight),
 		logger:    s.logger.With(slog.String("remote", nc.RemoteAddr().String())),
 	}
@@ -374,39 +373,6 @@ func (c *conn) writeRaw(tag proto.Tag, msg proto.Message) error {
 	}
 	if _, err := c.nc.Write(body.Bytes()); err != nil {
 		return fmt.Errorf("write body: %w", err)
-	}
-	return nil
-}
-
-// encodeResponse encodes a single message directly to c.nc from the writeLoop.
-// Uses c.encHdr (a fixed array on the heap-allocated conn) to build the 7-byte
-// header in one nc.Write, avoiding the three heap allocations that separate
-// WriteUint32/WriteUint8/WriteUint16 calls to net.Conn incur via the io.Writer
-// interface fallback. The caller (writeLoop) holds writeMu.
-//
-// Protocol-neutral: the 9P header format (size+type+tag) is identical for
-// 9P2000.L and 9P2000.u; only message bodies differ (handled by msg.EncodeTo).
-func (c *conn) encodeResponse(tag proto.Tag, msg proto.Message) error {
-	body := bufpool.GetBuf()
-	defer bufpool.PutBuf(body)
-	if err := msg.EncodeTo(body); err != nil {
-		return fmt.Errorf("encode %s body: %w", msg.Type(), err)
-	}
-
-	size := uint32(proto.HeaderSize) + uint32(body.Len())
-	binary.LittleEndian.PutUint32(c.encHdr[0:4], size)
-	c.encHdr[4] = uint8(msg.Type())
-	binary.LittleEndian.PutUint16(c.encHdr[5:7], uint16(tag))
-
-	// Vectored I/O: on TCP and unix-domain sockets (including Q's deployment
-	// target), net.Buffers.WriteTo maps to a single writev() syscall,
-	// halving the write syscall count per response. net.Pipe falls back to
-	// sequential Writes but still works correctly.
-	c.encBufsArr[0] = c.encHdr[:]
-	c.encBufsArr[1] = body.Bytes()
-	bufs := net.Buffers(c.encBufsArr[:])
-	if _, err := bufs.WriteTo(c.nc); err != nil {
-		return fmt.Errorf("write response: %w", err)
 	}
 	return nil
 }
@@ -723,8 +689,15 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 	}
 }
 
-// writeLoop drains the responses channel and encodes each response to the
-// connection. It exits when the channel is closed or ctx is done.
+// writeLoop drains the responses channel, encodes responses to the
+// connection, and coalesces pending responses into a single writev() syscall
+// where possible. It exits when the channel is closed or ctx is done.
+//
+// Coalescing: when a response arrives, writeLoop drains any additional
+// pending responses non-blockingly (up to maxInflight), then issues one
+// net.Buffers.WriteTo for the entire batch. On TCP/unix-domain sockets
+// this maps to a single writev() syscall; net.Pipe still falls back to
+// sequential Writes internally.
 func (c *conn) writeLoop(ctx context.Context) {
 	for {
 		select {
@@ -734,28 +707,104 @@ func (c *conn) writeLoop(ctx context.Context) {
 			if !ok {
 				return
 			}
-			c.writeMu.Lock()
-			// Set write deadline for idle timeout (GO-SEC-1).
-			if c.server.idleTimeout > 0 {
-				if err := c.nc.SetWriteDeadline(time.Now().Add(c.server.idleTimeout)); err != nil {
-					c.writeMu.Unlock()
-					c.logger.Warn("failed to set write deadline", slog.Any("error", err))
-					return
-				}
+			c.flushBatch(resp)
+		}
+	}
+}
+
+// flushBatch collects resp plus any additional pending responses,
+// encodes them all, and writes them in a single net.Buffers.WriteTo.
+func (c *conn) flushBatch(first taggedResponse) {
+	// Reset reusable batch state (keeps backing arrays).
+	c.batch = c.batch[:0]
+	c.bodies = c.bodies[:0]
+	c.encBufs = c.encBufs[:0]
+
+	// Seed with first response.
+	c.batch = append(c.batch, first)
+
+	// Drain additional pending responses non-blockingly. Bound by the
+	// pre-allocated slab size so we never reallocate; the channel size
+	// itself is bounded by maxInflight.
+	maxBatch := cap(c.batch)
+drainLoop:
+	for len(c.batch) < maxBatch {
+		select {
+		case resp, ok := <-c.responses:
+			if !ok {
+				break drainLoop
 			}
-			err := c.encodeResponse(resp.tag, resp.msg)
-			c.writeMu.Unlock()
+			c.batch = append(c.batch, resp)
+		default:
+			break drainLoop
+		}
+	}
+
+	// Encode each response: body into a pooled buffer, header into the
+	// hdrSlab slot. Build the net.Buffers entries as we go.
+	for i, resp := range c.batch {
+		body := bufpool.GetBuf()
+		if err := resp.msg.EncodeTo(body); err != nil {
+			// Encode failure is logged; we still release what we've got
+			// and skip this response. The client will see a hung tag but
+			// EncodeTo for a valid message should not fail in practice.
+			c.logger.Warn("encode error",
+				slog.String("type", resp.msg.Type().String()),
+				slog.Any("error", err),
+			)
+			bufpool.PutBuf(body)
 			if resp.release != nil {
 				resp.release()
 			}
-			if err != nil {
-				c.logger.Warn("write error",
-					slog.String("type", resp.msg.Type().String()),
-					slog.Any("error", err),
-				)
-				// Don't kill connection for one bad response.
-				continue
-			}
+			// Shift subsequent batch items down and continue.
+			// Simpler: mark this slot as nil-body and skip during write.
+			c.bodies = append(c.bodies, nil)
+			continue
+		}
+		c.bodies = append(c.bodies, body)
+
+		size := uint32(proto.HeaderSize) + uint32(body.Len())
+		hdrSlot := c.hdrSlab[i*int(proto.HeaderSize) : (i+1)*int(proto.HeaderSize)]
+		binary.LittleEndian.PutUint32(hdrSlot[0:4], size)
+		hdrSlot[4] = uint8(resp.msg.Type())
+		binary.LittleEndian.PutUint16(hdrSlot[5:7], uint16(resp.tag))
+		c.encBufs = append(c.encBufs, hdrSlot, body.Bytes())
+	}
+
+	// Single writev under writeMu.
+	c.writeMu.Lock()
+	if c.server.idleTimeout > 0 {
+		if err := c.nc.SetWriteDeadline(time.Now().Add(c.server.idleTimeout)); err != nil {
+			c.writeMu.Unlock()
+			c.logger.Warn("failed to set write deadline", slog.Any("error", err))
+			// Still release all batch resources on failure.
+			c.releaseBatch()
+			return
+		}
+	}
+	_, err := c.encBufs.WriteTo(c.nc)
+	c.writeMu.Unlock()
+
+	// Release all pooled body buffers and run all release callbacks.
+	c.releaseBatch()
+
+	if err != nil {
+		c.logger.Warn("write error",
+			slog.Int("batch_size", len(c.batch)),
+			slog.Any("error", err),
+		)
+	}
+}
+
+// releaseBatch returns pooled body buffers and calls per-response release
+// callbacks after a batched write completes (or fails).
+func (c *conn) releaseBatch() {
+	for i, resp := range c.batch {
+		if i < len(c.bodies) && c.bodies[i] != nil {
+			bufpool.PutBuf(c.bodies[i])
+		}
+		if resp.release != nil {
+			resp.release()
 		}
 	}
 }
