@@ -10,20 +10,26 @@ import (
 // during connection cleanup.
 const cleanupDeadline = 5 * time.Second
 
-// cleanup performs orderly connection shutdown:
-//  1. Cancel all inflight request contexts.
-//  2. Wait for inflight handlers to finish (with deadline).
-//  3. Close the work channel and wait for workers to exit.
-//  4. Clunk all fids.
+// cleanup performs orderly connection shutdown for the recv-mutex worker
+// model:
 //
-// Workers encode and writev each response inline from sendResponseInline
-// under writeMu, so there is no separate writer goroutine or response
-// channel to drain on shutdown.
+//  1. Cancel all inflight request contexts.
+//  2. Wait for inflight handlers to drain (with deadline).
+//  3. Close net.Conn so the recvMu-holder's read errors out.
+//  4. Wait for handleRequest goroutines to exit (bounded by deadline).
+//  5. Clunk all fids.
+//
+// Each handleRequest goroutine encodes and writev's its response inline
+// from sendResponseInline under writeMu, so there is no separate writer
+// goroutine or response channel to drain on shutdown.
 func (c *conn) cleanup() {
-	// Step 1: Cancel all inflight requests.
+	// Step 1: Cancel all inflight requests so handlers respecting
+	// ctx.Done() return promptly.
 	c.inflight.cancelAll()
 
-	// Step 2: Wait for handlers to finish with deadline.
+	// Step 2: Wait for handlers to finish with deadline. If a handler
+	// ignores ctx.Done() (e.g. a stuck syscall), we log and move on -- the
+	// same contract as before (TestDisconnectCleanup_DrainDeadline).
 	deadlineCtx, deadlineCancel := context.WithTimeout(context.Background(), cleanupDeadline)
 	defer deadlineCancel()
 
@@ -33,27 +39,26 @@ func (c *conn) cleanup() {
 		)
 	}
 
-	// Step 3: Close the work channel and wait for workers to exit, but
-	// only up to the cleanup deadline. If a handler is stuck ignoring
-	// context cancellation, we must not hang cleanup — the old
-	// goroutine-per-request model also orphaned stuck handlers after
-	// the deadline (they remained until the process exited or they
-	// eventually returned). Same semantics here.
-	//
-	// readLoop has already returned (serve calls cleanup after it), so
-	// no further sends to workCh are possible. Idle workers see the
-	// closed channel and exit immediately; workers currently running a
-	// handler exit when the handler returns.
-	close(c.workCh)
-	workerDone := make(chan struct{})
+	// Step 3: Close net.Conn so the recvMu-holder's read errors out and
+	// exits. Goroutines parked on recvMu.Lock() observe recvShutdown on
+	// acquire and exit. Idempotent: if the watcher goroutine in serve
+	// already closed nc on ctx.Done, this returns ErrClosed (ignored).
+	_ = c.nc.Close()
+
+	// Wait for handleRequest goroutines to exit, bounded by the cleanup
+	// deadline. A stuck handler would already have caused step 2 to log;
+	// this step waits for the loop bodies to fall through. Same orphan
+	// semantics as the old worker pool: stuck handlers remain until they
+	// eventually return.
+	recvDone := make(chan struct{})
 	go func() {
-		c.workerWG.Wait()
-		close(workerDone)
+		c.recvWG.Wait()
+		close(recvDone)
 	}()
 	select {
-	case <-workerDone:
+	case <-recvDone:
 	case <-deadlineCtx.Done():
-		c.logger.Warn("cleanup: timed out waiting for workers to exit",
+		c.logger.Warn("cleanup: timed out waiting for recv goroutines to exit",
 			slog.Int("remaining_workers", int(c.workerCount.Load())),
 		)
 	}

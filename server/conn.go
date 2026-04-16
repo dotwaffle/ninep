@@ -99,26 +99,12 @@ func (c *conn) negotiate(tv *proto.Tversion) (negotiationResult, error) {
 }
 
 // releaser is implemented by response messages that carry pooled buffers
-// which must be returned to the pool after wire encoding completes.
+// which must be returned to the pool after wire encoding completes. The
+// dispatching goroutine in handleRequest hands the response to
+// sendResponseInline, which calls Release after the writev completes.
 // Currently used by pooledRread and pooledRreaddir in bridge.go.
-// sendResponseInline calls Release after the writev completes.
 type releaser interface {
 	Release()
-}
-
-// workItem is a decoded request ready for handler dispatch. The readLoop
-// populates it and sends to conn.workCh; an idle worker picks it up and
-// runs the handler chain synchronously, then loops back for the next item.
-//
-// bufPtr, when non-nil, points at a pooled message body buffer that the
-// request aliases (currently only Twrite.Data). handleWorkItem returns
-// it to bufpool after the handler completes — storing the pointer directly
-// instead of wrapping it in a closure avoids a per-request heap alloc.
-type workItem struct {
-	ctx    context.Context
-	tag    proto.Tag
-	msg    proto.Message
-	bufPtr *[]byte
 }
 
 // conn represents a single client connection to the server.
@@ -131,9 +117,10 @@ type conn struct {
 	msize    uint32 // Negotiated msize (0 until version negotiation).
 	codec    codec
 
-	// writeMu serializes all writes to nc. Workers acquire it in
-	// sendResponseInline, and writeRaw (used during version negotiation)
-	// takes it as well. This prevents interleaved wire frames (GO-CC-3).
+	// writeMu serializes all writes to nc. Dispatching goroutines acquire
+	// it in sendResponseInline, and writeRaw (used during version
+	// negotiation) takes it as well. This prevents interleaved wire frames
+	// (GO-CC-3).
 	writeMu sync.Mutex
 
 	// encHdr holds the 7-byte response header (size[4] + type[1] + tag[2])
@@ -147,29 +134,42 @@ type conn struct {
 	// Guarded by writeMu.
 	encBufsArr [3][]byte
 
-	// hdrBuf is reused for reading 4-byte frame size headers from nc.
-	// Stored on conn (heap-allocated) so hdrBuf[:] does not escape to
-	// the heap on each readLoop iteration.
-	hdrBuf [4]byte
-
-	// bodyReader is reused for wrapping the pooled message body buffer
-	// as an io.Reader for DecodeFrom. Reset() instead of bytes.NewReader
-	// avoids a per-message allocation.
-	bodyReader bytes.Reader
-
 	// inflight tracks per-request goroutines for flush cancellation and
 	// drain-on-disconnect.
 	inflight *inflightMap
 
-	// Worker pool (lazy-spawn, bounded by maxInflight). Replaces the
-	// previous goroutine-per-request model. Workers compete for items
-	// on workCh, stay alive for the connection lifetime, and are spawned
-	// on demand when no idle worker is available and we're still under
-	// cap.
-	workCh      chan workItem
-	workerCount atomic.Int32   // total workers alive
-	idleCount   atomic.Int32   // workers currently waiting on workCh
-	workerWG    sync.WaitGroup // tracks workers for cleanup drain
+	// Recv-mutex worker model. A single goroutine type drives the receive
+	// loop: lock recvMu, read one message, decide whether to spawn a
+	// successor, unlock recvMu, dispatch, send response inline, loop. The
+	// same goroutine that reads the bytes off the wire is the one that
+	// handles the request and writes the reply -- no inter-goroutine
+	// handoff.
+	//
+	// recvIdle counts goroutines parked in recvMu.Lock() waiting for their
+	// turn to read. Incremented BEFORE Lock and decremented AFTER Lock; this
+	// makes "recvIdle == 0" the precise predicate "no sibling is waiting to
+	// take over the wire". When a goroutine releases recvMu and observes
+	// recvIdle == 0 AND the worker count is below maxInflight, it spawns a
+	// replacement.
+	//
+	// recvShutdown is set under recvMu by the first goroutine to observe a
+	// recv error; siblings observe it on acquire and exit without reading.
+	//
+	// workerCount enforces the WithMaxInflight cap. recvWG tracks all
+	// handleRequest goroutines for cleanup drain.
+	// recvShutdownOnce/recvShutdownCh form a one-shot signal: the first
+	// handleRequest goroutine to observe a recv error closes recvShutdownCh
+	// so serve() can begin cleanup immediately. Without this, serve would
+	// have to wait for recvWG to reach zero before initiating cleanup --
+	// but handlers blocked in dispatch only return AFTER cleanup cancels
+	// their contexts, which would deadlock.
+	recvMu           sync.Mutex
+	recvIdle         atomic.Int32
+	recvShutdown     bool
+	recvShutdownCh   chan struct{}
+	recvShutdownOnce sync.Once
+	recvWG           sync.WaitGroup
+	workerCount      atomic.Int32
 
 	logger *slog.Logger
 
@@ -186,13 +186,13 @@ type conn struct {
 // newConn creates a new conn for the given server and network connection.
 func newConn(s *Server, nc net.Conn) *conn {
 	c := &conn{
-		server:   s,
-		nc:       nc,
-		fids:     newFidTable(),
-		maxFids:  s.maxFids,
-		inflight: newInflightMap(),
-		workCh:   make(chan workItem, s.maxInflight),
-		logger:   s.logger.With(slog.String("remote", nc.RemoteAddr().String())),
+		server:         s,
+		nc:             nc,
+		fids:           newFidTable(),
+		maxFids:        s.maxFids,
+		inflight:       newInflightMap(),
+		recvShutdownCh: make(chan struct{}),
+		logger:         s.logger.With(slog.String("remote", nc.RemoteAddr().String())),
 	}
 	// Build the middleware-wrapped dispatch chain. The closure captures c so
 	// it must be created after c is initialized. If no middleware is
@@ -221,8 +221,9 @@ func newConn(s *Server, nc net.Conn) *conn {
 	return c
 }
 
-// serve runs the connection lifecycle: version negotiation, then read loop.
-// It blocks until the connection is closed or the context is cancelled.
+// serve runs the connection lifecycle: version negotiation, then the
+// recv-mutex worker loop. It blocks until the connection is closed or the
+// context is cancelled.
 func (c *conn) serve(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -250,19 +251,41 @@ func (c *conn) serve(ctx context.Context) {
 		_ = c.nc.Close()
 	}()
 
-	// Drive the read loop synchronously on the serve goroutine. readLoop
-	// decodes requests and hands each one to a lazy-spawned worker via
-	// workCh; workers encode and writev responses inline under writeMu via
-	// sendResponseInline. There is no dedicated writer goroutine and no
-	// response channel (removed in v1.1.15). readLoop returns when the
-	// connection closes or ctx is done (GO-CC-1).
-	c.readLoop(ctx)
+	// Drive the recv-mutex worker model. Spawn the first handleRequest
+	// goroutine; it lazy-spawns successors on demand under recvMu (bounded
+	// by maxInflight) so the receive pipeline self-perpetuates.
+	c.workerCount.Add(1)
+	c.recvWG.Add(1)
+	go c.handleRequest(ctx)
 
-	// Orderly shutdown: cancel inflight, drain with deadline, close workCh,
-	// wait for workers, clunk fids. Workers encode and writev responses
-	// inline under writeMu, so there is no writer goroutine to drain
-	// afterwards.
+	// Wait for the first signal that the recv side has shut down. This
+	// fires when EITHER (a) the goroutine holding recvMu observes a recv
+	// error and signals shutdown, OR (b) the serve context is cancelled
+	// and the watcher closes nc, which causes the recvMu-holder to error
+	// out. We must NOT wait on recvWG here -- handlers blocked in
+	// dispatch won't return until cleanup cancels their contexts, so
+	// gating cleanup on recvWG would deadlock.
+	select {
+	case <-c.recvShutdownCh:
+	case <-ctx.Done():
+		// Ensure recvShutdownCh is closed so any concurrent observer
+		// also sees the signal. signalRecvShutdown is idempotent.
+		c.signalRecvShutdown()
+	}
+
+	// Orderly shutdown: cancel inflight, drain with deadline, close nc,
+	// wait for any straggling handleRequest goroutines, then clunk fids.
 	c.cleanup()
+}
+
+// signalRecvShutdown is the one-shot signal that the recv side has shut
+// down. The first goroutine to observe a recv error (or the serve goroutine
+// on ctx.Done) closes recvShutdownCh so cleanup can begin. Idempotent --
+// safe to call from multiple goroutines.
+func (c *conn) signalRecvShutdown() {
+	c.recvShutdownOnce.Do(func() {
+		close(c.recvShutdownCh)
+	})
 }
 
 // negotiateVersion reads the first Tversion from the client and negotiates
@@ -334,10 +357,10 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 }
 
 // writeRaw encodes a single message directly to the connection, bypassing
-// the worker pool's sendResponseInline path. Used during version
-// negotiation (both initial and mid-connection re-negotiation) where the
-// codec may not yet be selected. Acquires writeMu to serialize writes
-// across workers and the raw negotiation path.
+// sendResponseInline. Used during version negotiation (both initial and
+// mid-connection re-negotiation) where the codec may not yet be selected.
+// Acquires writeMu to serialize writes against dispatching goroutines and
+// the raw negotiation path.
 func (c *conn) writeRaw(tag proto.Tag, msg proto.Message) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
@@ -376,39 +399,73 @@ func (c *conn) writeRaw(tag proto.Tag, msg proto.Message) error {
 	return nil
 }
 
-// readLoop reads and dispatches messages until the connection closes or
-// ctx is done. After returning, the caller (serve) invokes cleanup(),
-// which cancels inflight requests, waits for them to drain with a
-// deadline, closes workCh, waits on workerWG, and clunks all remaining
-// fids. Responses are encoded and writev'd inline by workers under
-// writeMu (sendResponseInline), so there is no separate writer goroutine
-// or response channel to drain.
-func (c *conn) readLoop(ctx context.Context) {
+// handleRequest is one driver of the recv-mutex worker model. The loop:
+//
+//  1. Acquires recvMu (bumping recvIdle for the spawn-replacement predicate).
+//  2. Reads one message: 4-byte size header, then body.
+//  3. Decodes the body INSIDE recvMu (so per-iteration scratch buffers stay
+//     safely owned by the lock holder).
+//  4. Decides whether to spawn a replacement (skip on Tversion to keep this
+//     goroutine the sole reader during re-negotiation).
+//  5. Releases recvMu.
+//  6. Handles errors / Tversion / Tflush / dispatch outside the lock.
+//  7. Loops.
+//
+// The same goroutine that reads the bytes is the one that handles the
+// request and writes the response via dispatchInline -> sendResponseInline.
+// Per-iteration locals (hdrBuf, bodyReader) sit on this goroutine's stack so
+// concurrent siblings cannot corrupt them.
+func (c *conn) handleRequest(ctx context.Context) {
+	defer c.recvWG.Done()
+	defer c.workerCount.Add(-1)
+
 	for {
-		// Check context before blocking on read.
-		if ctx.Err() != nil {
+		// Per-iteration scratch. Must be locals (not on conn) because
+		// multiple goroutines now run this loop.
+		var hdrBuf [4]byte
+		var bodyReader bytes.Reader
+
+		// recvIdle++ BEFORE Lock; recvIdle-- AFTER Lock. This makes
+		// "recvIdle == 0" the precise predicate "no sibling is parked
+		// waiting to take over the wire" (RESEARCH §1, p9 verbatim).
+		c.recvIdle.Add(1)
+		c.recvMu.Lock()
+		c.recvIdle.Add(-1)
+
+		if c.recvShutdown {
+			// A sibling already saw a recv error; exit without reading.
+			c.recvMu.Unlock()
 			return
 		}
 
-		// Set read deadline for idle timeout (GO-SEC-1).
+		// Per-iteration read deadline for idle timeout. Inside recvMu so
+		// only one goroutine ever touches the read deadline at a time.
 		if c.server.idleTimeout > 0 {
 			if err := c.nc.SetReadDeadline(time.Now().Add(c.server.idleTimeout)); err != nil {
 				c.logger.Warn("failed to set read deadline", slog.Any("error", err))
+				c.recvShutdown = true
+				c.recvMu.Unlock()
+				c.signalRecvShutdown()
 				return
 			}
 		}
 
-		// Read message size. Uses conn's hdrBuf to avoid heap escape of
-		// the temp buffer through the io.Reader interface.
-		if _, err := io.ReadFull(c.nc, c.hdrBuf[:]); err != nil {
+		// Read 4-byte size header.
+		if _, err := io.ReadFull(c.nc, hdrBuf[:]); err != nil {
 			if !isExpectedCloseError(err) {
 				c.logger.Debug("read error", slog.Any("error", err))
 			}
+			c.recvShutdown = true
+			c.recvMu.Unlock()
+			c.signalRecvShutdown()
 			return
 		}
-		size := binary.LittleEndian.Uint32(c.hdrBuf[:])
+		size := binary.LittleEndian.Uint32(hdrBuf[:])
 		if size < uint32(proto.HeaderSize) {
 			c.logger.Warn("message too small", slog.Uint64("size", uint64(size)))
+			c.recvShutdown = true
+			c.recvMu.Unlock()
+			c.signalRecvShutdown()
 			return
 		}
 		if size > c.msize {
@@ -416,21 +473,13 @@ func (c *conn) readLoop(ctx context.Context) {
 				slog.Uint64("size", uint64(size)),
 				slog.Uint64("msize", uint64(c.msize)),
 			)
+			c.recvShutdown = true
+			c.recvMu.Unlock()
+			c.signalRecvShutdown()
 			return
 		}
 
-		// Read remaining bytes: type[1] + tag[2] + body.
-		//
-		// SAFETY (RESEARCH Pattern 4, re-verified in Task 3): every
-		// DecodeFrom method in proto/, proto/p9l/, proto/p9u/ that reads
-		// []byte or string fields does so via make+copy (e.g. Rread.Data,
-		// Twrite.Data, Rreaddir.Data) or via ReadString (which now has
-		// its own pooled scratch + unavoidable string() copy). None of
-		// them alias the input buffer into message fields. This makes it
-		// safe to return buf to the pool AFTER DecodeFrom completes but
-		// BEFORE launching the handler goroutine -- msg is fully
-		// independent of buf at that point. -race CI catches regressions
-		// if a future DecodeFrom introduces aliasing.
+		// Read body: type[1] + tag[2] + payload.
 		bufPtr := bufpool.GetMsgBuf(int(size - 4))
 		b := (*bufPtr)[:size-4]
 		if _, err := io.ReadFull(c.nc, b); err != nil {
@@ -438,6 +487,9 @@ func (c *conn) readLoop(ctx context.Context) {
 			if !isExpectedCloseError(err) {
 				c.logger.Debug("read body error", slog.Any("error", err))
 			}
+			c.recvShutdown = true
+			c.recvMu.Unlock()
+			c.signalRecvShutdown()
 			return
 		}
 
@@ -445,164 +497,177 @@ func (c *conn) readLoop(ctx context.Context) {
 		msgType := proto.MessageType(b[0])
 		tag := proto.Tag(binary.LittleEndian.Uint16(b[1:3]))
 
-		// Handle Tversion mid-connection (re-negotiation).
-		// handleReVersion uses body synchronously (DecodeFrom copies); after
-		// it returns, the pool buffer is safe to release.
-		if msgType == proto.TypeTversion {
-			c.handleReVersion(ctx, tag, b[3:])
-			bufpool.PutMsgBuf(bufPtr)
-			continue
+		// Spawn-replacement decision: only if a sibling is NOT already
+		// parked on recvMu AND we are below the maxInflight cap. Skip on
+		// Tversion -- handleReVersion drains all inflight and mutates
+		// c.msize/c.protocol/c.codec; a sibling reading with the old
+		// codec mid-renegotiation would corrupt the stream (RESEARCH P4).
+		spawnReplacement := false
+		if msgType != proto.TypeTversion &&
+			c.recvIdle.Load() == 0 &&
+			c.workerCount.Load() < int32(c.server.maxInflight) {
+			spawnReplacement = true
+			c.workerCount.Add(1)
+			c.recvWG.Add(1)
 		}
 
-		// Handle Tflush synchronously in the read loop to avoid deadlock:
-		// if all semaphore slots are taken, Tflush must still execute to
-		// cancel a pending request and free a slot (T-02-10).
-		if msgType == proto.TypeTflush {
-			var tf proto.Tflush
-			if err := tf.DecodeFrom(bytes.NewReader(b[3:])); err != nil {
+		// Decode INSIDE recvMu. Branches are mutually exclusive
+		// (if/else if/else): unknownType skips decode entirely; Twrite
+		// defers buf release (Data aliases buf); other types copy via
+		// DecodeFrom and release the buf immediately.
+		var msg proto.Message
+		var deferredBufPtr *[]byte
+		var decodeErr error
+		var unknownType bool
+
+		msg, newMsgErr := c.newMessage(msgType)
+		if newMsgErr != nil {
+			// Unknown message type. Do NOT touch msg (it is nil).
+			// Release the buf here; do NOT enter any decode branch.
+			unknownType = true
+			bufpool.PutMsgBuf(bufPtr)
+		} else if tw, ok := msg.(*proto.Twrite); ok {
+			if err := tw.DecodeFromBuf(b[3:]); err != nil {
+				decodeErr = err
+				// Twrite decode failed before aliasing took effect:
+				// release buf now; the cached msg is returned in the
+				// decodeErr branch outside the lock.
 				bufpool.PutMsgBuf(bufPtr)
-				c.logger.Warn("decode tflush error", slog.Any("error", err))
-				return
+			} else {
+				// Successful Twrite: m.Data aliases bufPtr; defer
+				// release to dispatchInline.
+				deferredBufPtr = bufPtr
 			}
-			// tf has no reference into b after DecodeFrom. Safe to Put.
+		} else {
+			bodyReader.Reset(b[3:])
+			if err := msg.DecodeFrom(&bodyReader); err != nil {
+				decodeErr = err
+			}
+			// DecodeFrom copied; safe to release immediately
+			// (regardless of decodeErr).
 			bufpool.PutMsgBuf(bufPtr)
-			resp := c.handleFlush(ctx, &tf)
-			c.sendResponse(tag, resp)
-			continue
 		}
 
-		// Decode message body via protocol-specific message factory.
-		msg, err := c.newMessage(msgType)
-		if err != nil {
-			bufpool.PutMsgBuf(bufPtr)
-			// Unknown message type -> ENOSYS.
+		if spawnReplacement {
+			go c.handleRequest(ctx)
+		}
+		c.recvMu.Unlock()
+
+		// Outside recvMu from here on.
+		if unknownType {
+			// msg is nil; nothing to release to msgcache.
 			c.sendError(tag, proto.ENOSYS)
 			continue
 		}
+		if decodeErr != nil {
+			c.logger.Warn("decode error",
+				slog.String("type", msgType.String()),
+				slog.Any("error", decodeErr),
+			)
+			// Decode failures on the wire are fatal for this conn -- we
+			// cannot trust subsequent framing. Mirror the old behaviour:
+			// return after marking the connection shut down.
+			//
+			// msg is non-nil (newMsgErr was nil) and was NOT dispatched,
+			// so we own it; return it to the cache before exiting.
+			putCachedMsg(msg)
 
-		// deferredBufPtr is the pooled message-body buffer carried over
-		// to the handler when the request aliases into it (currently only
-		// Twrite with DecodeFromBuf). nil for messages whose DecodeFrom
-		// copies all data out — the buffer is returned to the pool
-		// immediately. Carrying a raw pointer avoids the per-request
-		// closure alloc that wrapping PutMsgBuf in func() would cost.
-		var deferredBufPtr *[]byte
+			// Set recvShutdown so siblings exit cleanly on next iter.
+			c.recvMu.Lock()
+			c.recvShutdown = true
+			c.recvMu.Unlock()
+			c.signalRecvShutdown()
 
-		if tw, ok := msg.(*proto.Twrite); ok {
-			// Zero-copy Twrite: m.Data aliases bufPtr; defer release.
-			if err := tw.DecodeFromBuf(b[3:]); err != nil {
-				bufpool.PutMsgBuf(bufPtr)
-				c.logger.Warn("decode error",
-					slog.String("type", msgType.String()),
-					slog.Any("error", err),
-				)
-				return // Fatal decode error.
-			}
-			deferredBufPtr = bufPtr
-			// Do NOT put bufPtr to the pool here — handleWorkItem's
-			// defer returns it after the handler finishes with Data.
-		} else {
-			c.bodyReader.Reset(b[3:])
-			if err := msg.DecodeFrom(&c.bodyReader); err != nil {
-				bufpool.PutMsgBuf(bufPtr)
-				c.logger.Warn("decode error",
-					slog.String("type", msgType.String()),
-					slog.Any("error", err),
-				)
-				return // Fatal decode error.
-			}
-			// DecodeFrom copied buf contents into msg fields; msg is
-			// independent of bufPtr. Safe to return immediately.
-			bufpool.PutMsgBuf(bufPtr)
+			// Closing nc fast-paths any sibling already inside a Read
+			// syscall out of it. recvShutdown alone only catches siblings
+			// at next Lock acquire. net.Conn.Close is idempotent (returns
+			// ErrClosed which we ignore); the redundant close is
+			// intentional belt-and-braces.
+			_ = c.nc.Close()
+			return
 		}
 
-		// Create per-request context with cancellation for flush support.
-		reqCtx, cancel := context.WithCancel(ctx)
-		c.inflight.start(tag, cancel)
-
-		// Spawn a worker if nobody is idle and we're under the maxInflight
-		// cap. Lazy spawn keeps the worker pool sized to actual concurrency
-		// demand; existing workers stay alive for the connection lifetime.
-		if c.idleCount.Load() == 0 && c.workerCount.Load() < int32(c.server.maxInflight) {
-			c.workerCount.Add(1)
-			c.workerWG.Add(1)
-			go c.worker(ctx)
+		// Tversion mid-conn: handle inline (we deliberately did NOT
+		// spawn a replacement above; we are the sole reader during
+		// re-negotiation). After handleReVersion returns, the loop
+		// continues -- the next iteration will spawn a replacement
+		// normally.
+		if msgType == proto.TypeTversion {
+			c.handleReVersion(ctx, tag, b[3:])
+			putCachedMsg(msg)
+			continue
 		}
 
-		// Dispatch. Blocks if workCh is full (all workers busy + cap
-		// reached), providing the same back-pressure the old semaphore
-		// offered. On ctx cancellation, clean up the request state.
-		select {
-		case c.workCh <- workItem{ctx: reqCtx, tag: tag, msg: msg, bufPtr: deferredBufPtr}:
-		case <-ctx.Done():
+		// Tflush short-circuit. dispatch.go has no case *proto.Tflush;
+		// routing Tflush through dispatch would return ENOSYS. Tflush
+		// also operates on OTHER tags' inflight state and must NOT
+		// itself create an inflight entry, so we cannot call
+		// inflight.start or dispatchInline for it. Mirror the old
+		// short-circuit explicitly here, AFTER recvMu unlock so a
+		// sibling can already be reading the next message.
+		if tf, ok := msg.(*proto.Tflush); ok {
+			resp := c.handleFlush(ctx, tf)
+			// sendResponseInline accepts a nil releaser; Rflush has no
+			// pooled buffers to release.
+			c.sendResponseInline(tag, resp, nil)
+			putCachedMsg(msg)
+			// No deferredBufPtr possible here (Tflush is not Twrite),
+			// but defensively release if non-nil.
 			if deferredBufPtr != nil {
 				bufpool.PutMsgBuf(deferredBufPtr)
 			}
-			c.inflight.finish(tag)
-			return
+			continue
 		}
+
+		// Per-request context with cancellation for flush support.
+		reqCtx, cancel := context.WithCancel(ctx)
+		c.inflight.start(tag, cancel)
+
+		// Dispatch + send response inline (this folds in the work that
+		// was previously the worker's responsibility).
+		c.dispatchInline(reqCtx, tag, msg, deferredBufPtr)
 	}
 }
 
-// worker is a long-lived goroutine that processes request work items from
-// workCh until the channel is closed (by cleanup). Panic recovery is
-// per-request (inside handleWorkItem) so one bad handler does not
-// terminate the worker. connCtx is accepted for symmetry with future
-// uses but not needed for exit — cleanup always runs after readLoop and
-// unconditionally closes workCh.
-func (c *conn) worker(_ context.Context) {
-	defer c.workerWG.Done()
-	defer c.workerCount.Add(-1)
-
-	for {
-		c.idleCount.Add(1)
-		item, ok := <-c.workCh
-		c.idleCount.Add(-1)
-		if !ok {
-			return // channel closed by cleanup
-		}
-		c.handleWorkItem(item)
-	}
-}
-
-// handleWorkItem runs one request through the middleware + dispatch chain
-// with panic recovery. Invoked synchronously by worker(); a panic is
-// caught, turned into an EIO response, and the worker loop continues.
-// item.bufPtr, when non-nil, is a pooled message-body buffer the request
-// aliases (e.g. Twrite.Data); it is returned to bufpool after the handler
-// finishes with it.
-func (c *conn) handleWorkItem(item workItem) {
+// dispatchInline runs one request through the middleware + dispatch chain
+// with panic recovery, sends the response, and releases pooled buffers,
+// cached message structs, and inflight tag tracking. Called from
+// handleRequest after recvMu is released.
+//
+// bufPtr, when non-nil, points at a pooled message-body buffer that the
+// request aliases (currently only Twrite.Data). It MUST be returned to
+// the pool BEFORE putCachedMsg: defer is LIFO and Twrite.Data aliases the
+// buffer; clearing the cache before release would zero Data while it
+// still references the recycled buffer (RESEARCH P10).
+func (c *conn) dispatchInline(ctx context.Context, tag proto.Tag, msg proto.Message, bufPtr *[]byte) {
 	defer func() {
-		if item.bufPtr != nil {
-			bufpool.PutMsgBuf(item.bufPtr)
+		if bufPtr != nil {
+			bufpool.PutMsgBuf(bufPtr)
 		}
-		// Return the request struct to its type-specific cache (if any)
-		// for reuse by a later request — bounded, non-blocking, no-op if
-		// the cache is full. Must happen AFTER bufPtr release because
-		// Twrite.Data aliases that buffer and putCachedMsg clears it.
-		putCachedMsg(item.msg)
+		// MUST run after PutMsgBuf (defer is LIFO; source order matters).
+		putCachedMsg(msg)
 		if r := recover(); r != nil {
 			// SERV-06: Handler panic -> EIO, never crash the server.
 			c.logger.Error("handler panic",
 				slog.Any("panic", r),
-				slog.String("message_type", item.msg.Type().String()),
+				slog.String("message_type", msg.Type().String()),
 			)
-			c.sendResponse(item.tag, c.errorMsg(proto.EIO))
+			c.sendResponse(tag, c.errorMsg(proto.EIO))
 		}
-		c.inflight.finish(item.tag)
+		c.inflight.finish(tag)
 	}()
 
-	resp := c.handler(item.ctx, item.tag, item.msg)
+	resp := c.handler(ctx, tag, msg)
 	if resp != nil {
-		// Store the releaser interface verbatim on taggedResponse — taking
-		// r.Release as a method value would allocate a heap closure on
-		// every request. Passing the interface value costs no extra alloc
-		// and sendResponseInline invokes release.Release() virtually.
+		// Store the releaser interface verbatim -- taking r.Release as
+		// a method value would allocate a heap closure on every request.
+		// Passing the interface value costs no extra alloc and
+		// sendResponseInline invokes release.Release() virtually.
 		var release releaser
 		if r, ok := resp.(releaser); ok {
 			release = r
 		}
-		c.sendResponseInline(item.tag, resp, release)
+		c.sendResponseInline(tag, resp, release)
 	}
 }
 
@@ -651,7 +716,7 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 	}
 
 	// Send Rversion directly via writeRaw, which acquires writeMu to
-	// prevent interleaving with other workers' writes (CR-01).
+	// prevent interleaving with other dispatchers' writes (CR-01).
 	rver := &proto.Rversion{Msize: res.msize, Version: res.version}
 	if err := c.writeRaw(tag, rver); err != nil {
 		c.logger.Warn("re-negotiation send error", slog.Any("error", err))
@@ -735,17 +800,14 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 }
 
 // sendResponseInline encodes a response and writes it to the connection
-// directly from the worker goroutine. Responses are encoded and writev'd
-// inline by the worker that handled the request (under writeMu), so there
-// is no inter-goroutine handoff between the worker and a dedicated writer
-// — saves one context switch per request (~1-3 μs) on the small-file hot
-// path (v1.1.15).
+// directly from the dispatching goroutine. There is no inter-goroutine
+// handoff between the goroutine that handled the request and the wire
+// write -- the same goroutine encodes, takes writeMu, and issues the writev.
 //
-// Serialises concurrent worker writes via writeMu, and uses the
-// conn-resident encHdr/encBufsArr buffers (guarded by writeMu) to
-// avoid per-response allocation. On TCP / unix-domain sockets the write
-// is a single writev syscall covering header + body (+ optional Payloader
-// payload).
+// Serialises concurrent writes via writeMu, and uses the conn-resident
+// encHdr/encBufsArr buffers (guarded by writeMu) to avoid per-response
+// allocation. On TCP / unix-domain sockets the write is a single writev
+// syscall covering header + body (+ optional Payloader payload).
 //
 // rel, when non-nil, has its Release method called after the writev
 // completes so pooled Rread/Rreaddir buffers return to their pool even

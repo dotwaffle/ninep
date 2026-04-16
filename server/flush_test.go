@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -410,14 +411,34 @@ func TestMaxInflight(t *testing.T) {
 
 	cp.attach(t, 1, 0, "user", "")
 
-	// Send 3 requests that block. Only 2 should execute concurrently.
-	for i := range 3 {
+	// Send the first 2 requests synchronously: with WithMaxInflight(2)
+	// the recv-mutex worker model can only have at most 2 dispatcher
+	// goroutines alive at once. Sending a 3rd synchronously would block
+	// on the pipe because no successor is spawned past the cap. Send
+	// the 3rd from a background goroutine so the test does not
+	// deadlock; the 3rd send will only complete once one of the first
+	// two handlers releases.
+	for i := range 2 {
 		sendMessage(t, cp.client, proto.Tag(10+i), &proto.Twalk{
 			Fid:    0,
 			NewFid: proto.Fid(10 + i),
 			Names:  []string{"child"},
 		})
 	}
+
+	thirdDone := make(chan struct{})
+	go func() {
+		defer close(thirdDone)
+		var buf bytes.Buffer
+		if err := p9l.Encode(&buf, proto.Tag(12), &proto.Twalk{
+			Fid:    0,
+			NewFid: proto.Fid(12),
+			Names:  []string{"child"},
+		}); err != nil {
+			return
+		}
+		_, _ = cp.client.Write(buf.Bytes())
+	}()
 
 	// Wait for at least one handler to start.
 	select {
@@ -437,10 +458,21 @@ func TestMaxInflight(t *testing.T) {
 	// Unblock all handlers.
 	close(root.block)
 
-	// Read all 3 responses.
+	// Read responses while the 3rd send may still be in flight. With
+	// net.Pipe, sendResponseInline blocks until the client reads, so
+	// we must read interleaved with the writer goroutine completing.
 	for range 3 {
 		_ = cp.client.SetReadDeadline(time.Now().Add(2 * time.Second))
 		readResponse(t, cp.client)
+	}
+
+	// Background sender should have finished by now (its Write
+	// completed when the recvMu holder consumed tag 12 between
+	// responses 2 and 3).
+	select {
+	case <-thirdDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("3rd send did not complete after responses drained")
 	}
 }
 
