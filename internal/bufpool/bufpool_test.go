@@ -2,6 +2,7 @@ package bufpool
 
 import (
 	"bytes"
+	"runtime"
 	"testing"
 )
 
@@ -201,5 +202,37 @@ func TestStringBufCycle_ZeroAllocs(t *testing.T) {
 
 	if allocs != 0 {
 		t.Errorf("GetStringBuf+PutStringBuf allocs/op: got %v, want 0", allocs)
+	}
+}
+
+// BenchmarkGetMsgBuf_SmallUnderGC reproduces the handoff Target G workload
+// faithfully: mixed 11/23/4096-byte Get/Put cycles with runtime.GC() every
+// 1000 iterations. The mix models Tclunk/Twrite-header/4K-payload traffic
+// that exposes pool drain-feedback loops on a monolithic pool; size-class
+// bucketing (shipped v1.1.18, commit 0c2c8ca) eliminates the feedback.
+// Acceptance: 0 allocs/op at steady state.
+//
+// Pattern anchor: analogous to TestMsgBufCycle_ZeroAllocs (bufpool_test.go:147-162)
+// but uses b.Loop() instead of AllocsPerRun because the acceptance bar is
+// per-benchstat steady-state allocs/op, not a hard AllocsPerRun assertion.
+// Pattern: 13-PATTERNS.md §"internal/bufpool/bufpool_test.go".
+func BenchmarkGetMsgBuf_SmallUnderGC(b *testing.B) {
+	sizes := []int{11, 23, 4096}
+	// Warm every bucket used by the mix — first-use path hits sync.Pool.New
+	// which would register as an allocation and skew early iterations.
+	for range 100 {
+		for _, sz := range sizes {
+			PutMsgBuf(GetMsgBuf(sz))
+		}
+	}
+	b.ReportAllocs()
+	var i int
+	for b.Loop() {
+		buf := GetMsgBuf(sizes[i%len(sizes)])
+		PutMsgBuf(buf)
+		if i%1000 == 0 {
+			runtime.GC()
+		}
+		i++
 	}
 }
