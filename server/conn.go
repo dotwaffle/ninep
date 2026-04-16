@@ -98,9 +98,20 @@ func (c *conn) negotiate(tv *proto.Tversion) (negotiationResult, error) {
 }
 
 // taggedResponse pairs a tag with a response for the writer goroutine.
+// The optional release func is called after the response is encoded; it
+// returns pooled buffers (e.g. bridge Rread/Rreaddir data buffers) to
+// their pools.
 type taggedResponse struct {
-	tag proto.Tag
-	msg proto.Message
+	tag     proto.Tag
+	msg     proto.Message
+	release func() // called after encode; nil when no pooled buffer is held
+}
+
+// releaser is implemented by response messages that carry pooled buffers
+// which must be returned to the pool after wire encoding completes.
+// Currently used by pooledRread and pooledRreaddir in bridge.go.
+type releaser interface {
+	Release()
 }
 
 // conn represents a single client connection to the server.
@@ -527,7 +538,11 @@ func (c *conn) handleRequest(ctx context.Context, tag proto.Tag, msg proto.Messa
 
 	resp := c.handler(ctx, tag, msg)
 	if resp != nil {
-		c.sendResponse(tag, resp)
+		var release func()
+		if r, ok := resp.(releaser); ok {
+			release = r.Release
+		}
+		c.sendResponseWithRelease(tag, resp, release)
 	}
 }
 
@@ -681,6 +696,9 @@ func (c *conn) writeLoop(ctx context.Context) {
 			}
 			err := c.encodeResponse(resp.tag, resp.msg)
 			c.writeMu.Unlock()
+			if resp.release != nil {
+				resp.release()
+			}
 			if err != nil {
 				c.logger.Warn("write error",
 					slog.String("type", resp.msg.Type().String()),
@@ -699,16 +717,30 @@ func (c *conn) writeLoop(ctx context.Context) {
 // completed), the send panics and is recovered -- this handles the case where
 // a stuck handler outlasts the cleanup deadline.
 func (c *conn) sendResponse(tag proto.Tag, msg proto.Message) {
+	c.sendResponseWithRelease(tag, msg, nil)
+}
+
+// sendResponseWithRelease queues a response with an optional release func
+// that is called by the writeLoop after the response has been encoded on
+// the wire. Used for pooled-buffer responses (e.g. Rread, Rreaddir).
+// If the responses channel has been closed (cleanup complete), the send
+// panics and the release runs during recovery so pool buffers are not
+// leaked when the handler outlives the connection.
+func (c *conn) sendResponseWithRelease(tag proto.Tag, msg proto.Message, release func()) {
 	defer func() {
 		if r := recover(); r != nil {
-			// Channel was closed by cleanup -- drop the response.
+			// Channel was closed by cleanup -- drop the response, but
+			// still return any pooled buffers to avoid leaks.
+			if release != nil {
+				release()
+			}
 			c.logger.Debug("response dropped after cleanup",
 				slog.String("type", msg.Type().String()),
 			)
 		}
 	}()
 
-	c.responses <- taggedResponse{tag: tag, msg: msg}
+	c.responses <- taggedResponse{tag: tag, msg: msg, release: release}
 }
 
 // sendError queues a protocol-appropriate error response.

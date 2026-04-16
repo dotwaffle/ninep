@@ -3,10 +3,46 @@ package server
 import (
 	"context"
 	"errors"
+	"io"
 
+	"github.com/dotwaffle/ninep/internal/bufpool"
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
 )
+
+// pooledRread wraps Rread with a reference to the pooled buffer backing
+// Data, and implements releaser so the writeLoop returns the buffer to
+// the pool after encoding. Satisfies proto.Message via embedded Rread.
+type pooledRread struct {
+	proto.Rread
+	bufPtr *[]byte
+}
+
+// Release returns the pooled buffer to bufpool.msgBufPool. Called by
+// writeLoop after encodeResponse copies bytes into the connection.
+func (r *pooledRread) Release() { bufpool.PutMsgBuf(r.bufPtr) }
+
+// Type delegates to the embedded Rread (required so middleware and
+// encode sees the correct wire type).
+func (r *pooledRread) Type() proto.MessageType { return r.Rread.Type() }
+
+// EncodeTo delegates to the embedded Rread.
+func (r *pooledRread) EncodeTo(w io.Writer) error { return r.Rread.EncodeTo(w) }
+
+// DecodeFrom delegates to the embedded Rread (unused on the server side
+// but required to satisfy proto.Message).
+func (r *pooledRread) DecodeFrom(rd io.Reader) error { return r.Rread.DecodeFrom(rd) }
+
+// pooledRreaddir is the Rreaddir analog of pooledRread.
+type pooledRreaddir struct {
+	p9l.Rreaddir
+	bufPtr *[]byte
+}
+
+func (r *pooledRreaddir) Release()                      { bufpool.PutMsgBuf(r.bufPtr) }
+func (r *pooledRreaddir) Type() proto.MessageType       { return r.Rreaddir.Type() }
+func (r *pooledRreaddir) EncodeTo(w io.Writer) error    { return r.Rreaddir.EncodeTo(w) }
+func (r *pooledRreaddir) DecodeFrom(rd io.Reader) error { return r.Rreaddir.DecodeFrom(rd) }
 
 // handleLopen dispatches to NodeOpener, transitions fid to opened state, and
 // stores the returned FileHandle.
@@ -81,30 +117,35 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 		m.Count = maxData
 	}
 
-	buf := make([]byte, m.Count)
+	// Borrow buffer from pool; wrapper Release() returns it after encode.
+	bufPtr := bufpool.GetMsgBuf(int(m.Count))
+	buf := (*bufPtr)[:m.Count]
 
 	// FileHandle dispatch first (per API-04).
 	if fs.handle != nil {
 		if reader, ok := fs.handle.(FileReader); ok {
 			n, err := reader.Read(ctx, buf, m.Offset)
 			if err != nil {
+				bufpool.PutMsgBuf(bufPtr)
 				return c.errorMsg(errnoFromError(err))
 			}
-			return &proto.Rread{Data: buf[:n]}
+			return &pooledRread{Rread: proto.Rread{Data: buf[:n]}, bufPtr: bufPtr}
 		}
 	}
 
 	// Node fallback.
 	reader, ok := fs.node.(NodeReader)
 	if !ok {
+		bufpool.PutMsgBuf(bufPtr)
 		return c.errorMsg(proto.ENOSYS)
 	}
 
 	n, err := reader.Read(ctx, buf, m.Offset)
 	if err != nil {
+		bufpool.PutMsgBuf(bufPtr)
 		return c.errorMsg(errnoFromError(err))
 	}
-	return &proto.Rread{Data: buf[:n]}
+	return &pooledRread{Rread: proto.Rread{Data: buf[:n]}, bufPtr: bufPtr}
 }
 
 // handleWrite dispatches to FileWriter (handle-first) then NodeWriter (fallback).
@@ -226,16 +267,19 @@ func (c *conn) handleReaddir(ctx context.Context, m *p9l.Treaddir) proto.Message
 		m.Count = maxData
 	}
 
-	buf := make([]byte, m.Count)
-
-	// FileHandle dispatch chain (priority order).
+	// FileHandle dispatch chain (priority order). Allocate the pooled
+	// buffer only on the raw-readdir paths that actually need it; the
+	// simple readdir path does its own buffer management.
 	if fs.handle != nil {
 		if raw, ok := fs.handle.(FileRawReaddirer); ok {
+			bufPtr := bufpool.GetMsgBuf(int(m.Count))
+			buf := (*bufPtr)[:m.Count]
 			n, err := raw.RawReaddir(ctx, buf, m.Offset)
 			if err != nil {
+				bufpool.PutMsgBuf(bufPtr)
 				return c.errorMsg(errnoFromError(err))
 			}
-			return &p9l.Rreaddir{Data: buf[:n]}
+			return &pooledRreaddir{Rreaddir: p9l.Rreaddir{Data: buf[:n]}, bufPtr: bufPtr}
 		}
 		if rd, ok := fs.handle.(FileReaddirer); ok {
 			return c.readdirSimple(ctx, fs, m, rd)
@@ -244,11 +288,14 @@ func (c *conn) handleReaddir(ctx context.Context, m *p9l.Treaddir) proto.Message
 
 	// Node dispatch chain (fallback).
 	if raw, ok := fs.node.(NodeRawReaddirer); ok {
+		bufPtr := bufpool.GetMsgBuf(int(m.Count))
+		buf := (*bufPtr)[:m.Count]
 		n, err := raw.RawReaddir(ctx, buf, m.Offset)
 		if err != nil {
+			bufpool.PutMsgBuf(bufPtr)
 			return c.errorMsg(errnoFromError(err))
 		}
-		return &p9l.Rreaddir{Data: buf[:n]}
+		return &pooledRreaddir{Rreaddir: p9l.Rreaddir{Data: buf[:n]}, bufPtr: bufPtr}
 	}
 	if rd, ok := fs.node.(NodeReaddirer); ok {
 		return c.readdirSimple(ctx, fs, m, rd)
