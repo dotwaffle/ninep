@@ -48,8 +48,8 @@ func (c *conn) cleanup() {
 	// Wait for handleRequest goroutines to exit, bounded by the cleanup
 	// deadline. A stuck handler would already have caused step 2 to log;
 	// this step waits for the loop bodies to fall through. Same orphan
-	// semantics as the old worker pool: stuck handlers remain until they
-	// eventually return.
+	// semantics as before: stuck handlers remain until they eventually
+	// return.
 	recvDone := make(chan struct{})
 	go func() {
 		c.recvWG.Wait()

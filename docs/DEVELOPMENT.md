@@ -80,12 +80,12 @@ ninep/
     node.go             Capability interfaces (NodeReader, NodeWriter, etc.)
     inode.go            Inode with ENOSYS defaults for all capabilities
     server.go           Server struct, New(), Serve(), ServeConn()
-    conn.go             Per-connection lifecycle: read loop, worker pool (lazy-spawn), version negotiation, sendResponseInline
+    conn.go             Per-connection lifecycle: handleRequest recv-mutex worker loop, version negotiation, dispatchInline, sendResponseInline
     dispatch.go         Message routing to bridge handlers
     bridge.go           Bridge handlers (handleLopen, handleRead, handleWrite, etc.); pooledRread/pooledRreaddir wrappers
     fid.go              Fid table with lifecycle state tracking
     flush.go            Inflight request tracking and Tflush cancellation
-    cleanup.go          Connection shutdown: cancel inflight, drain, close workCh, clunk fids
+    cleanup.go          Connection shutdown: cancel inflight, drain, close nc, wait recvWG, clunk fids
     msgcache.go         Bounded chan caches for hot request types (Tread/Twrite/Twalk/Tclunk/Tlopen/Tgetattr)
     middleware.go       Handler/Middleware types, chain(), WithMiddleware()
     options.go          Functional options (WithMaxMsize, WithMaxInflight, WithLogger, etc.)
@@ -103,7 +103,7 @@ ninep/
     io_bench_test.go    Read/write/readdir benchmarks; newConnPairMsize, benchWalkOpen, treadOffsetPos
     writev_bench_test.go  net.Buffers / writev A/B harness; unixPair, pipePair
     msgalloc_bench_test.go  Per-request message-struct alloc comparison
-    readloop_alloc_test.go  Alloc assertions for the readLoop/decode path
+    recvmu_alloc_test.go    Alloc assertions for the handleRequest/decode path
     memfs/              In-memory file/directory helpers
       memfs.go            MemFile, MemDir, StaticFile types
       builder.go          Fluent builder API (NewDir, AddFile, WithDir, etc.)
@@ -189,7 +189,7 @@ The server uses the `Option` pattern defined in `server/options.go`:
 ```go
 srv := server.New(root,
     server.WithMaxMsize(1 << 20),        // 1MB max message size
-    server.WithMaxInflight(128),         // 128 concurrent requests (== worker pool cap)
+    server.WithMaxInflight(128),         // 128 concurrent requests (== handleRequest goroutine cap)
     server.WithMaxFids(100_000),         // per-conn fid cap
     server.WithLogger(slog.Default()),   // structured logger
     server.WithIdleTimeout(30*time.Second),
@@ -463,16 +463,16 @@ func denyAll(next server.Handler) server.Handler {
 - **OTel middleware** -- automatically prepended when `WithTracer()` or `WithMeter()` is configured. Creates a span per 9P operation with `rpc.system.name=9p`, records duration histograms, request/response sizes, and active request counts. Defined in `server/otel.go`.
 - **Logging middleware** -- `NewLoggingMiddleware(logger)` logs each request at Debug level with op name, duration, and error status. Defined in `server/logging.go`.
 
-## Connection Model (Worker Pool)
+## Connection Model (Recv-Mutex Worker)
 
 Understanding the current connection model matters when extending the server or profiling performance.
 
-- **Goroutine-per-connection** -- each accepted `net.Conn` runs `conn.serve`, which spins a read loop and a lazy-spawn worker pool.
-- **Lazy-spawn worker pool** -- workers are bounded by `maxInflight` and only grow on demand. The read loop hands decoded requests to `c.workCh` (buffered at `maxInflight`); an idle worker picks them up, runs them through the middleware chain + `dispatch`, and writes the response inline. Workers persist for the lifetime of the connection.
-- **Inline writes (no writeLoop goroutine)** -- since v1.1.15 the worker that ran the handler also encodes and sends the response from `sendResponseInline`, which acquires `writeMu`, issues a single `net.Buffers.WriteTo` (one writev on sockets that support it), and then calls `Release` on any pooled-buffer responses. There is no `responses` channel and no dedicated writeLoop goroutine.
-- **Per-request panic recovery** -- `handleWorkItem` wraps the handler in `defer recover()`. A panicking handler becomes an `Rlerror{Ecode: EIO}` on that tag; the worker survives and keeps draining `workCh`.
-- **Request struct release** -- `handleWorkItem`'s defer releases the pooled body buffer (via `bufpool.PutMsgBuf`) and then hands the request struct back to the `msgcache` bounded chan (Tread / Twrite / Twalk / Tclunk / Tlopen / Tgetattr). Buffer release must precede `putCachedMsg` because `Twrite.Data` aliases the pooled buffer.
-- **Shutdown** -- `cleanup()` cancels inflight contexts, waits with a deadline for handlers to drain, closes `workCh` so workers exit, then clunks all remaining fids.
+- **Goroutine-per-connection** -- each accepted `net.Conn` runs `conn.serve`, which spawns the first `handleRequest` goroutine; that goroutine lazy-spawns successors under `recvMu` as load demands.
+- **Recv-mutex worker model** -- a single goroutine type drives the receive loop end-to-end. It locks `recvMu`, reads one frame, decides whether to spawn a successor (only if no sibling is parked AND `workerCount < maxInflight`), unlocks `recvMu`, dispatches the request, writes the response inline, then loops back to re-acquire `recvMu`. The same goroutine that read the bytes is the one that handles the request -- no inter-goroutine handoff between read and dispatch.
+- **Inline writes (no writeLoop goroutine)** -- the dispatching goroutine also encodes and sends the response from `sendResponseInline`, which acquires `writeMu`, issues a single `net.Buffers.WriteTo` (one writev on sockets that support it), and then calls `Release` on any pooled-buffer responses. There is no `responses` channel and no dedicated writeLoop goroutine.
+- **Per-request panic recovery** -- `dispatchInline` wraps the handler in `defer recover()`. A panicking handler becomes an `Rlerror{Ecode: EIO}` on that tag; the dispatcher returns to `handleRequest` and continues the loop.
+- **Request struct release** -- `dispatchInline`'s defer releases the pooled body buffer (via `bufpool.PutMsgBuf`) and then hands the request struct back to the `msgcache` bounded chan (Tread / Twrite / Twalk / Tclunk / Tlopen / Tgetattr). Buffer release must precede `putCachedMsg` because `Twrite.Data` aliases the pooled buffer.
+- **Shutdown** -- `cleanup()` cancels inflight contexts, waits with a deadline for handlers to drain, closes `nc` so the recvMu holder errors out, waits for `recvWG` (bounded by the same deadline), then clunks all remaining fids.
 
 ## Performance Workflow
 
@@ -544,7 +544,7 @@ for b.Loop() {
 These are the production-relevant footguns the server already pays around. Follow the same pattern in new code.
 
 - **`sync.Pool` cross-P overhead on tiny structs.** Pooling hot request structs (`*proto.Tread` etc.) regressed server-level throughput by ~15% under the goroutine-per-request model: the pool's per-P cache got stolen across Ps faster than callers could reuse an entry. `server/msgcache.go` uses bounded `chan *T` (cap 3) per hot type instead -- non-blocking send/recv, no cross-P balancing, ~1 alloc amortized across many requests. See `BenchmarkMessageAlloc` in `msgalloc_bench_test.go` for the comparison harness.
-- **Method-value closures on interface receivers.** Writing `r.Release` where `r` is an interface value allocates a heap closure per request. `conn.handleWorkItem` stores the `releaser` interface value directly on the work item and invokes `release.Release()` at the call site -- virtual dispatch, zero closure alloc.
+- **Method-value closures on interface receivers.** Writing `r.Release` where `r` is an interface value allocates a heap closure per request. `conn.dispatchInline` stores the `releaser` interface value directly on a local and invokes `release.Release()` at the call site -- virtual dispatch, zero closure alloc.
 - **`net.Buffers.WriteTo` consumes its slice.** `net.Buffers.consume` rewrites the slice header, including capacity, as it drains buffers. Rebuilding a slice literal each call (`net.Buffers{hdr, body}`) escapes to the heap; using a conn-resident backing array (`c.encBufsArr [3][]byte`, reassigned under `writeMu` inside `sendResponseInline`) keeps the slice header on the stack.
 - **Bucketed `bufpool` for body buffers.** A 7-byte Tclunk should not claim a 1 MiB buffer. `internal/bufpool/bufpool.go` holds four size classes (1 K / 4 K / 64 K / 1 M) backed by one `sync.Pool` each, plus a `PutMsgBuf` cap guard that drops any buffer whose `cap` does not exactly match a bucket so mis-sized entries cannot poison the pool. The pool stores `*[]byte` rather than `[]byte` because the slice header would force a box allocation through `sync.Pool.Put`'s `any` parameter.
 - **`sync.Pool` has an embedded `noCopy`.** Returning a `sync.Pool` by value from a factory function trips `go vet`. `msgBufBuckets` is declared as a composite-literal array of `sync.Pool` with each `New` closure hard-coded; the array never moves.

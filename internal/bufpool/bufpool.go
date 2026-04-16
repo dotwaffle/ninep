@@ -1,5 +1,5 @@
 // Package bufpool provides pooled []byte and *bytes.Buffer reuse for the
-// 9P message encode, decode, and readLoop hot paths. It lives under
+// 9P message encode, decode, and recv-path hot paths. It lives under
 // internal/ at the module root so only github.com/dotwaffle/ninep/... may
 // import it -- Go's internal/ rule gives "internal only" while still
 // letting cross-package consumers (proto/p9l, proto/p9u, server) share a

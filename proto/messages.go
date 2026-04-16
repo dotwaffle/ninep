@@ -541,8 +541,9 @@ func (m *Twrite) DecodeFrom(r io.Reader) error {
 
 // DecodeFromBuf is a zero-copy alternative to DecodeFrom. m.Data aliases a
 // sub-slice of b — the caller MUST keep b alive (and unmodified) for as
-// long as m.Data is read. Intended for the server's readLoop, which holds
-// a pooled buffer and releases it only after the handler returns.
+// long as m.Data is read. Intended for the server's handleRequest recv
+// loop, which holds a pooled buffer and releases it only after the
+// handler returns.
 //
 // Body layout: fid[4] + offset[8] + count[4] + data[count].
 func (m *Twrite) DecodeFromBuf(b []byte) error {

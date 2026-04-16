@@ -15,20 +15,18 @@ ninep is a Go library implementing the 9P2000.L and 9P2000.u network filesystem 
                └─────┬─────┘
                      │  goroutine-per-connection
                ┌─────▼─────┐
-               │   conn    │  Version negotiation, read loop,
-               └─────┬─────┘  worker pool, fid table, inflight map
+               │   conn    │  Version negotiation, recv-mutex worker
+               └─────┬─────┘  model, fid table, inflight map
                      │
-               ┌─────▼─────┐
-               │ readLoop  │  decodes frames, populates workItem
-               └─────┬─────┘
-                     │  workCh (buffered, cap=maxInflight)
                ┌─────▼─────────┐
-               │ worker pool   │  lazy-spawn, long-lived, up to maxInflight
-               │ worker(...)   │  receives workItem, calls handleWorkItem
-               └─────┬─────────┘
+               │ handleRequest │  Lock recvMu, read+decode one frame,
+               │   (loop)      │  spawn successor (if none parked AND
+               └─────┬─────────┘  workerCount < maxInflight), unlock
+                     │            recvMu, dispatch INLINE, write reply,
+                     │            loop. Bounded by maxInflight.
                      │
             ┌────────▼────────┐
-            │ handleWorkItem  │  panic recovery, bufPtr release,
+            │ dispatchInline  │  panic recovery, bufPtr release,
             │  middleware →   │  cached-msg release, finish(tag)
             │  dispatch →     │
             │  bridge         │
@@ -98,7 +96,7 @@ Defines the shared vocabulary for all 9P communication:
 Process-wide buffer pools shared across `proto`, `proto/p9l`, `proto/p9u`, and `server`. Living under `internal/` enforces the "only ninep may import" property required by the design doc.
 
 - **`GetBuf` / `PutBuf`** -- `sync.Pool` of `*bytes.Buffer` pre-grown to 1 MiB. Used as the encode destination in `sendResponseInline` and `writeRaw`. A cap-guard (`PoolMaxBufSize`) drops oversized buffers to GC rather than retaining them.
-- **`GetMsgBuf(n)` / `PutMsgBuf`** -- Size-classed `*[]byte` buckets: 1 KiB, 4 KiB, 64 KiB, 1 MiB. `readLoop` borrows from the smallest bucket that fits the frame body; `Twrite.DecodeFromBuf` aliases into the borrowed buffer for zero-copy. Bucketing eliminates the pool-drain feedback loop where a 7-byte Tclunk would claim a 1 MiB buffer and amplify `seq_read_4k` throughput variance. `*[]byte` (not `[]byte`) is pooled to avoid the `any` boxing alloc.
+- **`GetMsgBuf(n)` / `PutMsgBuf`** -- Size-classed `*[]byte` buckets: 1 KiB, 4 KiB, 64 KiB, 1 MiB. `handleRequest` borrows from the smallest bucket that fits the frame body; `Twrite.DecodeFromBuf` aliases into the borrowed buffer for zero-copy. Bucketing eliminates the pool-drain feedback loop where a 7-byte Tclunk would claim a 1 MiB buffer and amplify `seq_read_4k` throughput variance. `*[]byte` (not `[]byte`) is pooled to avoid the `any` boxing alloc.
 - **`GetStringBuf` / `PutStringBuf`** -- Dedicated small-scratch pool for `proto.ReadString`, sized for names/paths/version strings.
 
 ### `server/`
@@ -108,8 +106,8 @@ The server core. Key files and their roles:
 | File | Responsibility |
 |------|---------------|
 | `server.go` | `Server` struct, `New()` constructor, `Serve()` accept loop, `ServeConn()` |
-| `conn.go` | `conn` struct, version negotiation, `readLoop`, `worker`, `handleWorkItem`, `sendResponseInline`, `writeRaw`, `codec` abstraction |
-| `cleanup.go` | Orderly connection shutdown: cancel inflight, drain, close `workCh`, wait for workers, clunk all fids |
+| `conn.go` | `conn` struct, version negotiation, `handleRequest` recv-mutex loop, `dispatchInline`, `sendResponseInline`, `writeRaw`, `codec` abstraction |
+| `cleanup.go` | Orderly connection shutdown: cancel inflight, drain, close `nc`, wait for `recvWG`, clunk all fids |
 | `dispatch.go` | `dispatch()` type-switch routing, `handleAttach`, `handleWalk`, `handleClunk`, `handleFlush` |
 | `bridge.go` | Capability bridge handlers; `pooledRread`/`pooledRreaddir` wrappers that carry a `bufpool.PutMsgBuf` callback via the `releaser` interface |
 | `msgcache.go` | Bounded per-type struct caches (cap 3) for `Tread`, `Twrite`, `Twalk`, `Tclunk`, `Tlopen`, `Tgetattr`; `putCachedMsg` releases on request completion |
@@ -214,24 +212,24 @@ A 9P request follows this path from network bytes to filesystem operation:
 
 2. **Version negotiation** -- `negotiateVersion()` reads the first `Tversion`, negotiates msize (min of client `Tversion.Msize` and server `maxMsize`, with floor at 256 bytes — the server default `maxMsize` is 1 MiB), selects the protocol dialect (`9P2000.L` or `9P2000.u`), assigns the matching codec, and sends `Rversion` via `writeRaw` (holds `writeMu`). The connection is closed if the version is unknown.
 
-3. **Read loop** -- `readLoop()` reads framed messages from the wire: 4-byte size prefix (into the conn-resident `hdrBuf` to avoid heap escape), then the remaining bytes into a buffer borrowed from `bufpool.GetMsgBuf`. The message type byte determines routing:
-   - `Tversion` mid-connection triggers `handleReVersion` (drains inflight, clunks all fids, re-negotiates via `writeRaw`).
-   - `Tflush` is handled synchronously in the read loop to avoid deadlock when `workCh` is full and all workers are busy.
+3. **Recv-mutex receive loop** -- `handleRequest()` is the single goroutine type that drives reception AND dispatch. It locks `recvMu`, reads one framed message from the wire (4-byte size prefix on a stack-local `hdrBuf`, then body into a buffer borrowed from `bufpool.GetMsgBuf`), decodes the body INSIDE `recvMu` so per-iteration scratch (e.g. `bytes.Reader`) stays safely owned by the lock holder, decides whether to spawn a successor, releases `recvMu`, then dispatches the request and writes the reply inline. The same goroutine that read the bytes is the one that handles the request and writes the response — there is no inter-goroutine handoff between read and dispatch.
+
+   Routing inside the loop:
+   - `Tversion` mid-connection triggers `handleReVersion` (drains inflight, clunks all fids, re-negotiates via `writeRaw`). Spawn-replacement is skipped on `Tversion` so the renegotiating goroutine is the sole reader during the codec/msize swap.
+   - `Tflush` short-circuits to `handleFlush` AFTER `recvMu` is released (it operates on OTHER tags' inflight state and must not itself create an inflight entry).
    - All other messages are decoded via `newMessage()`. Hot types (`Tread`, `Twrite`, `Twalk`, `Tclunk`, `Tlopen`, `Tgetattr`) are pulled from the `msgcache` bounded channel; cache miss allocates fresh.
 
-4. **Zero-copy Twrite** -- `Twrite.DecodeFromBuf` aliases `m.Data` directly into the pooled frame buffer so write payloads never incur a memcpy between read and handler. The message body buffer pointer is carried on `workItem.bufPtr` and released by `handleWorkItem`'s defer after the handler returns. All other decodes use `conn.bodyReader.Reset(...)` (a reused `bytes.Reader`) to avoid a per-message alloc; those message types copy fields out during `DecodeFrom`, so the frame buffer is returned to `bufpool` immediately.
+4. **Zero-copy Twrite** -- `Twrite.DecodeFromBuf` aliases `m.Data` directly into the pooled frame buffer so write payloads never incur a memcpy between read and handler. The message body buffer pointer is carried as a local in `handleRequest` and released by `dispatchInline`'s defer after the handler returns. All other decodes use a per-iteration `bytes.Reader` to avoid a per-message alloc; those message types copy fields out during `DecodeFrom`, so the frame buffer is returned to `bufpool` immediately.
 
-5. **Dispatch via worker pool** -- For each decoded request, `readLoop` calls `c.inflight.start(tag, cancel)` and sends a `workItem{ctx, tag, msg, bufPtr}` on `workCh` (buffered to `maxInflight`). If no worker is idle and `workerCount < maxInflight`, `readLoop` spawns a new worker before the send. If `workCh` is full, the send blocks, providing back-pressure.
+5. **Spawn-replacement decision** -- After reading a request, the dispatcher decides whether to spawn a successor before releasing `recvMu`: only if no sibling is parked on `recvMu` (`recvIdle == 0`) AND `workerCount < maxInflight`. The successor takes over reading the next request while the current dispatcher handles the one it just read. The `maxInflight` cap (default 64) bounds total goroutine count per connection, providing back-pressure: if all workers are dispatching, the next request sits in the kernel socket buffer until one returns to the loop.
 
-6. **Worker** -- Each `worker` goroutine loops: `idleCount.Add(1)`, receive from `workCh`, `idleCount.Add(-1)`, run `handleWorkItem`, repeat. Workers are long-lived for the connection lifetime and exit only when `cleanup()` closes `workCh`.
+6. **dispatchInline** -- Called by `handleRequest` after `recvMu` is released. Runs the request through the middleware + dispatch chain with panic recovery. On exit (deferred): release the zero-copy `bufPtr` if present, return the request struct to its `msgcache` via `putCachedMsg`, emit an `EIO` response if the handler panicked, and call `c.inflight.finish(tag)`. The handler itself is `c.handler` — the middleware-wrapped dispatch chain built once in `newConn`.
 
-7. **handleWorkItem** -- Runs with panic recovery. On exit (deferred): release the zero-copy `bufPtr` if present, return the request struct to its `msgcache` via `putCachedMsg`, emit an `EIO` response if the handler panicked, and call `c.inflight.finish(tag)`. The handler itself is `c.handler` — the middleware-wrapped dispatch chain built once in `newConn`.
+7. **Middleware chain** -- When OTel is configured, the outermost middleware creates a span, records request/response sizes, and tracks active requests. Zero middleware incurs zero overhead (`chain` returns the inner handler directly).
 
-8. **Middleware chain** -- When OTel is configured, the outermost middleware creates a span, records request/response sizes, and tracks active requests. Zero middleware incurs zero overhead (`chain` returns the inner handler directly).
+8. **Dispatch** -- `dispatch()` type-switches on the decoded message to route to the appropriate handler (`handleAttach`, `handleWalk`, `handleClunk`, or a bridge handler).
 
-9. **Dispatch** -- `dispatch()` type-switches on the decoded message to route to the appropriate handler (`handleAttach`, `handleWalk`, `handleClunk`, or a bridge handler).
-
-10. **Bridge** -- Bridge handlers (in `bridge.go`) translate protocol messages into capability interface calls:
+9. **Bridge** -- Bridge handlers (in `bridge.go`) translate protocol messages into capability interface calls:
     - Look up the fid in the `fidTable` to get the `fidState` (node + lifecycle status).
     - Check the fid's state (allocated, opened, xattr mode).
     - Type-assert the node to the required capability interface.
@@ -241,25 +239,25 @@ A 9P request follows this path from network bytes to filesystem operation:
 
     The bridge uses a two-level dispatch for read/write/readdir: `FileHandle` methods take priority over `Node` methods when a handle is present, allowing per-open state. For Rread/Rreaddir, the bridge borrows a sized buffer via `bufpool.GetMsgBuf`, asks the capability to fill it, and returns a `pooledRread`/`pooledRreaddir` wrapper so the buffer is released after the writev.
 
-11. **Inline response** -- `handleWorkItem` calls `sendResponseInline(tag, resp, rel)`. The function encodes the body into a `*bytes.Buffer` borrowed from `bufpool` (outside `writeMu` to keep the critical section short). For `Payloader` messages it calls `EncodeFixed` and captures `Payload()` separately. It then acquires `writeMu`, fills the conn-resident `encHdr` (size + type + tag), assembles `net.Buffers{hdr, body}` or `{hdr, body, payload}` in the conn-resident `encBufsArr`, calls `bufs.WriteTo(c.nc)` (a single `writev` syscall on TCP and Unix sockets), then releases the mutex, returns the body buffer to bufpool, and invokes the releaser.
+10. **Inline response** -- `dispatchInline` calls `sendResponseInline(tag, resp, rel)`. The function encodes the body into a `*bytes.Buffer` borrowed from `bufpool` (outside `writeMu` to keep the critical section short). For `Payloader` messages it calls `EncodeFixed` and captures `Payload()` separately. It then acquires `writeMu`, fills the conn-resident `encHdr` (size + type + tag), assembles `net.Buffers{hdr, body}` or `{hdr, body, payload}` in the conn-resident `encBufsArr`, calls `bufs.WriteTo(c.nc)` (a single `writev` syscall on TCP and Unix sockets), then releases the mutex, returns the body buffer to bufpool, and invokes the releaser.
 
 ## Concurrency Model
 
-The server uses three levels of goroutine concurrency. Compared to the previous goroutine-per-request + single-writer model, the current design removes the inter-goroutine handoff between handler and writer (~1-3 µs saved per request) and caps goroutine churn at the worker-pool level.
+The server uses two levels of goroutine concurrency. The recv-mutex worker model collapses what was previously a read-loop -> worker handoff into a single goroutine type per request (saving ~1-3 µs of inter-goroutine context switch on real unix-socket transports), and caps goroutine churn at the per-connection `maxInflight` bound.
 
 ### Goroutine-per-Connection
 
 `Server.Serve()` spawns one goroutine per accepted connection. The goroutine owns the connection lifecycle from version negotiation through cleanup. A `sync.WaitGroup` in `Serve()` tracks all connection goroutines.
 
-### Worker Pool (lazy-spawn, bounded)
+### Recv-Mutex Worker Model (lazy-spawn under recvMu, bounded)
 
-Within a connection, requests are processed by a pool of worker goroutines sized dynamically up to `maxInflight` (default 64). `readLoop` spawns a new worker only when `idleCount == 0` and `workerCount < maxInflight`; workers are long-lived for the connection lifetime and compete for items on `workCh`. Dispatch back-pressure is provided by `workCh`'s buffer and the cap on spawned workers — a full `workCh` blocks the read loop, matching the semantics the old semaphore channel offered.
+Within a connection, requests are processed by a pool of `handleRequest` goroutines sized dynamically up to `maxInflight` (default 64). A goroutine spawns a successor only when no sibling is parked on `recvMu` (`recvIdle == 0`) AND `workerCount < maxInflight`. Successors are long-lived for the connection lifetime and re-acquire `recvMu` after each dispatch. Back-pressure is provided by the cap on spawned workers — when every dispatcher is busy in handler code and `workerCount` is at the cap, no replacement reader is spawned, and the next request sits in the kernel socket buffer until one of the dispatchers finishes and loops back to read.
 
-`Tflush` is handled synchronously in the read loop to prevent deadlock: if every worker is busy and `workCh` is full, a flush must still be able to cancel a pending request.
+`Tflush` is handled inline by the goroutine that read it (after `recvMu` is released). It calls `handleFlush` directly, bypassing `inflight.start`/`dispatchInline` because flush operates on OTHER tags' inflight state and must not itself create an inflight entry.
 
 ### Inline Writes
 
-There is no writer goroutine. Each worker calls `sendResponseInline` directly to encode and emit its response. Concurrent workers on the same connection serialise at `writeMu`, which covers both the shared `encHdr`/`encBufsArr` backing store and the `net.Conn.Write`. `writeRaw` (used during initial and mid-connection version negotiation) acquires the same mutex, so version negotiation and inline writes cannot interleave wire frames.
+There is no writer goroutine. Each `handleRequest` goroutine calls `sendResponseInline` directly to encode and emit its response. Concurrent dispatchers on the same connection serialise at `writeMu`, which covers both the shared `encHdr`/`encBufsArr` backing store and the `net.Conn.Write`. `writeRaw` (used during initial and mid-connection version negotiation) acquires the same mutex, so version negotiation and inline writes cannot interleave wire frames.
 
 ### Key Synchronization Primitives
 
@@ -270,9 +268,12 @@ There is no writer goroutine. Each worker calls `sendResponseInline` directly to
 | `sync.Mutex` | `Inode.mu` | Protects parent/child tree relationships |
 | `sync.Mutex` | `inflightMap.mu` | Protects tag-to-cancel map |
 | `sync.WaitGroup` | `inflightMap.wg` | Drain-on-disconnect: waits for all handlers to finish |
-| `chan workItem` | `conn.workCh` | Dispatch queue; buffer of `maxInflight` provides back-pressure |
-| `atomic.Int32` | `conn.workerCount`, `conn.idleCount` | Lazy worker-spawn decision (no lock on hot path) |
-| `sync.WaitGroup` | `conn.workerWG` | Cleanup drain: waits for workers after `close(workCh)` |
+| `sync.Mutex` | `conn.recvMu` | Serialises receiving from `nc`; held only across read+decode |
+| `atomic.Int32` | `conn.recvIdle` | Count of goroutines parked in `recvMu.Lock()`; spawn-replacement predicate |
+| `bool` | `conn.recvShutdown` (under `recvMu`) | First goroutine to observe a recv error sets this; siblings exit on next acquire |
+| `chan struct{}` | `conn.recvShutdownCh` | One-shot signal: `serve()` waits on this to begin cleanup |
+| `atomic.Int32` | `conn.workerCount` | Enforces `WithMaxInflight` cap on `handleRequest` goroutine count |
+| `sync.WaitGroup` | `conn.recvWG` | Cleanup drain: waits for `handleRequest` goroutines to exit |
 | `sync.Mutex` | `conn.writeMu` | Serialises `sendResponseInline` writes and `writeRaw` |
 | `context.CancelFunc` | per-request | Flush cancellation via `inflightMap.flush(tag)` |
 | bounded `chan *T` | `server/msgcache.go` | Per-type struct cache (cap 3) for Tread/Twrite/Twalk/Tclunk/Tlopen/Tgetattr |
@@ -315,14 +316,14 @@ On clunk, the server releases the `FileHandle` (via `FileReleaser`) and calls `N
 
 ## Connection Cleanup
 
-When a connection ends (client disconnect, context cancellation, or read error), `cleanup()` runs a four-step orderly shutdown:
+When a connection ends (client disconnect, context cancellation, or read error), the first `handleRequest` goroutine to observe the recv error closes `recvShutdownCh`. `serve()` waits on this signal (NOT on `recvWG`, which would deadlock if handlers are blocked in dispatch waiting for cancelAll), then runs `cleanup()`:
 
-1. **Cancel all inflight** -- `inflightMap.cancelAll()` cancels every active request's context.
+1. **Cancel all inflight** -- `inflightMap.cancelAll()` cancels every active request's context so handlers respecting `ctx.Done()` return promptly.
 2. **Drain with deadline** -- `inflightMap.waitWithDeadline()` waits up to 5 seconds (`cleanupDeadline`) for handler goroutines to finish.
-3. **Close `workCh` and wait for workers** -- `close(c.workCh)` unblocks idle workers (they observe the closed channel and exit); busy workers exit after their handler returns. `workerWG.Wait` is bounded by the same `cleanupDeadline`; stuck workers that ignore context cancellation are logged and orphaned rather than hung on.
+3. **Close `nc` and wait for `recvWG`** -- `c.nc.Close()` (idempotent) unblocks the recvMu holder out of any in-progress read. Goroutines parked on `recvMu.Lock()` observe `recvShutdown` on acquire and exit. Busy dispatchers exit after their handler returns and the loop re-acquires `recvMu`. `recvWG.Wait` is bounded by the same `cleanupDeadline`; stuck handlers that ignore context cancellation are logged and orphaned rather than hung on.
 4. **Clunk all fids** -- `fidTable.clunkAll()` atomically swaps the fid map, then iterates outside the lock to release handles and call `NodeCloser.Close()`.
 
-Because workers write responses inline, there is no response channel to drain. Mid-connection `Tversion` re-negotiation (`handleReVersion`) follows the same cancel + drain + clunk-all-fids pattern before re-negotiating the protocol and sending `Rversion` via `writeRaw`.
+Because dispatchers write responses inline, there is no response channel to drain. Mid-connection `Tversion` re-negotiation (`handleReVersion`) follows the same cancel + drain + clunk-all-fids pattern before re-negotiating the protocol and sending `Rversion` via `writeRaw`.
 
 ## Extension Points
 

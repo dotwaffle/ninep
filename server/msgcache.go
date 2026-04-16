@@ -20,9 +20,13 @@ const msgCacheCap = 3
 //   Get: non-blocking receive (cached struct if available, else fresh alloc)
 //   Put: non-blocking send      (cache if slot free, else drop to GC)
 //
-// Package-global is safe because the access pattern is Get from conn.readLoop
-// (single goroutine) and Put from handleWorkItem (pool of worker goroutines,
-// bounded by maxInflight per connection). Channel send/recv is atomic.
+// Package-global is safe because the recv-mutex worker model accesses these
+// caches with simple atomic semantics: Get from conn.handleRequest under
+// recvMu (the lock holder is the sole reader at that moment), and Put from
+// dispatchInline (the dispatching goroutine, after recvMu has been released
+// and another sibling may be reading). Channel send/recv is atomic, so even
+// if multiple dispatchers race to Put concurrently, the bounded channel
+// either accepts (cache slot free) or drops (cache full).
 //
 // Cached types are the hot-path 9P requests:
 //   - Tread, Twrite (data I/O — bulk of traffic)
@@ -105,7 +109,7 @@ func getCachedTgetattr() *p9l.Tgetattr {
 
 // putCachedMsg returns msg to its type-specific cache if one exists, via a
 // non-blocking send. No-op for types not in the cache set or when the cache
-// is full. Called from handleWorkItem's defer after the handler has finished
+// is full. Called from dispatchInline's defer after the handler has finished
 // reading the request.
 //
 // Twrite.Data is explicitly cleared because it aliased a pooled buffer that

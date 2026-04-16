@@ -362,7 +362,7 @@ Benchmarks live in `server/` and follow a consistent pattern: `b.ReportAllocs` o
 
 | File | What it measures |
 |------|------------------|
-| `server/bench_test.go` | Round-trip dispatch (`BenchmarkRoundTrip`, `BenchmarkRoundTripWithOTel`), readLoop decode (`BenchmarkReadDecode`), fidTable contention, walk+clunk cycles, directory-entry encoding |
+| `server/bench_test.go` | Round-trip dispatch (`BenchmarkRoundTrip`, `BenchmarkRoundTripWithOTel`), recv-path decode (`BenchmarkReadDecode`), fidTable contention, walk+clunk cycles, directory-entry encoding |
 | `server/io_bench_test.go` | Tread/Twrite throughput at varying sizes and access patterns (`BenchmarkRead`, `BenchmarkWrite`, `BenchmarkReadPipelined`) against a 128 MiB in-memory file |
 | `server/writev_bench_test.go` | Write-path syscall cost: sequential writes vs `net.Buffers.WriteTo` (writev) on unix sockets vs `net.Pipe` (`BenchmarkWriteApproach`) |
 | `server/msgalloc_bench_test.go` | Per-request message-struct allocation strategies (heap, `sync.Pool`, stack value) for `BenchmarkMessageAlloc` and `BenchmarkMessageAllocFullDecode` |
@@ -424,15 +424,15 @@ A few workflow notes that are easy to get wrong:
 - **`GODEBUG=gctrace=1`** -- prefix a benchmark run with `GODEBUG=gctrace=1` to surface GC activity between iterations. Heap churn mid-benchmark usually points at pool-drain feedback loops or undersized pools, not at the code being measured.
 - **Memprofile output path** -- write memprofiles to `/tmp/claude/` rather than `/tmp`; the sandbox this repo is developed in only permits writes under `/tmp/claude/`. Example: `go test -bench=BenchmarkRead -memprofile=/tmp/claude/mem.prof ./server/` then `go tool pprof -text -alloc_objects -lines /tmp/claude/mem.prof`.
 - **Transport matters** -- `net.Pipe` does not implement writev, so benchmarks that measure the write path with `net.Pipe` miss the syscall-coalescing savings that real unix and TCP sockets see. Use `writev_bench_test.go`'s `unixPair` helper for realistic numbers on any benchmark where `net.Buffers.WriteTo` is on the hot path; use `pipePair` only as the synthetic A/B baseline.
-- **Response flow** -- since v1.1.15 the server writes responses inline from each worker under `writeMu`; there is no `writeLoop` goroutine and no `responses` channel. This means write-path benchmarks should not expect the response to cross a goroutine boundary before being encoded.
-- **Request flow** -- since v1.1.10 the server uses a lazily-spawned worker pool bounded by `maxInflight` (not goroutine-per-request). Benchmarks that measure concurrent dispatch should size `WithMaxInflight(...)` explicitly if they depend on specific parallelism.
+- **Response flow** -- the dispatching `handleRequest` goroutine writes its response inline under `writeMu`; there is no `writeLoop` goroutine and no `responses` channel. Write-path benchmarks should not expect the response to cross a goroutine boundary before being encoded.
+- **Request flow** -- the server uses a recv-mutex worker model: a single goroutine type reads, dispatches, and writes the reply for one request. Successors are lazy-spawned under `recvMu` and bounded by `maxInflight`. Benchmarks that measure concurrent dispatch should size `WithMaxInflight(...)` explicitly if they depend on specific parallelism. Note that beyond-cap pipelined sends sit in the kernel socket buffer until a dispatcher loops back to read.
 
 ## Race detector
 
 The race detector (`-race` flag) is mandatory for all test runs. The server uses concurrent goroutines extensively:
 
 - Goroutine-per-connection (`ServeConn`).
-- Worker pool: lazily-spawned goroutines (bounded by `maxInflight`) consume decoded requests from `workCh` and run handlers. Workers encode and writev responses inline under `writeMu` (since v1.1.15 there is no separate writer goroutine).
+- Recv-mutex worker model: lazy-spawned `handleRequest` goroutines (bounded by `maxInflight`) compete for `recvMu`, decode their request inline, dispatch, and writev the response under `writeMu`. There is no separate reader, worker pool, or writer goroutine -- a single goroutine type drives reception through wire response.
 - Shared `fidTable` protected by `sync.RWMutex`.
 - `inflightMap` for tag tracking and Tflush cancellation.
 

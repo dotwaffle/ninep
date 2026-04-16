@@ -8,11 +8,11 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9l"
 )
 
-// TestReadLoop_PoolReusesBuffer asserts (via indirect Decode simulation) that
+// TestRecvPath_PoolReusesBuffer asserts (via indirect Decode simulation) that
 // the decode-side allocation profile is within the post-08-04 budget. Full
-// readLoop pool coverage lives in BenchmarkReadDecode; this test is the
+// recv-path pool coverage lives in BenchmarkReadDecode; this test is the
 // in-process guard that catches regressions without requiring benchstat.
-func TestReadLoop_PoolReusesBuffer(t *testing.T) {
+func TestRecvPath_PoolReusesBuffer(t *testing.T) {
 	// Encode a Tversion message once (smallest message type with a string
 	// field exercising ReadString's pooled scratch path).
 	var encoded bytes.Buffer
@@ -31,7 +31,7 @@ func TestReadLoop_PoolReusesBuffer(t *testing.T) {
 	})
 
 	// Phase 7 baseline BenchmarkReadDecode was 11 allocs/op. Task 2 pooled
-	// ReadString (saves ~1 per string field). Task 3 pools the readLoop
+	// ReadString (saves ~1 per string field). Task 3 pools the recv-path
 	// msg-body buffer (saves 1 in BenchmarkReadDecode via a separate path;
 	// this test measures only Decode, so the gain is driven by ReadString).
 	// Target: < 10 allocs/op for a message with a single string field.

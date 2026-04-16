@@ -15,7 +15,7 @@ import (
 
 // recvmuBlockingNode is a directory whose Lookup blocks on a per-test
 // channel until the test signals release. Used to drive the recv-mutex
-// worker pool past its cap and to control inflight handlers from outside
+// worker model past its cap and to control inflight handlers from outside
 // the server package.
 type recvmuBlockingNode struct {
 	Inode

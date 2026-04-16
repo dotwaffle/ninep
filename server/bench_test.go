@@ -182,10 +182,11 @@ func BenchmarkRoundTripWithOTel(b *testing.B) {
 	}
 }
 
-// BenchmarkReadDecode isolates the readLoop allocation pattern from
-// server/conn.go. Post-08-04 it mirrors the new bufpool.GetMsgBuf /
-// PutMsgBuf flow so the benchmark reflects production behaviour and
-// benchstat shows the allocation win delivered by PERF-02.
+// BenchmarkReadDecode isolates the recv-path allocation pattern from
+// server/conn.go (handleRequest's read+decode under recvMu). Post-08-04 it
+// mirrors the bufpool.GetMsgBuf / PutMsgBuf flow so the benchmark reflects
+// production behaviour and benchstat shows the allocation win delivered by
+// PERF-02.
 //
 // The producer goroutine has no explicit stop channel. A net.Pipe Write blocks
 // until a matching Read occurs, so a select-based stop signal would not be
@@ -213,7 +214,7 @@ func BenchmarkReadDecode(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(len(frame)))
 	for b.Loop() {
-		// Mirror the post-08-04 readLoop: pooled msg buf, ReadFull into the
+		// Mirror the post-08-04 recv path: pooled msg buf, ReadFull into the
 		// pooled slice, reconstruct a complete frame for p9l.Decode, then
 		// release the pooled slice (safe because DecodeFrom copies).
 		size, err := proto.ReadUint32(serverConn)
