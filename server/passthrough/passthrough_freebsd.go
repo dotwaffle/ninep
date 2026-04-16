@@ -1,4 +1,4 @@
-//go:build linux
+//go:build freebsd
 
 package passthrough
 
@@ -12,22 +12,23 @@ import (
 
 // StatFS returns filesystem statistics for the filesystem containing this node.
 //
-// Linux's Statfs_t has Namelen (int64); FreeBSD's has Namemax (uint32). The
-// freebsd variant lives in passthrough_freebsd.go.
+// FreeBSD's Statfs_t uses Namemax (uint32) instead of Namelen (int64), Bavail
+// is signed (int64), and Ffree is signed (int64); cast accordingly. Type is
+// already uint32 on FreeBSD.
 func (n *Node) StatFS(_ context.Context) (proto.FSStat, error) {
 	var st unix.Statfs_t
 	if err := unix.Fstatfs(n.fd, &st); err != nil {
 		return proto.FSStat{}, toProtoErr(err)
 	}
 	return proto.FSStat{
-		Type:    uint32(st.Type),
+		Type:    st.Type,
 		BSize:   uint32(st.Bsize),
 		Blocks:  st.Blocks,
 		BFree:   st.Bfree,
-		BAvail:  st.Bavail,
+		BAvail:  uint64(st.Bavail),
 		Files:   st.Files,
-		FFree:   st.Ffree,
+		FFree:   uint64(st.Ffree),
 		FSID:    uint64(uint32(st.Fsid.Val[0])) | uint64(uint32(st.Fsid.Val[1]))<<32,
-		NameLen: uint32(st.Namelen),
+		NameLen: st.Namemax,
 	}, nil
 }

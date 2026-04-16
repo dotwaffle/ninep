@@ -8,18 +8,26 @@
 //
 // # Platform support
 //
-// This package is Linux-only. It depends on Linux-specific syscalls (O_PATH
-// file descriptors, the *at syscall family, getdents64, and the Lgetxattr
-// xattr family) for the security model that anchors every Node to a specific
-// inode via a held file descriptor. All source files are gated behind
-// //go:build linux; on other platforms only this package documentation
-// compiles and passthrough.NewRoot is undefined.
+// This package supports Linux and FreeBSD. Both ports use the *at syscall
+// family for inode-anchored access control. The security model is identical:
+// every Node holds an O_PATH fd (O_RDONLY|O_DIRECTORY for directories) rooted
+// at a specific inode, and every name-based operation goes through
+// (parentFd, name) anchored *at calls.
 //
-// The wider ninep library (proto, server, server/memfs, server/fstest,
-// internal/bufpool) builds and runs on all platforms supported by Go. To
-// serve 9P from a non-Linux host, implement your own server.Node types or
-// use server/memfs — see the project README for guidance.
+// On FreeBSD/{amd64,arm64,arm,386} the O_PATH flag is sourced from a local
+// constant rather than golang.org/x/sys (which doesn't yet export it for
+// those architectures); the value matches FreeBSD's <sys/fcntl.h> and is
+// architecture-independent on FreeBSD 14+. FreeBSD 14.0+ is the minimum
+// supported version.
+//
+// On other platforms (darwin, windows, etc.) only this package documentation
+// compiles and passthrough.NewRoot is undefined. The wider ninep library
+// (proto, server, server/memfs, server/fstest, internal/bufpool) builds and
+// runs on all platforms supported by Go. To serve 9P from a non-supported
+// host, implement your own server.Node types or use server/memfs -- see the
+// project README for guidance.
 //
 // The server process needs appropriate OS permissions for non-identity UID/GID
-// mapping (typically CAP_CHOWN and CAP_FOWNER capabilities on Linux).
+// mapping (CAP_CHOWN/CAP_FOWNER on Linux; the corresponding privileges on
+// FreeBSD).
 package passthrough

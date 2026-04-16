@@ -1,4 +1,4 @@
-//go:build linux
+//go:build freebsd
 
 package passthrough
 
@@ -12,12 +12,15 @@ import (
 
 // statToAttr converts a unix.Stat_t to proto.Attr with all fields mapped.
 // UID/GID are transformed through mapper.FromHost for protocol-level reporting.
+//
+// FreeBSD's Stat_t.Mode is uint16 (vs Linux's uint32) and Blksize is int32
+// (vs Linux's int64); explicit casts widen to the proto.Attr field types.
 func statToAttr(st *unix.Stat_t, mapper UIDMapper) proto.Attr {
 	uid, gid := mapper.FromHost(st.Uid, st.Gid)
 	return proto.Attr{
 		Valid:     proto.AttrAll,
 		QID:       statToQID(st),
-		Mode:      st.Mode,
+		Mode:      uint32(st.Mode),
 		UID:       uid,
 		GID:       gid,
 		NLink:     st.Nlink,
@@ -39,7 +42,7 @@ func statToAttr(st *unix.Stat_t, mapper UIDMapper) proto.Attr {
 // number.
 func statToQID(st *unix.Stat_t) proto.QID {
 	var t proto.QIDType
-	switch st.Mode & unix.S_IFMT {
+	switch uint32(st.Mode) & unix.S_IFMT {
 	case unix.S_IFDIR:
 		t = proto.QTDIR
 	case unix.S_IFLNK:
@@ -55,10 +58,8 @@ func statToQID(st *unix.Stat_t) proto.QID {
 }
 
 // toProtoErr converts an OS error to a proto.Errno via proto.ErrnoFromUnix
-// (identity on Linux; FreeBSD-to-Linux wire mapping on FreeBSD). unix.Errno
-// is a type alias for syscall.Errno on Linux, so errors.AsType[unix.Errno]
-// also matches the syscall.Errno wrapped by os.PathError / os.OpenFile.
-// Unknown errors map to EIO. Returns nil for nil input.
+// (which translates FreeBSD errno values to their Linux wire equivalents).
+// Returns nil for nil input.
 func toProtoErr(err error) error {
 	if err == nil {
 		return nil

@@ -1,9 +1,8 @@
-//go:build linux
+//go:build freebsd
 
 package passthrough
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 
@@ -28,8 +27,8 @@ var (
 )
 
 // Lookup resolves a child by name using Fstatat on the directory fd.
-// For directories, opens with O_RDONLY|O_DIRECTORY. For symlinks and
-// other files, opens with O_PATH|O_NOFOLLOW.
+// For directories, opens with O_RDONLY|O_DIRECTORY. For symlinks and other
+// files, opens with oPath|O_NOFOLLOW.
 func (n *Node) Lookup(_ context.Context, name string) (server.Node, error) {
 	var st unix.Stat_t
 	if err := unix.Fstatat(n.fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
@@ -38,11 +37,10 @@ func (n *Node) Lookup(_ context.Context, name string) (server.Node, error) {
 
 	var fd int
 	var err error
-	switch st.Mode & unix.S_IFMT {
+	switch uint32(st.Mode) & unix.S_IFMT {
 	case unix.S_IFDIR:
 		fd, err = unix.Openat(n.fd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 	default:
-		// O_PATH for non-directories (files, symlinks, devices, etc.).
 		fd, err = unix.Openat(n.fd, name, oPath|unix.O_NOFOLLOW, 0)
 	}
 	if err != nil {
@@ -74,14 +72,14 @@ func (n *Node) Create(_ context.Context, name string, flags uint32, mode proto.F
 		return nil, nil, 0, toProtoErr(err)
 	}
 
-	// Open an O_PATH fd for the node reference, use the real fd for the handle.
+	// Open an oPath fd for the node reference, use the real fd for the handle.
 	pathFd, err := unix.Openat(n.fd, name, oPath|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		_ = unix.Close(fd)
 		return nil, nil, 0, toProtoErr(err)
 	}
 
-	child := &Node{fd: pathFd, root: n.root}
+	child := &Node{fd: pathFd, root: n.root, parentFd: n.fd, name: name}
 	child.Init(statToQID(&st), child)
 
 	return child, &fileHandle{fd: fd}, 0, nil
@@ -108,7 +106,7 @@ func (n *Node) Mkdir(_ context.Context, name string, mode proto.FileMode, _ uint
 		return nil, toProtoErr(err)
 	}
 
-	child := &Node{fd: fd, root: n.root}
+	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
 	child.Init(statToQID(&st), child)
 
 	return child, nil
@@ -141,17 +139,15 @@ func (n *Node) Symlink(_ context.Context, name, target string, _ uint32) (server
 	return child, nil
 }
 
-// Link is declared in the shared dir.go (linux || freebsd) using
-// parent-anchored Linkat instead of the legacy /proc/self/fd trick.
-
-// Mknod creates a device node named name via Mknodat.
+// Mknod creates a device node named name via Mknodat. FreeBSD's Mknodat
+// signature takes dev as uint64 (vs Linux's int).
 func (n *Node) Mknod(_ context.Context, name string, mode proto.FileMode, major, minor, _ uint32) (server.Node, error) {
 	if n.QID().Type != proto.QTDIR {
 		return nil, proto.ENOTDIR
 	}
 
 	dev := unix.Mkdev(major, minor)
-	if err := unix.Mknodat(n.fd, name, uint32(mode), int(dev)); err != nil {
+	if err := unix.Mknodat(n.fd, name, uint32(mode), uint64(dev)); err != nil {
 		return nil, toProtoErr(err)
 	}
 
@@ -173,8 +169,7 @@ func (n *Node) Mknod(_ context.Context, name string, mode proto.FileMode, major,
 }
 
 // Readlink returns the symlink target using Readlinkat on the parent
-// directory fd with the entry name. This reads the actual symlink target
-// rather than the path the fd resolves to.
+// directory fd with the entry name.
 func (n *Node) Readlink(_ context.Context) (string, error) {
 	if n.parentFd == 0 && n.name == "" {
 		return "", proto.EINVAL
@@ -226,13 +221,13 @@ func (n *Node) Rename(_ context.Context, oldName string, newDir server.Node, new
 }
 
 // Readdir returns all directory entries. A fresh file descriptor is opened
-// for each readdir call to avoid offset issues.
+// for each readdir call to avoid offset issues. unix.Getdents on FreeBSD
+// wraps Getdirentries.
 func (n *Node) Readdir(_ context.Context) ([]proto.Dirent, error) {
 	if n.QID().Type != proto.QTDIR {
 		return nil, proto.ENOTDIR
 	}
 
-	// Open a fresh fd to read directory entries from offset 0.
 	fd, err := unix.Openat(n.fd, ".", unix.O_RDONLY|unix.O_DIRECTORY, 0)
 	if err != nil {
 		return nil, toProtoErr(err)
@@ -258,43 +253,40 @@ func (n *Node) Readdir(_ context.Context) ([]proto.Dirent, error) {
 	return dirents, nil
 }
 
-// parseDirents parses raw getdents64 output into proto.Dirent entries.
-// Skips "." and ".." entries.
+// parseDirents parses raw FreeBSD getdirentries output into proto.Dirent
+// entries. Skips "." and "..".
 //
-// linux_dirent64 is laid out as: d_ino[8] d_off[8] d_reclen[2] d_type[1] d_name[...].
-// encoding/binary handles alignment — Linux getdents64 buffers guarantee
-// little-endian but not struct alignment, so binary.LittleEndian.Uint*
-// reads directly from the []byte slice (shift-and-OR) with no alignment
-// requirement on the source.
+// FreeBSD struct dirent (24-byte header before name):
+//
+//	Fileno uint64    // bytes 0..7
+//	Off    int64     // bytes 8..15
+//	Reclen uint16    // bytes 16..17
+//	Type   uint8     // byte 18
+//	Pad0   uint8     // byte 19
+//	Namlen uint16    // bytes 20..21
+//	Pad1   uint16    // bytes 22..23
+//	Name   variable  // byte 24..
+//
+// Verified against
+// /home/dotwaffle/go/pkg/mod/golang.org/x/sys@v0.42.0/unix/ztypes_freebsd_amd64.go.
 func parseDirents(buf []byte) []proto.Dirent {
+	const headerLen = 24
 	var dirents []proto.Dirent
 
-	for len(buf) > 0 {
-		// Minimum fixed-header size: d_ino[8] + d_off[8] + d_reclen[2] + d_type[1] = 19.
-		if len(buf) < 19 {
-			break
-		}
-
+	for len(buf) >= headerLen {
 		ino := binary.LittleEndian.Uint64(buf[0:8])
-		_ = binary.LittleEndian.Uint64(buf[8:16]) // d_off (unused; advance past)
 		reclen := binary.LittleEndian.Uint16(buf[16:18])
 		dtype := buf[18]
+		namlen := binary.LittleEndian.Uint16(buf[20:22])
 
-		if int(reclen) > len(buf) || reclen < 19 {
+		if int(reclen) > len(buf) || reclen < headerLen {
+			break
+		}
+		if int(namlen) > int(reclen)-headerLen {
 			break
 		}
 
-		// Name is null-terminated starting at offset 19.
-		nameBytes := buf[19:reclen]
-		before, _, ok := bytes.Cut(nameBytes, []byte{0})
-		var name string
-		if ok {
-			name = string(before)
-		} else {
-			name = string(nameBytes)
-		}
-
-		// Skip . and ..
+		name := string(buf[headerLen : headerLen+int(namlen)])
 		if name != "." && name != ".." {
 			dirents = append(dirents, proto.Dirent{
 				QID: proto.QID{
@@ -305,14 +297,14 @@ func parseDirents(buf []byte) []proto.Dirent {
 				Name: name,
 			})
 		}
-
 		buf = buf[reclen:]
 	}
 
 	return dirents
 }
 
-// dtypeToQIDType maps a d_type to proto.QIDType.
+// dtypeToQIDType maps a d_type to proto.QIDType. The DT_* values are the
+// same on FreeBSD as on Linux.
 func dtypeToQIDType(dtype uint8) proto.QIDType {
 	switch dtype {
 	case unix.DT_DIR:
