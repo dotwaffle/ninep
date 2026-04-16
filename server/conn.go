@@ -594,6 +594,11 @@ func (c *conn) handleWorkItem(item workItem) {
 		if item.bufPtr != nil {
 			bufpool.PutMsgBuf(item.bufPtr)
 		}
+		// Return the request struct to its type-specific cache (if any)
+		// for reuse by a later request — bounded, non-blocking, no-op if
+		// the cache is full. Must happen AFTER bufPtr release because
+		// Twrite.Data aliases that buffer and putCachedMsg clears it.
+		putCachedMsg(item.msg)
 		if r := recover(); r != nil {
 			// SERV-06: Handler panic -> EIO, never crash the server.
 			c.logger.Error("handler panic",
@@ -689,27 +694,27 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 	case proto.TypeTattach:
 		return &proto.Tattach{}, nil
 	case proto.TypeTwalk:
-		return &proto.Twalk{}, nil
+		return getCachedTwalk(), nil
 	case proto.TypeTclunk:
-		return &proto.Tclunk{}, nil
+		return getCachedTclunk(), nil
 	case proto.TypeTflush:
 		return &proto.Tflush{}, nil
 	case proto.TypeTauth:
 		return &proto.Tauth{}, nil
 	case proto.TypeTread:
-		return &proto.Tread{}, nil
+		return getCachedTread(), nil
 	case proto.TypeTwrite:
-		return &proto.Twrite{}, nil
+		return getCachedTwrite(), nil
 	case proto.TypeTremove:
 		return &proto.Tremove{}, nil
 
 	// 9P2000.L-specific message types for capability bridge.
 	case proto.TypeTlopen:
-		return &p9l.Tlopen{}, nil
+		return getCachedTlopen(), nil
 	case proto.TypeTlcreate:
 		return &p9l.Tlcreate{}, nil
 	case proto.TypeTgetattr:
-		return &p9l.Tgetattr{}, nil
+		return getCachedTgetattr(), nil
 	case proto.TypeTsetattr:
 		return &p9l.Tsetattr{}, nil
 	case proto.TypeTreaddir:
