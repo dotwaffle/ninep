@@ -12,38 +12,8 @@ import (
 	"github.com/dotwaffle/ninep/server"
 )
 
-// Node represents a file or directory in the passthrough filesystem. It holds
-// an OS file descriptor and delegates all operations to the host OS via *at
-// syscalls. For directories, the fd is opened with O_RDONLY|O_DIRECTORY. For
-// other files, the fd is opened with O_PATH (reopened via /proc/self/fd/N
-// for actual I/O).
-//
-// parentFd and name are stored for symlink nodes so Readlink can use
-// Readlinkat(parentFd, name) to read the symlink target.
-type Node struct {
-	server.Inode
-	fd       int
-	root     *Root
-	parentFd int    // parent directory fd, for readlinkat
-	name     string // entry name in parent, for readlinkat
-}
-
-// Root is the top-level node of a passthrough filesystem. It wraps a Node
-// with configuration (host path, UID mapper). Create with NewRoot.
-type Root struct {
-	Node
-	hostPath string
-	mapper   UIDMapper
-}
-
-// Option configures a Root. Pass to NewRoot.
-type Option func(*Root)
-
-// WithUIDMapper sets a custom UID/GID mapper for the passthrough filesystem.
-// By default, IdentityMapper is used.
-func WithUIDMapper(m UIDMapper) Option {
-	return func(r *Root) { r.mapper = m }
-}
+// Node, Root, Option, WithUIDMapper, and fileHandle are declared in types.go
+// (gated linux || freebsd) so the same struct definitions back both ports.
 
 // NewRoot creates a new passthrough filesystem root from the given host
 // directory path. The path must refer to an existing directory.

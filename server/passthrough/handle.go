@@ -10,11 +10,8 @@ import (
 	"github.com/dotwaffle/ninep/server"
 )
 
-// fileHandle wraps an OS file descriptor for per-open read/write operations
-// using Pread/Pwrite for offset-based I/O without shared seek position.
-type fileHandle struct {
-	fd int
-}
+// fileHandle is declared in types.go (gated linux || freebsd) so the same
+// struct backs both ports.
 
 // Compile-time assertions that fileHandle implements the server file handle interfaces.
 var (
