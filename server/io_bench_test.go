@@ -535,3 +535,139 @@ func BenchmarkServerRead4K_UnderGC(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkServerRead_{4K,1M} is the phase-14 A/B harness for PERF-07.1 and
+// PERF-07.2. The encode axis selects between the production Payloader path
+// (encode=payloader: sendResponseInline detects proto.Payloader on the
+// response and emits hdr + fixedBody[count] + payload as 3 iovecs via
+// net.Buffers.WriteTo) and a test-only copy-path baseline (encode=copy:
+// forceCopyMiddleware swaps *pooledRread for *nonPayloaderRread so
+// sendResponseInline takes the EncodeTo fallback branch, serialising count
+// + data into the body buffer and writev'ing hdr + body as 2 iovecs with
+// a memcpy of the payload through the pooled body slice).
+//
+// Acceptance (to be confirmed by human at the plan 14-01 checkpoint via
+// benchstat -col encode):
+//   - transport=unix/encode=payloader MB/s >= 1.10 * transport=unix/encode=copy (PERF-07.1, 4K)
+//   - transport=unix/encode=payloader MB/s >= 1.05 * transport=unix/encode=copy (PERF-07.2, 1M)
+//
+// The transport=pipe subtests exist for correctness A/B (plan 14-02) and
+// are NOT the PERF acceptance signal: net.Pipe does not implement the
+// buffersWriter type-assertion path in net.Buffers.WriteTo, so writev is
+// never emitted on pipe regardless of payload shape. See phase 14 RESEARCH
+// Pitfall 5.
+
+// BenchmarkServerRead_4K measures server-side Rread throughput at 4 KiB
+// reads over the default 64 KiB msize (D-07). Subtests: transport={unix,
+// pipe} x encode={payloader,copy}. The encode=copy arm installs
+// forceCopyMiddleware via WithMiddleware to force the pre-Payloader copy
+// path (D-01).
+func BenchmarkServerRead_4K(b *testing.B) {
+	const readSize uint32 = 4096
+	const msize uint32 = 65536 // D-07: default msize — 4K reads fit trivially
+
+	for _, transport := range []string{"unix", "pipe"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			for _, encode := range []string{"payloader", "copy"} {
+				b.Run("encode="+encode, func(b *testing.B) {
+					root := newBenchTree(b)
+
+					var opts []Option
+					if encode == "copy" {
+						opts = append(opts, WithMiddleware(forceCopyMiddleware))
+					}
+					cp := newConnPairMsizeTransport(b, transport, root, msize, opts...)
+					b.Cleanup(func() { cp.close(b) })
+
+					benchAttachFid0(b, cp)
+					_ = benchWalkOpen(b, cp, 0, 1, "data")
+
+					// Pre-encode a Tread frame once and patch the offset per-iter via
+					// treadOffsetPos. Keeps the hot loop free of message-encoding allocs.
+					frame := mustEncode(b, proto.Tag(1), &proto.Tread{
+						Fid:    1,
+						Offset: 0,
+						Count:  readSize,
+					})
+
+					// Pre-generate sequential-ish 4K-aligned offsets covering 128 MiB.
+					maxOffset := uint64(benchFileSize) - uint64(readSize)
+					offsets := make([]uint64, numOffsets)
+					for i := range offsets {
+						offsets[i] = (uint64(i) * uint64(readSize)) % (maxOffset + 1)
+					}
+
+					b.ReportAllocs()
+					b.SetBytes(int64(readSize))
+					var idx int
+					for b.Loop() {
+						binary.LittleEndian.PutUint64(frame[treadOffsetPos:], offsets[idx%numOffsets])
+						if _, err := cp.client.Write(frame); err != nil {
+							b.Fatalf("write: %v", err)
+						}
+						if err := drainResponse(cp.client); err != nil {
+							b.Fatalf("drain: %v", err)
+						}
+						idx++
+					}
+				})
+			}
+		})
+	}
+}
+
+// BenchmarkServerRead_1M measures server-side Rread throughput at 1 MiB
+// reads over a negotiated 1 MiB msize (D-06). Subtests: transport={unix,
+// pipe} x encode={payloader,copy}. Same shape as BenchmarkServerRead_4K
+// but exercises the large-payload path where the Payloader writev lift
+// should be smaller in percentage terms (PERF-07.2 threshold >= 5%).
+func BenchmarkServerRead_1M(b *testing.B) {
+	const readSize uint32 = 1 << 20 // D-06: 1 MiB
+	const msize uint32 = 1 << 20    // D-06: 1 MiB negotiated msize to fit the read
+
+	for _, transport := range []string{"unix", "pipe"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			for _, encode := range []string{"payloader", "copy"} {
+				b.Run("encode="+encode, func(b *testing.B) {
+					root := newBenchTree(b)
+
+					var opts []Option
+					if encode == "copy" {
+						opts = append(opts, WithMiddleware(forceCopyMiddleware))
+					}
+					cp := newConnPairMsizeTransport(b, transport, root, msize, opts...)
+					b.Cleanup(func() { cp.close(b) })
+
+					benchAttachFid0(b, cp)
+					_ = benchWalkOpen(b, cp, 0, 1, "data")
+
+					frame := mustEncode(b, proto.Tag(1), &proto.Tread{
+						Fid:    1,
+						Offset: 0,
+						Count:  readSize,
+					})
+
+					maxOffset := uint64(benchFileSize) - uint64(readSize)
+					offsets := make([]uint64, numOffsets)
+					for i := range offsets {
+						offsets[i] = (uint64(i) * uint64(readSize)) % (maxOffset + 1)
+					}
+
+					b.ReportAllocs()
+					b.SetBytes(int64(readSize))
+					var idx int
+					for b.Loop() {
+						binary.LittleEndian.PutUint64(frame[treadOffsetPos:], offsets[idx%numOffsets])
+						if _, err := cp.client.Write(frame); err != nil {
+							b.Fatalf("write: %v", err)
+						}
+						if err := drainResponse(cp.client); err != nil {
+							b.Fatalf("drain: %v", err)
+						}
+						idx++
+					}
+				})
+			}
+		})
+	}
+}
