@@ -311,12 +311,13 @@ func releaseHandle(ctx context.Context, fs *fidState, logger *slog.Logger) {
 // errnoFromError converts a Go error to a proto.Errno. If the error wraps or
 // is a proto.Errno, that value is returned directly. If the error wraps a
 // syscall.Errno (e.g. from os.PathError, unix.Stat, or passthrough syscalls),
-// it is cast to proto.Errno via numeric identity -- Linux UAPI errno values
-// 1..133 match proto.Errno values verbatim (see proto/errno.go).
+// it is translated through proto.ErrnoFromUnix -- on Linux this is identity;
+// on FreeBSD it maps the FreeBSD errno number to the corresponding Linux wire
+// value (9P2000.L defines errno numbers as Linux UAPI values).
 //
-// This lets node implementations return raw syscall.Errno without wrapping,
-// matching CONTEXT.md D-QMIG-03: "transparent for passthrough -- no wrapping
-// needed at the source".
+// This lets node implementations return raw syscall.Errno without wrapping;
+// the dispatch layer ensures the wire format remains Linux-numbered regardless
+// of the host OS.
 //
 // Unknown errors (including nil) default to proto.EIO.
 func errnoFromError(err error) proto.Errno {
@@ -324,7 +325,7 @@ func errnoFromError(err error) proto.Errno {
 		return errno
 	}
 	if errno, ok := errors.AsType[syscall.Errno](err); ok {
-		return proto.Errno(errno)
+		return proto.ErrnoFromUnix(errno)
 	}
 	return proto.EIO
 }
