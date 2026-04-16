@@ -96,13 +96,31 @@ func TestGetMsgBuf_ReturnsCorrectSize(t *testing.T) {
 	}
 }
 
-func TestGetMsgBuf_DefaultSizePreGrown(t *testing.T) {
+func TestGetMsgBuf_BucketSizing(t *testing.T) {
 	t.Parallel()
-	b := GetMsgBuf(1024)
-	defer PutMsgBuf(b)
-	// Pool-provided buffers are pre-grown to PoolMaxBufSize.
-	if cap(*b) < PoolMaxBufSize {
-		t.Errorf("GetMsgBuf(1024) cap=%d, want >= %d", cap(*b), PoolMaxBufSize)
+	// GetMsgBuf(n) must return a buffer whose cap is the smallest bucket
+	// size >= n, NOT the max pool size. Verifies the bucketing fix for
+	// the seq_read_4k variance (Target G in the Q debug report).
+	cases := []struct {
+		n       int
+		wantCap int
+	}{
+		{0, 1 << 10},        // empty req → smallest bucket
+		{7, 1 << 10},        // Tclunk-ish → 1 KiB
+		{1024, 1 << 10},     // exactly 1 KiB
+		{1025, 1 << 12},     // just over → 4 KiB
+		{4096, 1 << 12},     // exactly 4 KiB
+		{8192, 1 << 16},     // small-ish → 64 KiB
+		{65536, 1 << 16},    // exactly 64 KiB
+		{100000, 1 << 20},   // medium → 1 MiB
+		{1 << 20, 1 << 20},  // exactly max
+	}
+	for _, tc := range cases {
+		b := GetMsgBuf(tc.n)
+		if cap(*b) != tc.wantCap {
+			t.Errorf("GetMsgBuf(%d) cap=%d, want %d", tc.n, cap(*b), tc.wantCap)
+		}
+		PutMsgBuf(b)
 	}
 }
 

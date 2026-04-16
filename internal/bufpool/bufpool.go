@@ -50,44 +50,91 @@ func PutBuf(b *bytes.Buffer) {
 	bufPool.Put(b)
 }
 
-// msgBufPool pools raw []byte slices for server.readLoop message bodies.
-// Distinct from bufPool (*bytes.Buffer): readLoop wants a contiguous []byte
-// sized to msize so io.ReadFull can target the slice directly; a growable
-// bytes.Buffer is the wrong shape here. Separate pools keep size classes
-// distinct (per sync.Pool best practice).
+// msgBucketSizes are the capacity size classes for pooled message buffers.
+// Chosen to cover typical 9P message sizes without wasting memory on the
+// common case:
+//   - 1 KiB:  control messages (Tclunk=7B, Twalk=30B, Tgetattr=15B, etc.)
+//             — ~99% of non-data messages fit here
+//   - 4 KiB:  small data reads (matches kernel page size, common FUSE unit)
+//   - 64 KiB: medium data reads / readdir fragments
+//   - 1 MiB:  msize-scale reads (matches PoolMaxBufSize and kernel cap)
+//
+// Without bucketing, a 7-byte Tclunk would claim a 1 MiB buffer from the
+// pool. Under GC pressure (sync.Pool drains every other cycle), the cost
+// of refilling 1 MiB buffers was the dominant source of seq_read_4k
+// throughput variance observed by the Q consumer — see the Q debug doc
+// "ninep-smallfile-seq4k-analysis.md" Target G for the measurement.
+var msgBucketSizes = [...]int{
+	1 << 10, // 1 KiB
+	1 << 12, // 4 KiB
+	1 << 16, // 64 KiB
+	1 << 20, // 1 MiB (== PoolMaxBufSize)
+}
+
+// msgBufBuckets holds one sync.Pool per size class. Each pool returns
+// a *[]byte whose cap is exactly msgBucketSizes[i].
 //
 // The pool stores *[]byte rather than []byte because sync.Pool boxes its
 // argument into an `any` interface; a slice header is larger than a word
 // and causes the boxing to allocate. Pooling a pointer avoids the box
 // alloc (see RESEARCH Pitfall: "Pool pointer not value").
-var msgBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, PoolMaxBufSize)
-		return &b
-	},
+//
+// Each New closure hard-codes its size to keep the pools usable as a
+// composite literal (sync.Pool has an internal noCopy that forbids
+// returning pools by value from a factory function).
+var msgBufBuckets = [len(msgBucketSizes)]sync.Pool{
+	{New: func() any { b := make([]byte, 1<<10); return &b }},
+	{New: func() any { b := make([]byte, 1<<12); return &b }},
+	{New: func() any { b := make([]byte, 1<<16); return &b }},
+	{New: func() any { b := make([]byte, 1<<20); return &b }},
 }
 
-// GetMsgBuf returns a pointer to a []byte with capacity >= n.
-// If n exceeds PoolMaxBufSize, a fresh buffer is allocated (not pooled);
-// this keeps pool memory proportional to steady-state traffic.
+// msgBucketFor returns the index of the smallest bucket whose capacity is
+// >= n, or -1 if n exceeds all buckets. Linear search over 4 entries;
+// the cost is negligible vs the alternative (pointer indirection + map
+// lookup) and the compiler tends to unroll it.
+func msgBucketFor(n int) int {
+	for i, size := range msgBucketSizes {
+		if n <= size {
+			return i
+		}
+	}
+	return -1
+}
+
+// GetMsgBuf returns a pointer to a []byte with capacity >= n, drawn from
+// the smallest bucket that fits. If n exceeds PoolMaxBufSize, a fresh
+// buffer of size n is allocated (not pooled) so pool memory stays
+// proportional to steady-state traffic.
 // Callers MUST call PutMsgBuf(b) when finished (typically via defer).
 func GetMsgBuf(n int) *[]byte {
-	if n > PoolMaxBufSize {
+	idx := msgBucketFor(n)
+	if idx < 0 {
 		b := make([]byte, n)
 		return &b
 	}
-	return msgBufPool.Get().(*[]byte)
+	return msgBufBuckets[idx].Get().(*[]byte)
 }
 
-// PutMsgBuf returns b to the pool iff cap(*b) <= PoolMaxBufSize.
-// Oversized buffers are dropped and GC'd.
+// PutMsgBuf returns b to its source bucket iff cap(*b) exactly matches a
+// bucket size. Buffers with caps outside the bucket set (e.g. oversized
+// fresh allocations from the GetMsgBuf > PoolMaxBufSize path, or buffers
+// resized by callers) are dropped to GC rather than polluting a bucket
+// with a mis-sized entry.
 func PutMsgBuf(b *[]byte) {
-	if cap(*b) > PoolMaxBufSize {
-		return
+	c := cap(*b)
+	// Bucket sizes are monotonically increasing; a buffer only re-pools if
+	// its cap exactly equals one of them.
+	for i, size := range msgBucketSizes {
+		if c == size {
+			// Reset length to full capacity so the next caller sees the
+			// full slice.
+			*b = (*b)[:c]
+			msgBufBuckets[i].Put(b)
+			return
+		}
 	}
-	// Reset length to full capacity so the next caller sees the full slice.
-	*b = (*b)[:cap(*b)]
-	msgBufPool.Put(b)
+	// cap does not match any bucket; drop.
 }
 
 // stringBufPool pools raw []byte scratch buffers for proto.ReadString.
