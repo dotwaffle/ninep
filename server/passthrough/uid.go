@@ -1,3 +1,5 @@
+//go:build linux
+
 package passthrough
 
 // UIDMapper provides bidirectional UID/GID mapping between the 9P protocol
