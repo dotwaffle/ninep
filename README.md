@@ -57,16 +57,13 @@ func (f *HelloFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, er
 	}, nil
 }
 
-func (f *HelloFile) Read(_ context.Context, offset uint64, count uint32) ([]byte, error) {
+func (f *HelloFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
 	data := []byte("hello world")
 	if offset >= uint64(len(data)) {
-		return nil, nil
+		return 0, nil
 	}
-	end := offset + uint64(count)
-	if end > uint64(len(data)) {
-		end = uint64(len(data))
-	}
-	return data[offset:end], nil
+	end := min(offset+uint64(len(buf)), uint64(len(data)))
+	return copy(buf, data[offset:end]), nil
 }
 
 func main() {
@@ -81,6 +78,21 @@ func main() {
 	log.Fatal(srv.Serve(context.Background(), ln))
 }
 ```
+
+## Platform support
+
+The library — `proto/`, `server/`, `server/memfs/`, `server/fstest/`,
+`internal/bufpool/` — builds and runs on every platform Go supports.
+
+The reference `server/passthrough/` filesystem is **Linux-only**: it uses
+`O_PATH`, the `*at` syscall family, and the Linux `Lgetxattr` xattr API
+to anchor every node to a specific inode for path-traversal safety. On
+darwin / freebsd / windows the package compiles to its godoc only;
+`passthrough.NewRoot` is undefined.
+
+To serve 9P from a non-Linux host, write your own `server.Node` types
+(the same way you would with `go-fuse`) or use the in-memory `memfs`
+helpers.
 
 ## Package Layout
 

@@ -200,7 +200,7 @@ srv := server.New(root,
 ```
 
 Defaults (from `server.go` `New` function):
-- `maxMsize`: 131072 (128KB)
+- `maxMsize`: 1048576 (1 MiB)
 - `maxInflight`: 64
 - `logger`: `slog.Default()` wrapped with `NewTraceHandler` for trace correlation
 - `idleTimeout`: 0 (no timeout)
