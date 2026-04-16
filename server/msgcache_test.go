@@ -1,3 +1,5 @@
+//go:build !nocache
+
 // Package server msgcache_test.go verifies the aliasing invariant for every
 // message type cached in msgcache.go.
 //
