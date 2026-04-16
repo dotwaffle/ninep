@@ -18,10 +18,11 @@ import (
 // that grow above this cap are released to the GC on PutBuf rather than
 // retained in the pool (pool-pollution guard).
 //
-// 128KB matches the Linux kernel v9fs default msize. Messages larger
-// than this are legal in 9P but atypical; dropping oversized buffers
-// keeps pool memory proportional to steady-state traffic, not worst-case.
-const PoolMaxBufSize = 128 * 1024
+// 1MiB matches the ninep server default maxMsize and the Linux kernel's
+// silent msize cap. Messages larger than this are legal in 9P but the
+// kernel will not negotiate above 1MiB; dropping oversized buffers keeps
+// pool memory proportional to steady-state traffic, not worst-case.
+const PoolMaxBufSize = 1024 * 1024
 
 var bufPool = sync.Pool{
 	New: func() any {

@@ -36,7 +36,7 @@ type Server struct {
 func New(root Node, opts ...Option) *Server {
 	s := &Server{
 		root:        root,
-		maxMsize:    131072, // 128KB default
+		maxMsize:    1024 * 1024, // 1MiB default
 		maxInflight: 64,
 		logger:      slog.New(NewTraceHandler(slog.Default().Handler())),
 		// idleTimeout: 0 (zero value = no timeout)
