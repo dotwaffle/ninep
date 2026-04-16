@@ -105,7 +105,7 @@ func (c *conn) negotiate(tv *proto.Tversion) (negotiationResult, error) {
 type taggedResponse struct {
 	tag     proto.Tag
 	msg     proto.Message
-	release func() // called after encode; nil when no pooled buffer is held
+	release releaser // called after encode; nil when no pooled buffer is held
 }
 
 // releaser is implemented by response messages that carry pooled buffers
@@ -601,9 +601,13 @@ func (c *conn) handleWorkItem(item workItem) {
 
 	resp := c.handler(item.ctx, item.tag, item.msg)
 	if resp != nil {
-		var release func()
+		// Store the releaser interface verbatim on taggedResponse — taking
+		// r.Release as a method value would allocate a heap closure on
+		// every request. Passing the interface value costs no extra alloc
+		// and the writeLoop invokes release.Release() virtually.
+		var release releaser
 		if r, ok := resp.(releaser); ok {
-			release = r.Release
+			release = r
 		}
 		c.sendResponseWithRelease(item.tag, resp, release)
 	}
@@ -809,7 +813,7 @@ drainLoop:
 				)
 				bufpool.PutBuf(body)
 				if resp.release != nil {
-					resp.release()
+					resp.release.Release()
 				}
 				c.bodies = append(c.bodies, nil)
 				continue
@@ -822,7 +826,7 @@ drainLoop:
 			)
 			bufpool.PutBuf(body)
 			if resp.release != nil {
-				resp.release()
+				resp.release.Release()
 			}
 			c.bodies = append(c.bodies, nil)
 			continue
@@ -873,7 +877,7 @@ func (c *conn) releaseBatch() {
 			bufpool.PutBuf(c.bodies[i])
 		}
 		if resp.release != nil {
-			resp.release()
+			resp.release.Release()
 		}
 	}
 }
@@ -893,13 +897,13 @@ func (c *conn) sendResponse(tag proto.Tag, msg proto.Message) {
 // If the responses channel has been closed (cleanup complete), the send
 // panics and the release runs during recovery so pool buffers are not
 // leaked when the handler outlives the connection.
-func (c *conn) sendResponseWithRelease(tag proto.Tag, msg proto.Message, release func()) {
+func (c *conn) sendResponseWithRelease(tag proto.Tag, msg proto.Message, release releaser) {
 	defer func() {
 		if r := recover(); r != nil {
 			// Channel was closed by cleanup -- drop the response, but
 			// still return any pooled buffers to avoid leaks.
 			if release != nil {
-				release()
+				release.Release()
 			}
 			c.logger.Debug("response dropped after cleanup",
 				slog.String("type", msg.Type().String()),
