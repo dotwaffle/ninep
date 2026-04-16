@@ -410,10 +410,11 @@ func (m *Tread) DecodeFrom(r io.Reader) error {
 }
 
 // Payloader is implemented by response messages that carry a large opaque
-// payload (typically the user data portion of Rread/Rreaddir). The server's
-// writeLoop detects Payloaders and issues the payload as a separate
-// net.Buffers entry — the payload bytes go direct from Data to the socket
-// via writev, skipping the copy into the pooled body buffer.
+// payload (typically the user data portion of Rread/Rreaddir). The
+// server's inline response writer detects Payloaders and issues the
+// payload as a separate net.Buffers entry so the header, fixed body, and
+// payload are emitted in a single writev without copying the payload into
+// the pooled body buffer.
 //
 // Contract:
 //   - EncodeFixed writes only the non-payload part of the body. For Rread
@@ -439,13 +440,15 @@ type Rread struct {
 func (m *Rread) Type() MessageType { return TypeRread }
 
 // EncodeFixed implements Payloader. Writes only the 4-byte count prefix;
-// the caller (server writeLoop) writes m.Data separately via writev.
+// the server's inline response writer emits m.Data as a separate
+// net.Buffers entry via a single writev.
 func (m *Rread) EncodeFixed(w io.Writer) error {
 	return WriteUint32(w, uint32(len(m.Data)))
 }
 
-// Payload implements Payloader. Returns m.Data so the writeLoop can place
-// it directly into net.Buffers without an intermediate copy.
+// Payload implements Payloader. Returns m.Data so the inline response
+// writer can place it directly into net.Buffers without an intermediate
+// copy.
 func (m *Rread) Payload() []byte { return m.Data }
 
 // EncodeTo writes the Rread body: count[4] + data[count].

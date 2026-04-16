@@ -16,8 +16,9 @@ const cleanupDeadline = 5 * time.Second
 //  3. Close the work channel and wait for workers to exit.
 //  4. Clunk all fids.
 //
-// Since workers write responses inline (no writeLoop goroutine), there
-// is no response channel to drain on shutdown.
+// Workers encode and writev each response inline from sendResponseInline
+// under writeMu, so there is no separate writer goroutine or response
+// channel to drain on shutdown.
 func (c *conn) cleanup() {
 	// Step 1: Cancel all inflight requests.
 	c.inflight.cancelAll()

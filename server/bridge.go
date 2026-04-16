@@ -11,15 +11,17 @@ import (
 )
 
 // pooledRread wraps Rread with a reference to the pooled buffer backing
-// Data, and implements releaser so the writeLoop returns the buffer to
-// the pool after encoding. Satisfies proto.Message via embedded Rread.
+// Data, and implements releaser so the worker's sendResponseInline returns
+// the buffer to the pool after the writev completes. Satisfies
+// proto.Message via embedded Rread.
 type pooledRread struct {
 	proto.Rread
 	bufPtr *[]byte
 }
 
-// Release returns the pooled buffer to bufpool.msgBufPool. Called by
-// writeLoop after encodeResponse copies bytes into the connection.
+// Release returns the pooled buffer to bufpool.msgBufPool. Called by the
+// worker's sendResponseInline after the response bytes have been flushed
+// to the wire. MUST be called exactly once per pooledRread.
 func (r *pooledRread) Release() { bufpool.PutMsgBuf(r.bufPtr) }
 
 // Type delegates to the embedded Rread (required so middleware and

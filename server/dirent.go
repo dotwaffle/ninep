@@ -18,14 +18,15 @@ import (
 // the call boundary. Internally, a *bytes.Buffer is borrowed from bufpool
 // for the pack loop and returned to the pool via defer.
 //
-// Why copy-out instead of returning the pooled buffer directly: the 9P
-// server hands the returned bytes to the writeLoop goroutine via the
-// response channel, and the writeLoop encodes those bytes to the wire in
-// a goroutine separate from the handler that produced them. Returning the
-// pooled buffer would race the handler's PutBuf against the writeLoop's
-// read. The copy-out costs exactly one allocation per call (the output
-// slice) and preserves safety. See 08-CONTEXT.md "EncodeDirents Signature
-// (REVISED 2026-04-14 — rolled back)".
+// Why copy-out instead of returning the pooled buffer directly: the
+// pooled *bytes.Buffer returns to bufpool via the deferred PutBuf at the
+// end of this function, which executes before the caller encodes the
+// response body via msg.EncodeTo inside sendResponseInline. If we handed
+// back the pooled buffer's bytes directly, the response encoder would be
+// reading a slice that aliases a buffer already returned to (and possibly
+// reissued from) the pool. The copy-out costs exactly one allocation per
+// call (the output slice) and preserves safety. See 08-CONTEXT.md
+// "EncodeDirents Signature (REVISED 2026-04-14 — rolled back)".
 //
 // Because buf is a concrete *bytes.Buffer, the proto.Write* helpers take
 // their zero-alloc fast path (plan 08-02): per-field encoding adds no
@@ -59,7 +60,8 @@ func EncodeDirents(dirents []proto.Dirent, maxBytes uint32) ([]byte, int) {
 
 	// Copy-out — the pooled buffer returns to the pool via defer AFTER
 	// this function returns, at which point the caller holds only the
-	// fresh `out` slice. No aliasing; safe for async writeLoop consumption.
+	// fresh `out` slice. No aliasing; safe even though the response
+	// encoder runs later than this PutBuf.
 	out := make([]byte, buf.Len())
 	copy(out, buf.Bytes())
 	return out, count

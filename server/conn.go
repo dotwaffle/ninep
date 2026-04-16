@@ -250,13 +250,18 @@ func (c *conn) serve(ctx context.Context) {
 		_ = c.nc.Close()
 	}()
 
-	// Start writer goroutine. writeLoop exits when c.responses is closed
-	// (by cleanup) or ctx is done (GO-CC-1).
+	// Drive the read loop synchronously on the serve goroutine. readLoop
+	// decodes requests and hands each one to a lazy-spawned worker via
+	// workCh; workers encode and writev responses inline under writeMu via
+	// sendResponseInline. There is no dedicated writer goroutine and no
+	// response channel (removed in v1.1.15). readLoop returns when the
+	// connection closes or ctx is done (GO-CC-1).
 	c.readLoop(ctx)
 
 	// Orderly shutdown: cancel inflight, drain with deadline, close workCh,
-	// wait for workers, clunk fids. Workers write responses inline (no
-	// writeLoop goroutine) so there's nothing else to drain after that.
+	// wait for workers, clunk fids. Workers encode and writev responses
+	// inline under writeMu, so there is no writer goroutine to drain
+	// afterwards.
 	c.cleanup()
 }
 
@@ -328,9 +333,11 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 	return nil
 }
 
-// writeRaw encodes a single message directly to the connection, bypassing the
-// writeLoop. Used during version negotiation (both initial and mid-connection
-// re-negotiation). Acquires writeMu to prevent interleaving with writeLoop.
+// writeRaw encodes a single message directly to the connection, bypassing
+// the worker pool's sendResponseInline path. Used during version
+// negotiation (both initial and mid-connection re-negotiation) where the
+// codec may not yet be selected. Acquires writeMu to serialize writes
+// across workers and the raw negotiation path.
 func (c *conn) writeRaw(tag proto.Tag, msg proto.Message) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
@@ -369,8 +376,13 @@ func (c *conn) writeRaw(tag proto.Tag, msg proto.Message) error {
 	return nil
 }
 
-// readLoop reads and dispatches messages until the connection closes or ctx is
-// done. After returning, the caller must close c.responses.
+// readLoop reads and dispatches messages until the connection closes or
+// ctx is done. After returning, the caller (serve) invokes cleanup(),
+// which cancels inflight requests, waits for them to drain with a
+// deadline, closes workCh, waits on workerWG, and clunks all remaining
+// fids. Responses are encoded and writev'd inline by workers under
+// writeMu (sendResponseInline), so there is no separate writer goroutine
+// or response channel to drain.
 func (c *conn) readLoop(ctx context.Context) {
 	for {
 		// Check context before blocking on read.
@@ -639,7 +651,7 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 	}
 
 	// Send Rversion directly via writeRaw, which acquires writeMu to
-	// prevent interleaving with the writeLoop goroutine (CR-01).
+	// prevent interleaving with other workers' writes (CR-01).
 	rver := &proto.Rversion{Msize: res.msize, Version: res.version}
 	if err := c.writeRaw(tag, rver); err != nil {
 		c.logger.Warn("re-negotiation send error", slog.Any("error", err))
@@ -723,10 +735,11 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 }
 
 // sendResponseInline encodes a response and writes it to the connection
-// directly from the worker goroutine. This replaces the previous
-// writeLoop-per-connection model so there is no inter-goroutine handoff
-// between the worker and the writer — saves one context switch per
-// request (~1-3 μs) on the small-file hot path.
+// directly from the worker goroutine. Responses are encoded and writev'd
+// inline by the worker that handled the request (under writeMu), so there
+// is no inter-goroutine handoff between the worker and a dedicated writer
+// — saves one context switch per request (~1-3 μs) on the small-file hot
+// path (v1.1.15).
 //
 // Serialises concurrent worker writes via writeMu, and uses the
 // conn-resident encHdr/encBufsArr buffers (guarded by writeMu) to

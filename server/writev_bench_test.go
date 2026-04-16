@@ -110,8 +110,9 @@ func BenchmarkWriteApproach(b *testing.B) {
 		{
 			name: "approach=buffers_payload_split",
 			fn: func() func(c net.Conn, hdr, body []byte) error {
-				// Mirrors flushBatch + Payloader: [hdr, fixedBody, payload].
-				// We simulate a 4-byte fixed body (Rread count prefix).
+				// Mirrors sendResponseInline + Payloader:
+				// [hdr, fixedBody, payload]. We simulate a 4-byte fixed
+				// body (Rread count prefix).
 				fixedBody := make([]byte, 4)
 				var arr [3][]byte
 				return func(c net.Conn, hdr, body []byte) error {

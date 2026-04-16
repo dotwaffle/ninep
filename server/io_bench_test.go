@@ -14,10 +14,11 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9l"
 )
 
-// I/O benchmarks measure read/write throughput and allocation pressure through
-// the full server stack (encode → readLoop → dispatch → bridge → writeLoop →
-// encode). Each subtest uses key=value naming for benchstat grouping, and all
-// call b.ReportAllocs + b.SetBytes for allocs/op and MB/s columns.
+// I/O benchmarks measure read/write throughput and allocation pressure
+// through the full server stack (encode → readLoop → dispatch → bridge →
+// worker (encode + writev inline) → wire). Each subtest uses key=value
+// naming for benchstat grouping, and all call b.ReportAllocs +
+// b.SetBytes for allocs/op and MB/s columns.
 
 // benchFile is an in-memory file node for I/O benchmarks.
 type benchFile struct {
@@ -237,14 +238,17 @@ func BenchmarkRead(b *testing.B) {
 	}
 }
 
-// BenchmarkReadPipelined sends a burst of N Tread requests before draining
-// any responses. This exercises the writeLoop coalescing path: at the moment
-// the writeLoop wakes for response 1, responses 2..N may already be queued,
-// letting flushBatch writev them all in one syscall.
+// BenchmarkReadPipelined measures pipelined request throughput under the
+// inline-write model (v1.1.15+). Each worker encodes and writev's its
+// response independently under writeMu; there is no cross-request
+// coalescing (the pre-v1.1.15 writer-goroutine model batched multiple
+// queued responses into a single writev). This benchmark validates that
+// pipelining multiple in-flight requests still sustains throughput with
+// per-response writev.
 //
-// The burst size (BurstN) maps directly to the expected writev coalescing
-// factor. The benchmark reports MB/s for the full batch and allocs/op for
-// a single request (divides total by BurstN).
+// The burst size (BurstN) controls how many Tread requests are in flight
+// simultaneously. The benchmark reports MB/s for the full batch and
+// allocs/op for a single request (divides total by BurstN).
 func BenchmarkReadPipelined(b *testing.B) {
 	const readSize uint32 = 4096
 	for _, burstN := range []int{1, 4, 16, 64} {
