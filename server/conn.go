@@ -509,24 +509,50 @@ func (c *conn) readLoop(ctx context.Context) {
 			c.sendError(tag, proto.ENOSYS)
 			continue
 		}
-		c.bodyReader.Reset(b[3:])
-		if err := msg.DecodeFrom(&c.bodyReader); err != nil {
+
+		// msgRelease is called after the handler returns (in handleRequest
+		// defer). nil for messages whose DecodeFrom copies all data out of
+		// the pool buffer — the buffer is returned to the pool immediately.
+		// Non-nil for Twrite (DecodeFromBuf aliases m.Data into bufPtr) so
+		// the buffer survives handler execution.
+		var msgRelease func()
+
+		if tw, ok := msg.(*proto.Twrite); ok {
+			// Zero-copy Twrite: m.Data aliases bufPtr; defer release.
+			if err := tw.DecodeFromBuf(b[3:]); err != nil {
+				bufpool.PutMsgBuf(bufPtr)
+				c.logger.Warn("decode error",
+					slog.String("type", msgType.String()),
+					slog.Any("error", err),
+				)
+				return // Fatal decode error.
+			}
+			bp := bufPtr
+			msgRelease = func() { bufpool.PutMsgBuf(bp) }
+			// Do NOT put bufPtr to the pool here — it is released by
+			// handleRequest's defer after the handler finishes with Data.
+		} else {
+			c.bodyReader.Reset(b[3:])
+			if err := msg.DecodeFrom(&c.bodyReader); err != nil {
+				bufpool.PutMsgBuf(bufPtr)
+				c.logger.Warn("decode error",
+					slog.String("type", msgType.String()),
+					slog.Any("error", err),
+				)
+				return // Fatal decode error.
+			}
+			// DecodeFrom copied buf contents into msg fields; msg is
+			// independent of bufPtr. Safe to return immediately.
 			bufpool.PutMsgBuf(bufPtr)
-			c.logger.Warn("decode error",
-				slog.String("type", msgType.String()),
-				slog.Any("error", err),
-			)
-			return // Fatal decode error.
 		}
-		// DecodeFrom has copied buf contents into msg fields; msg is
-		// independent of b. Safe to return buf to the pool before launching
-		// the handler goroutine.
-		bufpool.PutMsgBuf(bufPtr)
 
 		// Acquire semaphore slot (blocks if MaxInflight reached).
 		select {
 		case c.semaphore <- struct{}{}:
 		case <-ctx.Done():
+			if msgRelease != nil {
+				msgRelease()
+			}
 			return
 		}
 
@@ -534,14 +560,19 @@ func (c *conn) readLoop(ctx context.Context) {
 		reqCtx, cancel := context.WithCancel(ctx)
 		c.inflight.start(tag, cancel)
 
-		go c.handleRequest(reqCtx, tag, msg)
+		go c.handleRequest(reqCtx, tag, msg, msgRelease)
 	}
 }
 
 // handleRequest runs a single request in its own goroutine with panic recovery.
 // It releases the semaphore slot and clears the inflight entry when done.
-func (c *conn) handleRequest(ctx context.Context, tag proto.Tag, msg proto.Message) {
+// msgRelease, when non-nil, is called after the handler returns to return
+// any pooled buffers aliased by the request (e.g. Twrite.Data).
+func (c *conn) handleRequest(ctx context.Context, tag proto.Tag, msg proto.Message, msgRelease func()) {
 	defer func() {
+		if msgRelease != nil {
+			msgRelease()
+		}
 		if r := recover(); r != nil {
 			// SERV-06: Handler panic -> EIO, never crash the server.
 			c.logger.Error("handler panic",

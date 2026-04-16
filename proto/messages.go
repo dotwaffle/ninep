@@ -1,6 +1,7 @@
 package proto
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 )
@@ -477,6 +478,8 @@ func (m *Twrite) EncodeTo(w io.Writer) error {
 }
 
 // DecodeFrom reads the Twrite body: fid[4] + offset[8] + count[4] + data[count].
+// m.Data is allocated and populated from r; callers can freely reuse r's
+// underlying storage after DecodeFrom returns.
 func (m *Twrite) DecodeFrom(r io.Reader) error {
 	fid, err := ReadUint32(r)
 	if err != nil {
@@ -499,6 +502,29 @@ func (m *Twrite) DecodeFrom(r io.Reader) error {
 			return fmt.Errorf("decode twrite data: %w", err)
 		}
 	}
+	return nil
+}
+
+// DecodeFromBuf is a zero-copy alternative to DecodeFrom. m.Data aliases a
+// sub-slice of b — the caller MUST keep b alive (and unmodified) for as
+// long as m.Data is read. Intended for the server's readLoop, which holds
+// a pooled buffer and releases it only after the handler returns.
+//
+// Body layout: fid[4] + offset[8] + count[4] + data[count].
+func (m *Twrite) DecodeFromBuf(b []byte) error {
+	if len(b) < 16 {
+		return fmt.Errorf("decode twrite: body too short (%d < 16)", len(b))
+	}
+	m.Fid = Fid(binary.LittleEndian.Uint32(b[0:4]))
+	m.Offset = binary.LittleEndian.Uint64(b[4:12])
+	count := binary.LittleEndian.Uint32(b[12:16])
+	if count > MaxDataSize {
+		return fmt.Errorf("decode twrite count %d exceeds maximum %d", count, MaxDataSize)
+	}
+	if uint32(len(b)-16) < count {
+		return fmt.Errorf("decode twrite: data short, want %d have %d", count, len(b)-16)
+	}
+	m.Data = b[16 : 16+count] // zero-copy alias; caller owns lifetime of b
 	return nil
 }
 
