@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"net"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -62,13 +64,35 @@ type connPair struct {
 	cancel context.CancelFunc
 }
 
-func newConnPair(tb testing.TB, root Node, opts ...Option) *connPair {
+// newConnPairTransport returns a *connPair backed by the requested transport.
+//   - "pipe" : in-process synchronous net.Pipe (no socket buffering, no writev)
+//   - "unix" : real connected pair of unix-domain sockets (supports writev,
+//     real socket-buffer semantics)
+//
+// Used by full-stack benchmarks parameterized over the transport axis to
+// surface synthetic-baseline (pipe) and production-realistic (unix) numbers
+// in the same run. The existing newConnPair(tb, root, opts...) is now a
+// thin wrapper for newConnPairTransport(tb, "pipe", root, opts...) so the
+// non-bench protocol tests in this file keep their pipe-only behaviour.
+func newConnPairTransport(tb testing.TB, transport string, root Node, opts ...Option) *connPair {
 	tb.Helper()
+
+	if transport == "unix" && runtime.GOOS == "windows" {
+		tb.Skipf("unix transport not supported on windows")
+	}
 
 	opts = append([]Option{WithMaxMsize(65536), WithLogger(discardLogger())}, opts...)
 	srv := New(root, opts...)
 
-	client, server := net.Pipe()
+	var client, server net.Conn
+	switch transport {
+	case "pipe":
+		client, server = net.Pipe()
+	case "unix":
+		client, server = unixSocketPair(tb)
+	default:
+		tb.Fatalf("newConnPairTransport: unknown transport %q", transport)
+	}
 
 	ctx, cancel := context.WithTimeout(tb.Context(), 5*time.Second)
 	tb.Cleanup(func() {
@@ -91,6 +115,52 @@ func newConnPair(tb testing.TB, root Node, opts ...Option) *connPair {
 	}
 
 	return &connPair{client: client, done: done, cancel: cancel}
+}
+
+// newConnPair preserves the original pipe-only signature for protocol tests
+// (TestAttach_*, TestWalk_*, TestClunk_*, TestDispatch_*) that don't care
+// about transport. New code should prefer newConnPairTransport directly.
+func newConnPair(tb testing.TB, root Node, opts ...Option) *connPair {
+	return newConnPairTransport(tb, "pipe", root, opts...)
+}
+
+// unixSocketPair returns a connected pair of unix-domain sockets via a
+// transient socket file in tb.TempDir(). Both sides are registered for
+// cleanup. This differs from writev_bench_test.go's unixPair, which drains
+// the server side with io.Copy(io.Discard, server) for writev-isolation
+// benchmarks; here both sides are returned raw so the caller can attach a
+// real ServeConn goroutine.
+func unixSocketPair(tb testing.TB) (client, server net.Conn) {
+	tb.Helper()
+	dir := tb.TempDir()
+	sockPath := filepath.Join(dir, "ninep.sock")
+
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		tb.Fatalf("listen unix: %v", err)
+	}
+	tb.Cleanup(func() { _ = ln.Close() })
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			accepted <- nil
+			return
+		}
+		accepted <- c
+	}()
+
+	client, err = net.Dial("unix", sockPath)
+	if err != nil {
+		tb.Fatalf("dial unix: %v", err)
+	}
+	server = <-accepted
+	if server == nil {
+		_ = client.Close()
+		tb.Fatal("accept returned nil")
+	}
+	return client, server
 }
 
 func (cp *connPair) close(tb testing.TB) {

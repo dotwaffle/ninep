@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 
@@ -62,16 +63,29 @@ func (d *benchDir) Open(_ context.Context, _ uint32) (FileHandle, uint32, error)
 	return nil, 0, nil
 }
 
-// newConnPairMsize creates a connPair with a configurable msize for both the
-// server and the client Tversion negotiation. The standard newConnPair
-// hardcodes 65536 for both sides.
-func newConnPairMsize(tb testing.TB, root Node, msize uint32, opts ...Option) *connPair {
+// newConnPairMsizeTransport mirrors newConnPairTransport but with a
+// configurable msize on both the server (WithMaxMsize) and the client
+// (Tversion). Used by I/O benchmarks that need to negotiate larger msizes
+// (e.g. 1MiB for size=iounit subtests).
+func newConnPairMsizeTransport(tb testing.TB, transport string, root Node, msize uint32, opts ...Option) *connPair {
 	tb.Helper()
+
+	if transport == "unix" && runtime.GOOS == "windows" {
+		tb.Skipf("unix transport not supported on windows")
+	}
 
 	opts = append([]Option{WithMaxMsize(msize), WithLogger(discardLogger())}, opts...)
 	srv := New(root, opts...)
 
-	client, server := net.Pipe()
+	var client, server net.Conn
+	switch transport {
+	case "pipe":
+		client, server = net.Pipe()
+	case "unix":
+		client, server = unixSocketPair(tb)
+	default:
+		tb.Fatalf("newConnPairMsizeTransport: unknown transport %q", transport)
+	}
 
 	ctx, cancel := context.WithTimeout(tb.Context(), 30*time.Second)
 	tb.Cleanup(func() {
@@ -93,6 +107,17 @@ func newConnPairMsize(tb testing.TB, root Node, msize uint32, opts ...Option) *c
 	}
 
 	return &connPair{client: client, done: done, cancel: cancel}
+}
+
+// newConnPairMsize preserves the pipe-only signature for any future callers
+// that don't need transport parameterization. Currently every in-tree caller
+// uses newConnPairMsizeTransport directly, but the wrapper is retained for API
+// parity with newConnPair (walk_test.go) so new pipe-only benchmarks can land
+// without re-introducing the helper.
+//
+//nolint:unused // kept for API parity with newConnPair; see godoc above
+func newConnPairMsize(tb testing.TB, root Node, msize uint32, opts ...Option) *connPair {
+	return newConnPairMsizeTransport(tb, "pipe", root, msize, opts...)
 }
 
 // benchWalkOpen walks from fid to name, allocating newFid, then opens newFid.
@@ -186,53 +211,57 @@ func BenchmarkRead(b *testing.B) {
 		{"size=iounit/pattern=sequential", 0, 1024 * 1024, false}, // 0 = use iounit
 	}
 
-	for _, tc := range cases {
-		b.Run(tc.name, func(b *testing.B) {
-			root := newBenchTree(b)
-			cp := newConnPairMsize(b, root, tc.msize)
-			b.Cleanup(func() { cp.close(b) })
+	for _, transport := range []string{"pipe", "unix"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			for _, tc := range cases {
+				b.Run(tc.name, func(b *testing.B) {
+					root := newBenchTree(b)
+					cp := newConnPairMsizeTransport(b, transport, root, tc.msize)
+					b.Cleanup(func() { cp.close(b) })
 
-			benchAttachFid0(b, cp)
-			iounit := benchWalkOpen(b, cp, 0, 1, "data")
+					benchAttachFid0(b, cp)
+					iounit := benchWalkOpen(b, cp, 0, 1, "data")
 
-			readSize := tc.readSize
-			if readSize == 0 {
-				readSize = iounit
-			}
+					readSize := tc.readSize
+					if readSize == 0 {
+						readSize = iounit
+					}
 
-			// Pre-encode a Tread frame and locate the offset field for patching.
-			frame := mustEncode(b, proto.Tag(1), &proto.Tread{
-				Fid:    1,
-				Offset: 0,
-				Count:  readSize,
-			})
+					// Pre-encode a Tread frame and locate the offset field for patching.
+					frame := mustEncode(b, proto.Tag(1), &proto.Tread{
+						Fid:    1,
+						Offset: 0,
+						Count:  readSize,
+					})
 
-			// Pre-generate offsets.
-			maxOffset := uint64(benchFileSize) - uint64(readSize)
-			offsets := make([]uint64, numOffsets)
-			if tc.random {
-				rng := rand.New(rand.NewPCG(99, 0))
-				for i := range offsets {
-					offsets[i] = rng.Uint64N(maxOffset+1) &^ 0xFFF // 4K-aligned
-				}
-			} else {
-				for i := range offsets {
-					offsets[i] = (uint64(i) * uint64(readSize)) % (maxOffset + 1)
-				}
-			}
+					// Pre-generate offsets.
+					maxOffset := uint64(benchFileSize) - uint64(readSize)
+					offsets := make([]uint64, numOffsets)
+					if tc.random {
+						rng := rand.New(rand.NewPCG(99, 0))
+						for i := range offsets {
+							offsets[i] = rng.Uint64N(maxOffset+1) &^ 0xFFF // 4K-aligned
+						}
+					} else {
+						for i := range offsets {
+							offsets[i] = (uint64(i) * uint64(readSize)) % (maxOffset + 1)
+						}
+					}
 
-			b.ReportAllocs()
-			b.SetBytes(int64(readSize))
-			var idx int
-			for b.Loop() {
-				binary.LittleEndian.PutUint64(frame[treadOffsetPos:], offsets[idx%numOffsets])
-				if _, err := cp.client.Write(frame); err != nil {
-					b.Fatalf("write: %v", err)
-				}
-				if err := drainResponse(cp.client); err != nil {
-					b.Fatalf("drain: %v", err)
-				}
-				idx++
+					b.ReportAllocs()
+					b.SetBytes(int64(readSize))
+					var idx int
+					for b.Loop() {
+						binary.LittleEndian.PutUint64(frame[treadOffsetPos:], offsets[idx%numOffsets])
+						if _, err := cp.client.Write(frame); err != nil {
+							b.Fatalf("write: %v", err)
+						}
+						if err := drainResponse(cp.client); err != nil {
+							b.Fatalf("drain: %v", err)
+						}
+						idx++
+					}
+				})
 			}
 		})
 	}
@@ -251,46 +280,50 @@ func BenchmarkRead(b *testing.B) {
 // allocs/op for a single request (divides total by BurstN).
 func BenchmarkReadPipelined(b *testing.B) {
 	const readSize uint32 = 4096
-	for _, burstN := range []int{1, 4, 16, 64} {
-		b.Run(fmt.Sprintf("burst=%d", burstN), func(b *testing.B) {
-			root := newBenchTree(b)
-			cp := newConnPairMsize(b, root, 65536)
-			b.Cleanup(func() { cp.close(b) })
+	for _, transport := range []string{"pipe", "unix"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			for _, burstN := range []int{1, 4, 16, 64} {
+				b.Run(fmt.Sprintf("burst=%d", burstN), func(b *testing.B) {
+					root := newBenchTree(b)
+					cp := newConnPairMsizeTransport(b, transport, root, 65536)
+					b.Cleanup(func() { cp.close(b) })
 
-			benchAttachFid0(b, cp)
-			benchWalkOpen(b, cp, 0, 1, "data")
+					benchAttachFid0(b, cp)
+					benchWalkOpen(b, cp, 0, 1, "data")
 
-			// Pre-encode one Tread frame and patch the offset per request.
-			frame := mustEncode(b, proto.Tag(1), &proto.Tread{
-				Fid:    1,
-				Offset: 0,
-				Count:  readSize,
-			})
+					// Pre-encode one Tread frame and patch the offset per request.
+					frame := mustEncode(b, proto.Tag(1), &proto.Tread{
+						Fid:    1,
+						Offset: 0,
+						Count:  readSize,
+					})
 
-			offsets := make([]uint64, numOffsets)
-			maxOffset := uint64(benchFileSize) - uint64(readSize)
-			for i := range offsets {
-				offsets[i] = (uint64(i) * uint64(readSize)) % (maxOffset + 1)
-			}
-
-			b.ReportAllocs()
-			b.SetBytes(int64(readSize) * int64(burstN))
-			var idx int
-			for b.Loop() {
-				// Send burstN requests without reading any responses yet.
-				for range burstN {
-					binary.LittleEndian.PutUint64(frame[treadOffsetPos:], offsets[idx%numOffsets])
-					if _, err := cp.client.Write(frame); err != nil {
-						b.Fatalf("write: %v", err)
+					offsets := make([]uint64, numOffsets)
+					maxOffset := uint64(benchFileSize) - uint64(readSize)
+					for i := range offsets {
+						offsets[i] = (uint64(i) * uint64(readSize)) % (maxOffset + 1)
 					}
-					idx++
-				}
-				// Drain all burstN responses.
-				for range burstN {
-					if err := drainResponse(cp.client); err != nil {
-						b.Fatalf("drain: %v", err)
+
+					b.ReportAllocs()
+					b.SetBytes(int64(readSize) * int64(burstN))
+					var idx int
+					for b.Loop() {
+						// Send burstN requests without reading any responses yet.
+						for range burstN {
+							binary.LittleEndian.PutUint64(frame[treadOffsetPos:], offsets[idx%numOffsets])
+							if _, err := cp.client.Write(frame); err != nil {
+								b.Fatalf("write: %v", err)
+							}
+							idx++
+						}
+						// Drain all burstN responses.
+						for range burstN {
+							if err := drainResponse(cp.client); err != nil {
+								b.Fatalf("drain: %v", err)
+							}
+						}
 					}
-				}
+				})
 			}
 		})
 	}
@@ -308,64 +341,68 @@ func BenchmarkWrite(b *testing.B) {
 		{"size=iounit/pattern=sequential", 0, 1024 * 1024, false}, // 0 = use iounit
 	}
 
-	for _, tc := range cases {
-		b.Run(tc.name, func(b *testing.B) {
-			root := newBenchTree(b)
-			cp := newConnPairMsize(b, root, tc.msize)
-			b.Cleanup(func() { cp.close(b) })
+	for _, transport := range []string{"pipe", "unix"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			for _, tc := range cases {
+				b.Run(tc.name, func(b *testing.B) {
+					root := newBenchTree(b)
+					cp := newConnPairMsizeTransport(b, transport, root, tc.msize)
+					b.Cleanup(func() { cp.close(b) })
 
-			benchAttachFid0(b, cp)
-			iounit := benchWalkOpen(b, cp, 0, 1, "data")
+					benchAttachFid0(b, cp)
+					iounit := benchWalkOpen(b, cp, 0, 1, "data")
 
-			// Max write payload that fits in a Twrite frame:
-			// msize - size[4] - type[1] - tag[2] - fid[4] - offset[8] - count[4] = msize - 23.
-			maxWriteData := tc.msize - 23
-			writeSize := tc.writeSize
-			if writeSize == 0 {
-				writeSize = maxWriteData
-			}
-			_ = iounit // iounit is for Rread; Twrite has more overhead
+					// Max write payload that fits in a Twrite frame:
+					// msize - size[4] - type[1] - tag[2] - fid[4] - offset[8] - count[4] = msize - 23.
+					maxWriteData := tc.msize - 23
+					writeSize := tc.writeSize
+					if writeSize == 0 {
+						writeSize = maxWriteData
+					}
+					_ = iounit // iounit is for Rread; Twrite has more overhead
 
-			// Pre-fill write payload with deterministic data.
-			payload := make([]byte, writeSize)
-			rng := rand.New(rand.NewPCG(77, 0))
-			for i := range payload {
-				payload[i] = byte(rng.IntN(256))
-			}
+					// Pre-fill write payload with deterministic data.
+					payload := make([]byte, writeSize)
+					rng := rand.New(rand.NewPCG(77, 0))
+					for i := range payload {
+						payload[i] = byte(rng.IntN(256))
+					}
 
-			// Pre-encode a Twrite frame.
-			frame := mustEncode(b, proto.Tag(1), &proto.Twrite{
-				Fid:    1,
-				Offset: 0,
-				Data:   payload,
-			})
+					// Pre-encode a Twrite frame.
+					frame := mustEncode(b, proto.Tag(1), &proto.Twrite{
+						Fid:    1,
+						Offset: 0,
+						Data:   payload,
+					})
 
-			// Pre-generate offsets.
-			maxOffset := uint64(benchFileSize) - uint64(writeSize)
-			offsets := make([]uint64, numOffsets)
-			if tc.random {
-				rng := rand.New(rand.NewPCG(99, 0))
-				for i := range offsets {
-					offsets[i] = rng.Uint64N(maxOffset+1) &^ 0xFFF // 4K-aligned
-				}
-			} else {
-				for i := range offsets {
-					offsets[i] = (uint64(i) * uint64(writeSize)) % (maxOffset + 1)
-				}
-			}
+					// Pre-generate offsets.
+					maxOffset := uint64(benchFileSize) - uint64(writeSize)
+					offsets := make([]uint64, numOffsets)
+					if tc.random {
+						rng := rand.New(rand.NewPCG(99, 0))
+						for i := range offsets {
+							offsets[i] = rng.Uint64N(maxOffset+1) &^ 0xFFF // 4K-aligned
+						}
+					} else {
+						for i := range offsets {
+							offsets[i] = (uint64(i) * uint64(writeSize)) % (maxOffset + 1)
+						}
+					}
 
-			b.ReportAllocs()
-			b.SetBytes(int64(writeSize))
-			var idx int
-			for b.Loop() {
-				binary.LittleEndian.PutUint64(frame[twriteOffsetPos:], offsets[idx%numOffsets])
-				if _, err := cp.client.Write(frame); err != nil {
-					b.Fatalf("write: %v", err)
-				}
-				if err := drainResponse(cp.client); err != nil {
-					b.Fatalf("drain: %v", err)
-				}
-				idx++
+					b.ReportAllocs()
+					b.SetBytes(int64(writeSize))
+					var idx int
+					for b.Loop() {
+						binary.LittleEndian.PutUint64(frame[twriteOffsetPos:], offsets[idx%numOffsets])
+						if _, err := cp.client.Write(frame); err != nil {
+							b.Fatalf("write: %v", err)
+						}
+						if err := drainResponse(cp.client); err != nil {
+							b.Fatalf("drain: %v", err)
+						}
+						idx++
+					}
+				})
 			}
 		})
 	}

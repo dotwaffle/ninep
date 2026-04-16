@@ -77,8 +77,11 @@ func benchAttachFid0(b *testing.B, cp *connPair) {
 	}
 }
 
-// BenchmarkRoundTrip measures the full client->server->client flow over a
-// net.Pipe connection for a handful of representative operations. Use cases
+// BenchmarkRoundTrip measures the full client->server->client flow for a
+// handful of representative operations. Parameterized over transport={pipe,unix}
+// so a single bench run reports both the synthetic-baseline (net.Pipe — no
+// socket buffering, no writev) and the production-realistic (unix domain
+// socket — supports writev, real socket-buffer semantics) numbers. Use cases
 // cover a small fixed-size request (getattr) and a larger data request (read).
 func BenchmarkRoundTrip(b *testing.B) {
 	cases := []struct {
@@ -105,24 +108,28 @@ func BenchmarkRoundTrip(b *testing.B) {
 			},
 		},
 	}
-	for _, tc := range cases {
-		b.Run(tc.name, func(b *testing.B) {
-			root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
-			cp := newConnPair(b, root)
-			b.Cleanup(func() { cp.close(b) })
+	for _, transport := range []string{"pipe", "unix"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			for _, tc := range cases {
+				b.Run(tc.name, func(b *testing.B) {
+					root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
+					cp := newConnPairTransport(b, transport, root)
+					b.Cleanup(func() { cp.close(b) })
 
-			benchAttachFid0(b, cp)
+					benchAttachFid0(b, cp)
 
-			frame := tc.send(b)
-			b.ReportAllocs()
-			b.SetBytes(int64(len(frame)))
-			for b.Loop() {
-				if _, err := cp.client.Write(frame); err != nil {
-					b.Fatalf("write: %v", err)
-				}
-				if err := drainResponse(cp.client); err != nil {
-					b.Fatalf("drain: %v", err)
-				}
+					frame := tc.send(b)
+					b.ReportAllocs()
+					b.SetBytes(int64(len(frame)))
+					for b.Loop() {
+						if _, err := cp.client.Write(frame); err != nil {
+							b.Fatalf("write: %v", err)
+						}
+						if err := drainResponse(cp.client); err != nil {
+							b.Fatalf("drain: %v", err)
+						}
+					}
+				})
 			}
 		})
 	}
@@ -131,6 +138,7 @@ func BenchmarkRoundTrip(b *testing.B) {
 // BenchmarkRoundTripWithOTel mirrors BenchmarkRoundTrip with the OTel noop
 // tracer and meter providers wired in. The delta against BenchmarkRoundTrip
 // quantifies middleware overhead when no spans or samples are recorded.
+// Parameterized over transport={pipe,unix} on the same axis as BenchmarkRoundTrip.
 func BenchmarkRoundTripWithOTel(b *testing.B) {
 	cases := []struct {
 		name string
@@ -156,27 +164,31 @@ func BenchmarkRoundTripWithOTel(b *testing.B) {
 			},
 		},
 	}
-	for _, tc := range cases {
-		b.Run(tc.name, func(b *testing.B) {
-			root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
-			cp := newConnPair(b, root,
-				WithTracer(tracenoop.NewTracerProvider()),
-				WithMeter(metricnoop.NewMeterProvider()),
-			)
-			b.Cleanup(func() { cp.close(b) })
+	for _, transport := range []string{"pipe", "unix"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			for _, tc := range cases {
+				b.Run(tc.name, func(b *testing.B) {
+					root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
+					cp := newConnPairTransport(b, transport, root,
+						WithTracer(tracenoop.NewTracerProvider()),
+						WithMeter(metricnoop.NewMeterProvider()),
+					)
+					b.Cleanup(func() { cp.close(b) })
 
-			benchAttachFid0(b, cp)
+					benchAttachFid0(b, cp)
 
-			frame := tc.send(b)
-			b.ReportAllocs()
-			b.SetBytes(int64(len(frame)))
-			for b.Loop() {
-				if _, err := cp.client.Write(frame); err != nil {
-					b.Fatalf("write: %v", err)
-				}
-				if err := drainResponse(cp.client); err != nil {
-					b.Fatalf("drain: %v", err)
-				}
+					frame := tc.send(b)
+					b.ReportAllocs()
+					b.SetBytes(int64(len(frame)))
+					for b.Loop() {
+						if _, err := cp.client.Write(frame); err != nil {
+							b.Fatalf("write: %v", err)
+						}
+						if err := drainResponse(cp.client); err != nil {
+							b.Fatalf("drain: %v", err)
+						}
+					}
+				})
 			}
 		})
 	}
@@ -187,6 +199,15 @@ func BenchmarkRoundTripWithOTel(b *testing.B) {
 // mirrors the bufpool.GetMsgBuf / PutMsgBuf flow so the benchmark reflects
 // production behaviour and benchstat shows the allocation win delivered by
 // PERF-02.
+//
+// Intentionally NOT parameterized over transport=unix. The benchmark relies
+// on net.Pipe's synchronous Write↔Read semantics: each producer Write blocks
+// until the consumer's matching Read advances, which keeps the recv-path
+// allocation pattern deterministic across iterations. A unix-domain socket
+// has a kernel send buffer that lets the producer race ahead of the
+// consumer, changing what the benchmark measures (socket throughput rather
+// than recv-path alloc isolation). Use BenchmarkRoundTrip/transport=unix or
+// BenchmarkRead/transport=unix for unix-side numbers.
 //
 // The producer goroutine has no explicit stop channel. A net.Pipe Write blocks
 // until a matching Read occurs, so a select-based stop signal would not be
@@ -295,36 +316,40 @@ func BenchmarkWalkCycle(b *testing.B) {
 		{name: "limit=none", opts: nil},
 		{name: "limit=huge", opts: []Option{WithMaxFids(100_000)}},
 	}
-	for _, tc := range cases {
-		b.Run(tc.name, func(b *testing.B) {
-			root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
-			cp := newConnPair(b, root, tc.opts...)
-			b.Cleanup(func() { cp.close(b) })
+	for _, transport := range []string{"pipe", "unix"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			for _, tc := range cases {
+				b.Run(tc.name, func(b *testing.B) {
+					root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
+					cp := newConnPairTransport(b, transport, root, tc.opts...)
+					b.Cleanup(func() { cp.close(b) })
 
-			benchAttachFid0(b, cp)
+					benchAttachFid0(b, cp)
 
-			walkFrame := mustEncode(b, proto.Tag(2), &proto.Twalk{
-				Fid:    0,
-				NewFid: 1,
-				Names:  nil,
-			})
-			clunkFrame := mustEncode(b, proto.Tag(3), &proto.Tclunk{Fid: 1})
+					walkFrame := mustEncode(b, proto.Tag(2), &proto.Twalk{
+						Fid:    0,
+						NewFid: 1,
+						Names:  nil,
+					})
+					clunkFrame := mustEncode(b, proto.Tag(3), &proto.Tclunk{Fid: 1})
 
-			b.ReportAllocs()
-			b.SetBytes(int64(len(walkFrame) + len(clunkFrame)))
-			for b.Loop() {
-				if _, err := cp.client.Write(walkFrame); err != nil {
-					b.Fatalf("walk write: %v", err)
-				}
-				if err := drainResponse(cp.client); err != nil {
-					b.Fatalf("walk drain: %v", err)
-				}
-				if _, err := cp.client.Write(clunkFrame); err != nil {
-					b.Fatalf("clunk write: %v", err)
-				}
-				if err := drainResponse(cp.client); err != nil {
-					b.Fatalf("clunk drain: %v", err)
-				}
+					b.ReportAllocs()
+					b.SetBytes(int64(len(walkFrame) + len(clunkFrame)))
+					for b.Loop() {
+						if _, err := cp.client.Write(walkFrame); err != nil {
+							b.Fatalf("walk write: %v", err)
+						}
+						if err := drainResponse(cp.client); err != nil {
+							b.Fatalf("walk drain: %v", err)
+						}
+						if _, err := cp.client.Write(clunkFrame); err != nil {
+							b.Fatalf("clunk write: %v", err)
+						}
+						if err := drainResponse(cp.client); err != nil {
+							b.Fatalf("clunk drain: %v", err)
+						}
+					}
+				})
 			}
 		})
 	}
@@ -339,49 +364,53 @@ func BenchmarkWalkCycle(b *testing.B) {
 // goroutine that contends on fidTable, so real contention still shows up in
 // this benchmark -- the mutex only serialises client-side I/O.
 func BenchmarkWalkClunk(b *testing.B) {
-	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
-	cp := newConnPair(b, root)
-	b.Cleanup(func() { cp.close(b) })
+	for _, transport := range []string{"pipe", "unix"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
+			cp := newConnPairTransport(b, transport, root)
+			b.Cleanup(func() { cp.close(b) })
 
-	benchAttachFid0(b, cp)
+			benchAttachFid0(b, cp)
 
-	// Allocate disjoint fid ranges per worker to prevent collisions. Fid 0 is
-	// reserved for the attached root.
-	var nextBase atomic.Uint32
-	nextBase.Store(1)
+			// Allocate disjoint fid ranges per worker to prevent collisions. Fid 0 is
+			// reserved for the attached root.
+			var nextBase atomic.Uint32
+			nextBase.Store(1)
 
-	var mu sync.Mutex
-	b.ReportAllocs()
-	b.RunParallel(func(pb *testing.PB) {
-		base := nextBase.Add(1_000_000) - 1_000_000 + 1
-		var local uint32
-		for pb.Next() {
-			newFid := proto.Fid(base + local)
-			local++
-			walkWire := mustEncode(b, proto.Tag(1), &proto.Twalk{
-				Fid:    0,
-				NewFid: newFid,
-				Names:  nil,
+			var mu sync.Mutex
+			b.ReportAllocs()
+			b.RunParallel(func(pb *testing.PB) {
+				base := nextBase.Add(1_000_000) - 1_000_000 + 1
+				var local uint32
+				for pb.Next() {
+					newFid := proto.Fid(base + local)
+					local++
+					walkWire := mustEncode(b, proto.Tag(1), &proto.Twalk{
+						Fid:    0,
+						NewFid: newFid,
+						Names:  nil,
+					})
+					clunkWire := mustEncode(b, proto.Tag(1), &proto.Tclunk{Fid: newFid})
+
+					mu.Lock()
+					_, werr := cp.client.Write(walkWire)
+					if werr == nil {
+						werr = drainResponse(cp.client)
+					}
+					if werr == nil {
+						_, werr = cp.client.Write(clunkWire)
+					}
+					if werr == nil {
+						werr = drainResponse(cp.client)
+					}
+					mu.Unlock()
+					if werr != nil {
+						b.Fatalf("walk+clunk: %v", werr)
+					}
+				}
 			})
-			clunkWire := mustEncode(b, proto.Tag(1), &proto.Tclunk{Fid: newFid})
-
-			mu.Lock()
-			_, werr := cp.client.Write(walkWire)
-			if werr == nil {
-				werr = drainResponse(cp.client)
-			}
-			if werr == nil {
-				_, werr = cp.client.Write(clunkWire)
-			}
-			if werr == nil {
-				werr = drainResponse(cp.client)
-			}
-			mu.Unlock()
-			if werr != nil {
-				b.Fatalf("walk+clunk: %v", werr)
-			}
-		}
-	})
+		})
+	}
 }
 
 // makeBenchDirents builds n synthetic directory entries suitable for
