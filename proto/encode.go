@@ -8,23 +8,47 @@ import (
 )
 
 // The Write* helpers below expose an io.Writer-accepting public API but
-// take a zero-alloc fast path when the caller supplies a *bytes.Buffer.
+// take a zero-alloc fast path when the caller supplies a *bytes.Buffer
+// or a *ByteCounter.
 //
 // Rationale: a straightforward `var buf [N]byte; w.Write(buf[:])` escapes
 // to the heap because `w` is an interface — escape analysis cannot prove
 // that w.Write does not retain the slice. On the concrete *bytes.Buffer
 // path we instead use buf.AvailableBuffer() + binary.LittleEndian.AppendUint*
 // to append directly into the buffer's spare capacity with zero allocations.
+// On *ByteCounter we add the field width to the counter and never touch
+// bytes at all — used by observability middleware to measure wire size
+// without materialising a buffer.
 //
 // Fallback semantics are unchanged: bytes written are bit-identical on
 // both paths. This preserves every existing caller (codecs, server
 // writeRaw against net.Conn, io.Discard in tests).
+
+// ByteCounter is an io.Writer that counts the bytes written to it without
+// materialising any buffer. Used by observability code to compute wire
+// sizes via msg.EncodeTo(&c) without the allocation/memcpy cost of
+// encoding into a bytes.Buffer.
+//
+// The Write* helpers in this package type-assert *ByteCounter and bypass
+// the slice escape that the io.Writer interface would otherwise cause.
+type ByteCounter int
+
+// Write implements io.Writer. It counts len(p) and discards the bytes.
+// Always succeeds.
+func (c *ByteCounter) Write(p []byte) (int, error) {
+	*c += ByteCounter(len(p))
+	return len(p), nil
+}
 
 // WriteUint8 writes a single byte to w.
 func WriteUint8(w io.Writer, v uint8) error {
 	if buf, ok := w.(*bytes.Buffer); ok {
 		slice := append(buf.AvailableBuffer(), v)
 		_, _ = buf.Write(slice)
+		return nil
+	}
+	if c, ok := w.(*ByteCounter); ok {
+		*c += 1
 		return nil
 	}
 	var tmp [1]byte
@@ -40,6 +64,10 @@ func WriteUint16(w io.Writer, v uint16) error {
 		_, _ = buf.Write(slice)
 		return nil
 	}
+	if c, ok := w.(*ByteCounter); ok {
+		*c += 2
+		return nil
+	}
 	var tmp [2]byte
 	binary.LittleEndian.PutUint16(tmp[:], v)
 	_, err := w.Write(tmp[:])
@@ -53,6 +81,10 @@ func WriteUint32(w io.Writer, v uint32) error {
 		_, _ = buf.Write(slice)
 		return nil
 	}
+	if c, ok := w.(*ByteCounter); ok {
+		*c += 4
+		return nil
+	}
 	var tmp [4]byte
 	binary.LittleEndian.PutUint32(tmp[:], v)
 	_, err := w.Write(tmp[:])
@@ -64,6 +96,10 @@ func WriteUint64(w io.Writer, v uint64) error {
 	if buf, ok := w.(*bytes.Buffer); ok {
 		slice := binary.LittleEndian.AppendUint64(buf.AvailableBuffer(), v)
 		_, _ = buf.Write(slice)
+		return nil
+	}
+	if c, ok := w.(*ByteCounter); ok {
+		*c += 8
 		return nil
 	}
 	var tmp [8]byte
@@ -87,6 +123,10 @@ func WriteString(w io.Writer, s string) error {
 		slice := binary.LittleEndian.AppendUint16(buf.AvailableBuffer(), uint16(len(s)))
 		slice = append(slice, s...)
 		_, _ = buf.Write(slice)
+		return nil
+	}
+	if c, ok := w.(*ByteCounter); ok {
+		*c += ByteCounter(2 + len(s))
 		return nil
 	}
 	if err := WriteUint16(w, uint16(len(s))); err != nil {

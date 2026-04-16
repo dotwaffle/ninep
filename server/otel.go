@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"time"
 
@@ -97,10 +96,14 @@ func newOTelMiddleware(tp trace.TracerProvider, mp metric.MeterProvider, c *conn
 				span.SetAttributes(attribute.String("ninep.protocol", c.protocol.String()))
 			}
 
-			// Measure request size.
-			var reqBuf bytes.Buffer
-			if err := msg.EncodeTo(&reqBuf); err == nil {
-				inst.reqSize.Add(ctx, int64(reqBuf.Len()))
+			// Measure request size. Uses ByteCounter so encoding never
+			// allocates or copies bytes; it just sums field widths.
+			// Gated by Enabled so noop meters skip even the counting.
+			if inst.reqSize.Enabled(ctx) {
+				var reqBytes proto.ByteCounter
+				if err := msg.EncodeTo(&reqBytes); err == nil {
+					inst.reqSize.Add(ctx, int64(reqBytes))
+				}
 			}
 
 			start := time.Now()
@@ -112,11 +115,13 @@ func newOTelMiddleware(tp trace.TracerProvider, mp metric.MeterProvider, c *conn
 				metric.WithAttributes(attribute.String("rpc.method", opName)),
 			)
 
-			// Measure response size.
+			// Measure response size (same zero-alloc ByteCounter path).
 			if resp != nil {
-				var respBuf bytes.Buffer
-				if err := resp.EncodeTo(&respBuf); err == nil {
-					inst.respSize.Add(ctx, int64(respBuf.Len()))
+				if inst.respSize.Enabled(ctx) {
+					var respBytes proto.ByteCounter
+					if err := resp.EncodeTo(&respBytes); err == nil {
+						inst.respSize.Add(ctx, int64(respBytes))
+					}
 				}
 
 				// Set span status to Error for error responses.
