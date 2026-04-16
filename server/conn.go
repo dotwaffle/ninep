@@ -145,6 +145,20 @@ type conn struct {
 	// allocate a temp buffer via the io.Writer interface fallback path.
 	encHdr [proto.HeaderSize]byte
 
+	// encBufsArr is the backing array for a net.Buffers slice built in
+	// encodeResponse for vectored I/O. Storing the array on conn keeps
+	// the backing memory heap-resident so only the slice header needs
+	// to be created per call (and that slice header is short-lived —
+	// modern escape analysis often keeps it on the stack, but when it
+	// does escape the allocation is tiny and amortised by the syscall
+	// savings on TCP/unix-domain sockets that support writev).
+	//
+	// A fresh slice header each call is necessary because
+	// net.Buffers.WriteTo consumes its slice (reducing both len AND
+	// cap via v.consume); the array survives, the slice header does
+	// not.
+	encBufsArr [2][]byte
+
 	// responses carries encoded responses to the writeLoop goroutine.
 	// The sender (readLoop/dispatch) closes this channel; the writer drains it.
 	responses chan taggedResponse
@@ -384,11 +398,15 @@ func (c *conn) encodeResponse(tag proto.Tag, msg proto.Message) error {
 	c.encHdr[4] = uint8(msg.Type())
 	binary.LittleEndian.PutUint16(c.encHdr[5:7], uint16(tag))
 
-	if _, err := c.nc.Write(c.encHdr[:]); err != nil {
-		return fmt.Errorf("write header: %w", err)
-	}
-	if _, err := c.nc.Write(body.Bytes()); err != nil {
-		return fmt.Errorf("write body: %w", err)
+	// Vectored I/O: on TCP and unix-domain sockets (including Q's deployment
+	// target), net.Buffers.WriteTo maps to a single writev() syscall,
+	// halving the write syscall count per response. net.Pipe falls back to
+	// sequential Writes but still works correctly.
+	c.encBufsArr[0] = c.encHdr[:]
+	c.encBufsArr[1] = body.Bytes()
+	bufs := net.Buffers(c.encBufsArr[:])
+	if _, err := bufs.WriteTo(c.nc); err != nil {
+		return fmt.Errorf("write response: %w", err)
 	}
 	return nil
 }
