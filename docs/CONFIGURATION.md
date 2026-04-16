@@ -138,7 +138,7 @@ logger := slog.New(h)
 Node handlers receive per-connection metadata via context. Retrieve it with `server.ConnFromContext`:
 
 ```go
-func (n *MyNode) Read(ctx context.Context, offset uint64, count uint32) ([]byte, error) {
+func (n *MyNode) Read(ctx context.Context, buf []byte, offset uint64) (int, error) {
     ci := server.ConnFromContext(ctx)
     // ci.Protocol   -- "9P2000.L" or "9P2000.u"
     // ci.Msize      -- Negotiated message size

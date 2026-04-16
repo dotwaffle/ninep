@@ -499,15 +499,13 @@ func (f *testFile) Open(_ context.Context, _ uint32) (server.FileHandle, uint32,
 	return nil, 0, nil
 }
 
-func (f *testFile) Read(_ context.Context, offset uint64, count uint32) ([]byte, error) {
+func (f *testFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
 	size := uint64(len(f.data))
 	if offset >= size {
-		return nil, nil
+		return 0, nil
 	}
-	end := min(offset+uint64(count), size)
-	out := make([]byte, end-offset)
-	copy(out, f.data[offset:end])
-	return out, nil
+	end := min(offset+uint64(len(buf)), size)
+	return copy(buf, f.data[offset:end]), nil
 }
 
 func (f *testFile) Write(_ context.Context, data []byte, offset uint64) (uint32, error) {

@@ -81,14 +81,16 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 		m.Count = maxData
 	}
 
+	buf := make([]byte, m.Count)
+
 	// FileHandle dispatch first (per API-04).
 	if fs.handle != nil {
 		if reader, ok := fs.handle.(FileReader); ok {
-			data, err := reader.Read(ctx, m.Offset, m.Count)
+			n, err := reader.Read(ctx, buf, m.Offset)
 			if err != nil {
 				return c.errorMsg(errnoFromError(err))
 			}
-			return &proto.Rread{Data: data}
+			return &proto.Rread{Data: buf[:n]}
 		}
 	}
 
@@ -98,11 +100,11 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 		return c.errorMsg(proto.ENOSYS)
 	}
 
-	data, err := reader.Read(ctx, m.Offset, m.Count)
+	n, err := reader.Read(ctx, buf, m.Offset)
 	if err != nil {
 		return c.errorMsg(errnoFromError(err))
 	}
-	return &proto.Rread{Data: data}
+	return &proto.Rread{Data: buf[:n]}
 }
 
 // handleWrite dispatches to FileWriter (handle-first) then NodeWriter (fallback).
@@ -224,14 +226,16 @@ func (c *conn) handleReaddir(ctx context.Context, m *p9l.Treaddir) proto.Message
 		m.Count = maxData
 	}
 
+	buf := make([]byte, m.Count)
+
 	// FileHandle dispatch chain (priority order).
 	if fs.handle != nil {
 		if raw, ok := fs.handle.(FileRawReaddirer); ok {
-			data, err := raw.RawReaddir(ctx, m.Offset, m.Count)
+			n, err := raw.RawReaddir(ctx, buf, m.Offset)
 			if err != nil {
 				return c.errorMsg(errnoFromError(err))
 			}
-			return &p9l.Rreaddir{Data: data}
+			return &p9l.Rreaddir{Data: buf[:n]}
 		}
 		if rd, ok := fs.handle.(FileReaddirer); ok {
 			return c.readdirSimple(ctx, fs, m, rd)
@@ -240,11 +244,11 @@ func (c *conn) handleReaddir(ctx context.Context, m *p9l.Treaddir) proto.Message
 
 	// Node dispatch chain (fallback).
 	if raw, ok := fs.node.(NodeRawReaddirer); ok {
-		data, err := raw.RawReaddir(ctx, m.Offset, m.Count)
+		n, err := raw.RawReaddir(ctx, buf, m.Offset)
 		if err != nil {
 			return c.errorMsg(errnoFromError(err))
 		}
-		return &p9l.Rreaddir{Data: data}
+		return &p9l.Rreaddir{Data: buf[:n]}
 	}
 	if rd, ok := fs.node.(NodeReaddirer); ok {
 		return c.readdirSimple(ctx, fs, m, rd)

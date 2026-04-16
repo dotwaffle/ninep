@@ -127,7 +127,7 @@ Interface naming convention: `Node` + operation name + `er` suffix. Examples fro
 
 | Interface | Method | 9P Operation |
 |-----------|--------|--------------|
-| `NodeReader` | `Read(ctx, offset, count)` | Tread |
+| `NodeReader` | `Read(ctx, buf, offset)` | Tread |
 | `NodeWriter` | `Write(ctx, data, offset)` | Twrite |
 | `NodeOpener` | `Open(ctx, flags)` | Tlopen |
 | `NodeGetattrer` | `Getattr(ctx, mask)` | Tgetattr |
@@ -249,8 +249,8 @@ type myHandle struct {
     offset int64
 }
 
-func (h *myHandle) Read(ctx context.Context, offset uint64, count uint32) ([]byte, error) {
-    // per-open state
+func (h *myHandle) Read(ctx context.Context, buf []byte, offset uint64) (int, error) {
+    // per-open state: fill buf, return bytes read
 }
 
 func (n *myNode) Open(ctx context.Context, flags uint32) (server.FileHandle, uint32, error) {

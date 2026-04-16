@@ -46,7 +46,7 @@ type QIDer interface {
 | Interface | Method | Description |
 |-----------|--------|-------------|
 | `NodeOpener` | `Open(ctx context.Context, flags uint32) (FileHandle, uint32, error)` | Open the node with given flags |
-| `NodeReader` | `Read(ctx context.Context, offset uint64, count uint32) ([]byte, error)` | Read bytes at offset |
+| `NodeReader` | `Read(ctx context.Context, buf []byte, offset uint64) (int, error)` | Read into caller buffer at offset |
 | `NodeWriter` | `Write(ctx context.Context, data []byte, offset uint64) (uint32, error)` | Write bytes at offset |
 | `NodeGetattrer` | `Getattr(ctx context.Context, mask proto.AttrMask) (proto.Attr, error)` | Get file attributes |
 | `NodeSetattrer` | `Setattr(ctx context.Context, attr proto.SetAttr) error` | Set file attributes |
@@ -58,7 +58,7 @@ type QIDer interface {
 |-----------|--------|-------------|
 | `NodeLookuper` | `Lookup(ctx context.Context, name string) (Node, error)` | Resolve child by name during walk |
 | `NodeReaddirer` | `Readdir(ctx context.Context) ([]proto.Dirent, error)` | Return all directory entries (server handles offset tracking) |
-| `NodeRawReaddirer` | `RawReaddir(ctx context.Context, offset uint64, count uint32) ([]byte, error)` | Return raw dirent bytes (node manages offsets) |
+| `NodeRawReaddirer` | `RawReaddir(ctx context.Context, buf []byte, offset uint64) (int, error)` | Read raw dirent bytes into caller buffer (node manages offsets) |
 | `NodeCreater` | `Create(ctx context.Context, name string, flags uint32, mode proto.FileMode, gid uint32) (Node, FileHandle, uint32, error)` | Create a file |
 | `NodeMkdirer` | `Mkdir(ctx context.Context, name string, mode proto.FileMode, gid uint32) (Node, error)` | Create a subdirectory |
 | `NodeSymlinker` | `Symlink(ctx context.Context, name, target string, gid uint32) (Node, error)` | Create a symbolic link |
@@ -151,15 +151,12 @@ type MyFile struct {
     data []byte
 }
 
-func (f *MyFile) Read(ctx context.Context, offset uint64, count uint32) ([]byte, error) {
+func (f *MyFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
     if offset >= uint64(len(f.data)) {
-        return nil, nil
+        return 0, nil
     }
-    end := offset + uint64(count)
-    if end > uint64(len(f.data)) {
-        end = uint64(len(f.data))
-    }
-    return f.data[offset:end], nil
+    end := min(offset+uint64(len(buf)), uint64(len(f.data)))
+    return copy(buf, f.data[offset:end]), nil
 }
 
 // Construct:
@@ -180,7 +177,7 @@ type FileHandle interface{}
 
 // FileReader -- per-handle Read.
 type FileReader interface {
-    Read(ctx context.Context, offset uint64, count uint32) ([]byte, error)
+    Read(ctx context.Context, buf []byte, offset uint64) (int, error)
 }
 
 // FileWriter -- per-handle Write.
@@ -200,7 +197,7 @@ type FileReaddirer interface {
 
 // FileRawReaddirer -- per-handle raw dirent bytes.
 type FileRawReaddirer interface {
-    RawReaddir(ctx context.Context, offset uint64, count uint32) ([]byte, error)
+    RawReaddir(ctx context.Context, buf []byte, offset uint64) (int, error)
 }
 ```
 

@@ -38,12 +38,13 @@ func TestMemFileRead(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := f.Read(t.Context(), tt.offset, tt.count)
+			buf := make([]byte, tt.count)
+			n, err := f.Read(t.Context(), buf, tt.offset)
 			if err != nil {
 				t.Fatalf("Read(%d, %d) error: %v", tt.offset, tt.count, err)
 			}
-			if string(got) != tt.want {
-				t.Errorf("Read(%d, %d) = %q, want %q", tt.offset, tt.count, got, tt.want)
+			if string(buf[:n]) != tt.want {
+				t.Errorf("Read(%d, %d) = %q, want %q", tt.offset, tt.count, buf[:n], tt.want)
 			}
 		})
 	}
@@ -193,7 +194,7 @@ func TestMemFileConcurrent(t *testing.T) {
 		wg.Add(2)
 		go func(i int) {
 			defer wg.Done()
-			_, _ = f.Read(t.Context(), uint64(i*10), 10)
+			_, _ = f.Read(t.Context(), make([]byte, 10), uint64(i*10))
 		}(i)
 		go func(i int) {
 			defer wg.Done()
@@ -378,12 +379,13 @@ func TestStaticFileRead(t *testing.T) {
 			f := &StaticFile{Content: tt.content}
 			f.Init(gen.Next(proto.QTFILE), f)
 
-			got, err := f.Read(t.Context(), tt.offset, tt.count)
+			buf := make([]byte, tt.count)
+			n, err := f.Read(t.Context(), buf, tt.offset)
 			if err != nil {
 				t.Fatalf("Read error: %v", err)
 			}
-			if string(got) != tt.want {
-				t.Errorf("Read(%d, %d) = %q, want %q", tt.offset, tt.count, got, tt.want)
+			if string(buf[:n]) != tt.want {
+				t.Errorf("Read(%d, %d) = %q, want %q", tt.offset, tt.count, buf[:n], tt.want)
 			}
 		})
 	}
@@ -495,12 +497,13 @@ func TestBuilderAddFile(t *testing.T) {
 	if !ok {
 		t.Fatal("child does not implement NodeReader")
 	}
-	data, err := r.Read(t.Context(), 0, 100)
+	buf := make([]byte, 100)
+	n, err := r.Read(t.Context(), buf, 0)
 	if err != nil {
 		t.Fatalf("Read error: %v", err)
 	}
-	if string(data) != "hello" {
-		t.Errorf("Read = %q, want %q", data, "hello")
+	if string(buf[:n]) != "hello" {
+		t.Errorf("Read = %q, want %q", buf[:n], "hello")
 	}
 }
 
@@ -522,12 +525,13 @@ func TestBuilderAddStaticFile(t *testing.T) {
 	if !ok {
 		t.Fatal("child does not implement NodeReader")
 	}
-	data, err := r.Read(t.Context(), 0, 100)
+	buf := make([]byte, 100)
+	n, err := r.Read(t.Context(), buf, 0)
 	if err != nil {
 		t.Fatalf("Read error: %v", err)
 	}
-	if string(data) != "static content" {
-		t.Errorf("Read = %q, want %q", data, "static content")
+	if string(buf[:n]) != "static content" {
+		t.Errorf("Read = %q, want %q", buf[:n], "static content")
 	}
 }
 
@@ -585,12 +589,13 @@ func TestBuilderSubDir(t *testing.T) {
 	if !ok {
 		t.Fatal("nested file does not implement NodeReader")
 	}
-	data, err := r.Read(t.Context(), 0, 100)
+	buf := make([]byte, 100)
+	n, err := r.Read(t.Context(), buf, 0)
 	if err != nil {
 		t.Fatalf("Read error: %v", err)
 	}
-	if string(data) != "nested" {
-		t.Errorf("Read = %q, want %q", data, "nested")
+	if string(buf[:n]) != "nested" {
+		t.Errorf("Read = %q, want %q", buf[:n], "nested")
 	}
 }
 
@@ -637,12 +642,13 @@ func TestBuilderWithDir(t *testing.T) {
 	if !ok {
 		t.Fatal("inner does not implement NodeReader")
 	}
-	data, err := r.Read(t.Context(), 0, 100)
+	buf := make([]byte, 100)
+	n, err := r.Read(t.Context(), buf, 0)
 	if err != nil {
 		t.Fatalf("Read error: %v", err)
 	}
-	if string(data) != "inside" {
-		t.Errorf("Read = %q, want %q", data, "inside")
+	if string(buf[:n]) != "inside" {
+		t.Errorf("Read = %q, want %q", buf[:n], "inside")
 	}
 }
 
@@ -766,11 +772,12 @@ func TestBuilderTreeWalkability(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lookup bottom.txt: %v", err)
 	}
-	data, err := bottom.(server.NodeReader).Read(ctx, 0, 100)
+	buf := make([]byte, 100)
+	n, err := bottom.(server.NodeReader).Read(ctx, buf, 0)
 	if err != nil {
 		t.Fatalf("Read bottom.txt: %v", err)
 	}
-	if string(data) != "bottom" {
-		t.Errorf("Read = %q, want %q", data, "bottom")
+	if string(buf[:n]) != "bottom" {
+		t.Errorf("Read = %q, want %q", buf[:n], "bottom")
 	}
 }

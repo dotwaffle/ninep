@@ -121,8 +121,8 @@ func (f *brokenFile) Open(_ context.Context, _ uint32) (server.FileHandle, uint3
 	return nil, 0, nil
 }
 
-func (f *brokenFile) Read(_ context.Context, _ uint64, _ uint32) ([]byte, error) {
-	return nil, nil // Always returns EOF, even though Getattr says size=11.
+func (f *brokenFile) Read(_ context.Context, _ []byte, _ uint64) (int, error) {
+	return 0, nil // Always returns EOF, even though Getattr says size=11.
 }
 
 func (f *brokenFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {

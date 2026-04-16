@@ -261,39 +261,40 @@ func TestFileHandle_ReadWrite(t *testing.T) {
 	ctx := t.Context()
 
 	// Read from offset 0.
-	data, err := fh.Read(ctx, 0, 5)
+	buf := make([]byte, 5)
+	n, err := fh.Read(ctx, buf, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if string(data) != "hello" {
-		t.Errorf("Read(0,5) = %q, want %q", data, "hello")
+	if string(buf[:n]) != "hello" {
+		t.Errorf("Read(0,5) = %q, want %q", buf[:n], "hello")
 	}
 
 	// Read from offset 6.
-	data, err = fh.Read(ctx, 6, 5)
+	n, err = fh.Read(ctx, buf, 6)
 	if err != nil {
 		t.Fatalf("Read(6,5): %v", err)
 	}
-	if string(data) != "world" {
-		t.Errorf("Read(6,5) = %q, want %q", data, "world")
+	if string(buf[:n]) != "world" {
+		t.Errorf("Read(6,5) = %q, want %q", buf[:n], "world")
 	}
 
 	// Write at offset.
-	n, err := fh.Write(ctx, []byte("EARTH"), 6)
+	wn, err := fh.Write(ctx, []byte("EARTH"), 6)
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
-	if n != 5 {
-		t.Errorf("Write count = %d, want 5", n)
+	if wn != 5 {
+		t.Errorf("Write count = %d, want 5", wn)
 	}
 
 	// Read back written data.
-	data, err = fh.Read(ctx, 6, 5)
+	n, err = fh.Read(ctx, buf, 6)
 	if err != nil {
 		t.Fatalf("Read after write: %v", err)
 	}
-	if string(data) != "EARTH" {
-		t.Errorf("Read after write = %q, want %q", data, "EARTH")
+	if string(buf[:n]) != "EARTH" {
+		t.Errorf("Read after write = %q, want %q", buf[:n], "EARTH")
 	}
 
 	// Release.
@@ -302,7 +303,7 @@ func TestFileHandle_ReadWrite(t *testing.T) {
 	}
 
 	// After release, Read should fail.
-	_, err = fh.Read(ctx, 0, 5)
+	_, err = fh.Read(ctx, buf, 0)
 	if err == nil {
 		t.Error("Read after Release should fail")
 	}

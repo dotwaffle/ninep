@@ -42,9 +42,9 @@ func TestInodeENOSYSDefaults(t *testing.T) {
 		{
 			name: "Read",
 			fn: func() error {
-				data, err := i.Read(ctx, 0, 1024)
-				if data != nil {
-					t.Error("Read: data not nil")
+				n, err := i.Read(ctx, make([]byte, 1024), 0)
+				if n != 0 {
+					t.Error("Read: n not 0")
 				}
 				return err
 			},

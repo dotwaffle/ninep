@@ -39,8 +39,11 @@ type NodeOpener interface {
 
 // NodeReader is implemented by nodes that support reading.
 type NodeReader interface {
-	// Read reads up to count bytes starting at offset.
-	Read(ctx context.Context, offset uint64, count uint32) ([]byte, error)
+	// Read reads up to len(buf) bytes starting at offset into buf and
+	// returns the number of bytes read. The caller provides a buffer
+	// sized to the 9P Tread count (clamped to msize); implementations
+	// fill it and return n.
+	Read(ctx context.Context, buf []byte, offset uint64) (int, error)
 }
 
 // NodeWriter is implemented by nodes that support writing.
@@ -72,8 +75,10 @@ type NodeReaddirer interface {
 // NodeRawReaddirer is implemented by directory nodes that manage their own
 // offset tracking and dirent packing.
 type NodeRawReaddirer interface {
-	// RawReaddir returns raw dirent bytes for the given offset and count.
-	RawReaddir(ctx context.Context, offset uint64, count uint32) ([]byte, error)
+	// RawReaddir reads raw dirent bytes for the given offset into buf
+	// and returns the number of bytes read. The caller provides a buffer
+	// sized to the 9P Treaddir count (clamped to msize).
+	RawReaddir(ctx context.Context, buf []byte, offset uint64) (int, error)
 }
 
 // NodeCreater is implemented by directory nodes that can create files.

@@ -133,12 +133,12 @@ Protocol-level conformance test harness. `Check(t, root)` or `CheckFactory(t, ne
 |-----------|-----------|---------|
 | `NodeLookuper` | `Lookup(ctx, name) (Node, error)` | Directory child resolution (walk) |
 | `NodeOpener` | `Open(ctx, flags) (FileHandle, uint32, error)` | Open a file, optionally return per-open state |
-| `NodeReader` | `Read(ctx, offset, count) ([]byte, error)` | Read file data |
+| `NodeReader` | `Read(ctx, buf, offset) (int, error)` | Read file data into caller buffer |
 | `NodeWriter` | `Write(ctx, data, offset) (uint32, error)` | Write file data |
 | `NodeGetattrer` | `Getattr(ctx, mask) (Attr, error)` | Retrieve file attributes |
 | `NodeSetattrer` | `Setattr(ctx, SetAttr) error` | Modify file attributes |
 | `NodeReaddirer` | `Readdir(ctx) ([]Dirent, error)` | Simple readdir (server manages offsets) |
-| `NodeRawReaddirer` | `RawReaddir(ctx, offset, count) ([]byte, error)` | Raw readdir (node manages offsets) |
+| `NodeRawReaddirer` | `RawReaddir(ctx, buf, offset) (int, error)` | Raw readdir into caller buffer (node manages offsets) |
 | `NodeCreater` | `Create(ctx, name, flags, mode, gid) (Node, FileHandle, uint32, error)` | Create + open in one step |
 | `NodeMkdirer` | `Mkdir(ctx, name, mode, gid) (Node, error)` | Create subdirectory |
 | `NodeSymlinker` | `Symlink(ctx, name, target, gid) (Node, error)` | Create symbolic link |

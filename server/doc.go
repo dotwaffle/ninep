@@ -14,8 +14,8 @@
 //	    server.Inode
 //	}
 //
-//	func (f *MyFile) Read(ctx context.Context, offset uint64, count uint32) ([]byte, error) {
-//	    return []byte("hello"), nil
+//	func (f *MyFile) Read(_ context.Context, buf []byte, _ uint64) (int, error) {
+//	    return copy(buf, "hello"), nil
 //	}
 //
 // Approximately 22 capability interfaces are defined (see node.go), covering
@@ -55,7 +55,7 @@
 // # Functional Options
 //
 // Configure the server with:
-//   - [WithMaxMsize] -- maximum negotiated message size (default 128KB)
+//   - [WithMaxMsize] -- maximum negotiated message size (default 1MiB)
 //   - [WithMaxInflight] -- concurrent request limit per connection (default 64)
 //   - [WithLogger] -- structured logger with automatic trace ID correlation
 //   - [WithIdleTimeout] -- per-connection idle timeout
@@ -114,16 +114,13 @@
 //	    }, nil
 //	}
 //
-//	func (f *HelloFile) Read(_ context.Context, offset uint64, count uint32) ([]byte, error) {
+//	func (f *HelloFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
 //	    data := []byte("hello world")
 //	    if offset >= uint64(len(data)) {
-//	        return nil, nil
+//	        return 0, nil
 //	    }
-//	    end := offset + uint64(count)
-//	    if end > uint64(len(data)) {
-//	        end = uint64(len(data))
-//	    }
-//	    return data[offset:end], nil
+//	    end := min(offset+uint64(len(buf)), uint64(len(data)))
+//	    return copy(buf, data[offset:end]), nil
 //	}
 //
 //	func main() {

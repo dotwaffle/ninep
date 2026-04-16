@@ -25,12 +25,12 @@ func (f *bridgeFile) Open(_ context.Context, _ uint32) (FileHandle, uint32, erro
 	return nil, 0, nil
 }
 
-func (f *bridgeFile) Read(_ context.Context, offset uint64, count uint32) ([]byte, error) {
+func (f *bridgeFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
 	if offset >= uint64(len(f.content)) {
-		return nil, nil
+		return 0, nil
 	}
-	end := min(offset+uint64(count), uint64(len(f.content)))
-	return f.content[offset:end], nil
+	end := min(offset+uint64(len(buf)), uint64(len(f.content)))
+	return copy(buf, f.content[offset:end]), nil
 }
 
 func (f *bridgeFile) Write(_ context.Context, data []byte, offset uint64) (uint32, error) {
@@ -99,8 +99,8 @@ func (f *handleFile) Open(_ context.Context, _ uint32) (FileHandle, uint32, erro
 	return &testHandle{content: f.handleContent}, 0, nil
 }
 
-func (f *handleFile) Read(_ context.Context, _ uint64, _ uint32) ([]byte, error) {
-	return f.nodeContent, nil
+func (f *handleFile) Read(_ context.Context, buf []byte, _ uint64) (int, error) {
+	return copy(buf, f.nodeContent), nil
 }
 
 // testHandle implements FileReader and FileReleaser.
@@ -109,12 +109,12 @@ type testHandle struct {
 	released atomic.Bool
 }
 
-func (h *testHandle) Read(_ context.Context, offset uint64, count uint32) ([]byte, error) {
+func (h *testHandle) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
 	if offset >= uint64(len(h.content)) {
-		return nil, nil
+		return 0, nil
 	}
-	end := min(offset+uint64(count), uint64(len(h.content)))
-	return h.content[offset:end], nil
+	end := min(offset+uint64(len(buf)), uint64(len(h.content)))
+	return copy(buf, h.content[offset:end]), nil
 }
 
 func (h *testHandle) Release(_ context.Context) error {
@@ -133,12 +133,12 @@ func (f *readOnlyTestFile) Open(_ context.Context, _ uint32) (FileHandle, uint32
 	return nil, 0, nil
 }
 
-func (f *readOnlyTestFile) Read(_ context.Context, offset uint64, count uint32) ([]byte, error) {
+func (f *readOnlyTestFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
 	if offset >= uint64(len(f.content)) {
-		return nil, nil
+		return 0, nil
 	}
-	end := min(offset+uint64(count), uint64(len(f.content)))
-	return f.content[offset:end], nil
+	end := min(offset+uint64(len(buf)), uint64(len(f.content)))
+	return copy(buf, f.content[offset:end]), nil
 }
 
 func (f *readOnlyTestFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {

@@ -48,16 +48,13 @@ func (f *HelloFile) Open(_ context.Context, _ uint32) (server.FileHandle, uint32
 	return nil, 0, nil
 }
 
-func (f *HelloFile) Read(_ context.Context, offset uint64, count uint32) ([]byte, error) {
+func (f *HelloFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
 	data := []byte("hello world\n")
 	if offset >= uint64(len(data)) {
-		return nil, nil
+		return 0, nil
 	}
-	end := offset + uint64(count)
-	if end > uint64(len(data)) {
-		end = uint64(len(data))
-	}
-	return data[offset:end], nil
+	end := min(offset+uint64(len(buf)), uint64(len(data)))
+	return copy(buf, data[offset:end]), nil
 }
 
 func (f *HelloFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {
@@ -161,17 +158,12 @@ func (f *StaticFile) Open(_ context.Context, _ uint32) (server.FileHandle, uint3
 	return nil, 0, nil
 }
 
-func (f *StaticFile) Read(_ context.Context, offset uint64, count uint32) ([]byte, error) {
+func (f *StaticFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
 	if offset >= uint64(len(f.content)) {
-		return nil, nil
+		return 0, nil
 	}
-	end := offset + uint64(count)
-	if end > uint64(len(f.content)) {
-		end = uint64(len(f.content))
-	}
-	out := make([]byte, end-offset)
-	copy(out, f.content[offset:end])
-	return out, nil
+	end := min(offset+uint64(len(buf)), uint64(len(f.content)))
+	return copy(buf, f.content[offset:end]), nil
 }
 
 func (f *StaticFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {

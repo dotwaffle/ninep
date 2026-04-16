@@ -22,14 +22,13 @@ var (
 	_ server.FileSyncer   = (*fileHandle)(nil)
 )
 
-// Read reads up to count bytes starting at offset using Pread.
-func (h *fileHandle) Read(_ context.Context, offset uint64, count uint32) ([]byte, error) {
-	buf := make([]byte, count)
+// Read reads up to len(buf) bytes starting at offset using Pread.
+func (h *fileHandle) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
 	n, err := unix.Pread(h.fd, buf, int64(offset))
 	if err != nil {
-		return nil, toProtoErr(err)
+		return 0, toProtoErr(err)
 	}
-	return buf[:n], nil
+	return n, nil
 }
 
 // Write writes data at the given offset using Pwrite and returns the count

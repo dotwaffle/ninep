@@ -129,9 +129,9 @@ func (i *Inode) Open(_ context.Context, _ uint32) (FileHandle, uint32, error) {
 	return nil, 0, proto.ENOSYS
 }
 
-// Read returns (nil, proto.ENOSYS). Override by implementing NodeReader.
-func (i *Inode) Read(_ context.Context, _ uint64, _ uint32) ([]byte, error) {
-	return nil, proto.ENOSYS
+// Read returns (0, proto.ENOSYS). Override by implementing NodeReader.
+func (i *Inode) Read(_ context.Context, _ []byte, _ uint64) (int, error) {
+	return 0, proto.ENOSYS
 }
 
 // Write returns (0, proto.ENOSYS). Override by implementing NodeWriter.

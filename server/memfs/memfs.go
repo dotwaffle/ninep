@@ -53,21 +53,18 @@ func (f *MemFile) Open(_ context.Context, _ uint32) (server.FileHandle, uint32, 
 	return nil, 0, nil
 }
 
-// Read implements server.NodeReader. It returns up to count bytes starting
-// at offset. Returns nil, nil when offset is at or past the end of data.
-func (f *MemFile) Read(_ context.Context, offset uint64, count uint32) ([]byte, error) {
+// Read implements server.NodeReader. It copies up to len(buf) bytes starting
+// at offset into buf. Returns 0, nil when offset is at or past the end of data.
+func (f *MemFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
 	size := uint64(len(f.Data))
 	if offset >= size {
-		return nil, nil
+		return 0, nil
 	}
-	end := min(offset+uint64(count), size)
-	// Return a copy to avoid exposing internal state.
-	out := make([]byte, end-offset)
-	copy(out, f.Data[offset:end])
-	return out, nil
+	end := min(offset+uint64(len(buf)), size)
+	return copy(buf, f.Data[offset:end]), nil
 }
 
 // Write implements server.NodeWriter. It writes data at offset, extending
@@ -213,18 +210,16 @@ func (f *StaticFile) Open(_ context.Context, _ uint32) (server.FileHandle, uint3
 	return nil, 0, nil
 }
 
-// Read implements server.NodeReader. It returns bytes from Content starting
-// at offset. Returns nil, nil when offset is at or past the end.
-func (f *StaticFile) Read(_ context.Context, offset uint64, count uint32) ([]byte, error) {
+// Read implements server.NodeReader. It copies bytes from Content starting
+// at offset into buf. Returns 0, nil when offset is at or past the end.
+func (f *StaticFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
 	data := []byte(f.Content)
 	size := uint64(len(data))
 	if offset >= size {
-		return nil, nil
+		return 0, nil
 	}
-	end := min(offset+uint64(count), size)
-	out := make([]byte, end-offset)
-	copy(out, data[offset:end])
-	return out, nil
+	end := min(offset+uint64(len(buf)), size)
+	return copy(buf, data[offset:end]), nil
 }
 
 // Getattr implements server.NodeGetattrer. It returns the file mode

@@ -18,8 +18,11 @@ type FileHandle any
 
 // FileReader is implemented by file handles that support reading.
 type FileReader interface {
-	// Read reads up to count bytes starting at offset.
-	Read(ctx context.Context, offset uint64, count uint32) ([]byte, error)
+	// Read reads up to len(buf) bytes starting at offset into buf and
+	// returns the number of bytes read. The caller provides a buffer
+	// sized to the 9P Tread count (clamped to msize); implementations
+	// fill it and return n.
+	Read(ctx context.Context, buf []byte, offset uint64) (int, error)
 }
 
 // FileWriter is implemented by file handles that support writing.
@@ -54,6 +57,8 @@ type FileReaddirer interface {
 // FileRawReaddirer is implemented by file handles that manage their own
 // readdir offset tracking.
 type FileRawReaddirer interface {
-	// RawReaddir returns raw dirent bytes for the given offset and count.
-	RawReaddir(ctx context.Context, offset uint64, count uint32) ([]byte, error)
+	// RawReaddir reads raw dirent bytes for the given offset into buf
+	// and returns the number of bytes read. The caller provides a buffer
+	// sized to the 9P Treaddir count (clamped to msize).
+	RawReaddir(ctx context.Context, buf []byte, offset uint64) (int, error)
 }
