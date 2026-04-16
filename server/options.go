@@ -10,7 +10,8 @@ import (
 type Option func(*Server)
 
 // WithMaxMsize sets the maximum message size the server will accept during
-// version negotiation. Default: 131072 (128KB).
+// version negotiation. Default: 1048576 (1 MiB, matches the Linux kernel's
+// silent msize cap).
 func WithMaxMsize(msize uint32) Option {
 	return func(s *Server) { s.maxMsize = msize }
 }
