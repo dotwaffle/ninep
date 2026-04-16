@@ -7,7 +7,7 @@
 
 | Package | Import Path | Purpose |
 |---------|-------------|---------|
-| `proto` | `github.com/dotwaffle/ninep/proto` | Wire types, message encoding/decoding, errno constants |
+| `proto` | `github.com/dotwaffle/ninep/proto` | Wire types, message encoding/decoding, errno constants, Payloader interface, ByteCounter |
 | `proto/p9l` | `github.com/dotwaffle/ninep/proto/p9l` | 9P2000.L codec (Encode/Decode) |
 | `proto/p9u` | `github.com/dotwaffle/ninep/proto/p9u` | 9P2000.u codec (Encode/Decode) |
 | `server` | `github.com/dotwaffle/ninep/server` | Server core, capability interfaces, Inode, middleware |
@@ -46,19 +46,20 @@ type QIDer interface {
 | Interface | Method | Description |
 |-----------|--------|-------------|
 | `NodeOpener` | `Open(ctx context.Context, flags uint32) (FileHandle, uint32, error)` | Open the node with given flags |
-| `NodeReader` | `Read(ctx context.Context, buf []byte, offset uint64) (int, error)` | Read into caller buffer at offset |
+| `NodeReader` | `Read(ctx context.Context, buf []byte, offset uint64) (int, error)` | Read into caller buffer at offset; caller sizes buf from Tread count |
 | `NodeWriter` | `Write(ctx context.Context, data []byte, offset uint64) (uint32, error)` | Write bytes at offset |
 | `NodeGetattrer` | `Getattr(ctx context.Context, mask proto.AttrMask) (proto.Attr, error)` | Get file attributes |
 | `NodeSetattrer` | `Setattr(ctx context.Context, attr proto.SetAttr) error` | Set file attributes |
 | `NodeCloser` | `Close(ctx context.Context) error` | Cleanup on clunk |
+| `NodeFsyncer` | `Fsync(ctx context.Context) error` | Flush node-level state to durable storage (bridge prefers `FileSyncer` if present) |
 
 ### Directory Operation Interfaces
 
 | Interface | Method | Description |
 |-----------|--------|-------------|
 | `NodeLookuper` | `Lookup(ctx context.Context, name string) (Node, error)` | Resolve child by name during walk |
-| `NodeReaddirer` | `Readdir(ctx context.Context) ([]proto.Dirent, error)` | Return all directory entries (server handles offset tracking) |
-| `NodeRawReaddirer` | `RawReaddir(ctx context.Context, buf []byte, offset uint64) (int, error)` | Read raw dirent bytes into caller buffer (node manages offsets) |
+| `NodeReaddirer` | `Readdir(ctx context.Context) ([]proto.Dirent, error)` | Return all directory entries (server handles offset tracking and packing) |
+| `NodeRawReaddirer` | `RawReaddir(ctx context.Context, buf []byte, offset uint64) (int, error)` | Read raw dirent bytes into caller buffer at offset (node manages offsets) |
 | `NodeCreater` | `Create(ctx context.Context, name string, flags uint32, mode proto.FileMode, gid uint32) (Node, FileHandle, uint32, error)` | Create a file |
 | `NodeMkdirer` | `Mkdir(ctx context.Context, name string, mode proto.FileMode, gid uint32) (Node, error)` | Create a subdirectory |
 | `NodeSymlinker` | `Symlink(ctx context.Context, name, target string, gid uint32) (Node, error)` | Create a symbolic link |
@@ -169,13 +170,14 @@ f.Init(gen.Next(proto.QTFILE), f)
 
 ## FileHandle Interfaces (`server/filehandle.go`)
 
-Per-open state returned by `NodeOpener.Open`. The server dispatches to `FileHandle` methods first, then falls back to the `Node` methods.
+Per-open state returned by `NodeOpener.Open`. `FileHandle` is an alias for `any`; the server uses type assertions against the File* capability interfaces. When a method exists on both the FileHandle and the Node, the FileHandle path is preferred.
 
 ```go
-// FileHandle is a marker interface for per-open state.
-type FileHandle interface{}
+// FileHandle is a marker type for per-open state (alias for any).
+type FileHandle any
 
-// FileReader -- per-handle Read.
+// FileReader -- per-handle Read. Caller supplies a buf sized to the
+// Tread count (clamped to msize); implementation fills and returns n.
 type FileReader interface {
     Read(ctx context.Context, buf []byte, offset uint64) (int, error)
 }
@@ -190,6 +192,12 @@ type FileReleaser interface {
     Release(ctx context.Context) error
 }
 
+// FileSyncer -- flush buffered writes on the open handle. Preferred over
+// NodeFsyncer when present on the handle.
+type FileSyncer interface {
+    Fsync(ctx context.Context) error
+}
+
 // FileReaddirer -- per-handle directory entry enumeration.
 type FileReaddirer interface {
     Readdir(ctx context.Context) ([]proto.Dirent, error)
@@ -201,7 +209,7 @@ type FileRawReaddirer interface {
 }
 ```
 
-Dispatch priority: `FileHandle` interface -> `Node` interface -> `proto.ENOSYS`.
+Dispatch priority: `FileHandle` interface -> `Node` interface -> `proto.ENOSYS`. A nil FileHandle is permitted; the server skips FileHandle dispatch and falls through to Node-level capability dispatch.
 
 ---
 
@@ -216,6 +224,8 @@ type ReadOnlyFile struct { Inode }
 // ReadOnlyDir -- Lookup/Readdir/Getattr only; Create/Mkdir/Write return ENOSYS.
 type ReadOnlyDir struct { Inode }
 ```
+
+The compile-time surface is identical to embedding `Inode` directly; the named types document the contract.
 
 ---
 
@@ -234,7 +244,7 @@ func (g *QIDGenerator) Next(t proto.QIDType) proto.QID
 
 ### PathQID
 
-Returns a deterministic QID derived from a path string using FNV-1a 64-bit hashing. Useful for nodes with stable, known paths.
+Returns a deterministic QID derived from a path string using FNV-1a 64-bit hashing. Useful for nodes with stable, known paths. FNV-1a is not cryptographic -- unsuitable for hashing untrusted user-supplied path components.
 
 ```go
 func PathQID(t proto.QIDType, path string) proto.QID
@@ -281,7 +291,8 @@ func StaticStatFS(gen *QIDGenerator, stat proto.FSStat) *StaticFS
 ### Constructor
 
 ```go
-// New creates a Server rooted at the given Node.
+// New creates a Server rooted at the given Node. The root must implement
+// NodeLookuper for walk resolution.
 func New(root Node, opts ...Option) *Server
 ```
 
@@ -293,7 +304,7 @@ func New(root Node, opts ...Option) *Server
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error
 
 // ServeConn serves a single 9P connection. Blocks until the connection
-// is closed or the context is cancelled.
+// is closed or the context is cancelled. Honors WithMaxConnections limits.
 func (s *Server) ServeConn(ctx context.Context, nc net.Conn)
 ```
 
@@ -305,8 +316,10 @@ All options are passed to `server.New(root, opts...)`.
 
 | Option | Signature | Default | Description |
 |--------|-----------|---------|-------------|
-| `WithMaxMsize` | `func(msize uint32) Option` | `131072` (128KB) | Maximum message size for version negotiation |
+| `WithMaxMsize` | `func(msize uint32) Option` | `1048576` (1 MiB) | Maximum message size for version negotiation |
 | `WithMaxInflight` | `func(n int) Option` | `64` | Max concurrent in-flight requests per connection. Values < 1 clamped to 1 |
+| `WithMaxConnections` | `func(n int) Option` | `0` (unlimited) | Max concurrent connections. Over-limit connections closed immediately and counted via `ninep.server.connections_rejected`. Values < 1 disable the limit |
+| `WithMaxFids` | `func(n int) Option` | `0` (unlimited) | Max concurrent fids per connection. Over-limit fid-creating ops return `EMFILE`. Values < 1 disable |
 | `WithLogger` | `func(logger *slog.Logger) Option` | `slog.Default()` with trace correlation | Structured logger; handler auto-wrapped with `NewTraceHandler` |
 | `WithAnames` | `func(m map[string]Node) Option` | `nil` | Vhost-style attach dispatch by aname |
 | `WithAttacher` | `func(a Attacher) Option` | `nil` | Custom attach handler; overrides root and aname map |
@@ -388,7 +401,10 @@ Records the following metrics under instrumentation scope `github.com/dotwaffle/
 | `ninep.server.response.size` | Int64Counter | `By` | Size of 9P response messages |
 | `ninep.server.active_requests` | Int64UpDownCounter | -- | Number of active 9P requests |
 | `ninep.server.connections` | Int64UpDownCounter | -- | Number of active connections |
+| `ninep.server.connections_rejected` | Int64Counter | -- | Connections rejected due to `WithMaxConnections` limit |
 | `ninep.server.fid.count` | Int64UpDownCounter | -- | Number of active fids |
+
+Request and response sizes are measured via `proto.ByteCounter` -- a zero-alloc `io.Writer` that sums field widths without materialising a buffer. Both counters guard attribute computation behind `Enabled()` so noop meters skip the counting entirely.
 
 If neither `WithTracer` nor `WithMeter` is set, no tracing or metrics overhead is incurred.
 
@@ -432,6 +448,8 @@ type ConnInfo struct {
 func ConnFromContext(ctx context.Context) *ConnInfo
 ```
 
+Callers MUST NOT mutate a `ConnInfo` returned from `ConnFromContext` -- the same pointer is shared across every request on the same connection. There is no `NewContext` helper: `ConnInfo` is server-injected from negotiated connection state.
+
 ---
 
 ## Dirent Encoding (`server/dirent.go`)
@@ -442,7 +460,7 @@ func ConnFromContext(ctx context.Context) *ConnInfo
 func EncodeDirents(dirents []proto.Dirent, maxBytes uint32) ([]byte, int)
 ```
 
-Wire format per entry: `qid[13] + offset[8] + type[1] + name[s]` (where `name[s]` = `len[2] + name_bytes`).
+Wire format per entry: `qid[13] + offset[8] + type[1] + name[s]` (where `name[s]` = `len[2] + name_bytes`). The returned slice is a freshly-allocated copy-out -- safe to retain past the call boundary.
 
 ---
 
@@ -454,7 +472,8 @@ Wire format per entry: `qid[13] + offset[8] + type[1] + name[s]` (where `name[s]
 | `ErrFidNotFound` | Fid lookup failed |
 | `ErrNotNegotiated` | Message received before version negotiation |
 | `ErrMsizeTooSmall` | Client proposed msize too small for useful payload |
-| `ErrNotDirectory` | Walk targets a non-directory node |
+| `ErrNotDirectory` | Walk targets a node that does not implement `NodeLookuper` |
+| `ErrFidLimitExceeded` | Per-connection fid cap (`WithMaxFids`) reached; mapped to `proto.EMFILE` on the wire |
 
 ---
 
@@ -491,7 +510,7 @@ Implements: `NodeOpener`, `NodeReaddirer`, `NodeGetattrer`, `NodeCreater`, `Node
 
 ### StaticFile
 
-Read-only in-memory file with string content. Write returns `ENOSYS`.
+Read-only in-memory file with string content. Write returns `ENOSYS` (via embedded Inode default).
 
 ```go
 type StaticFile struct {
@@ -562,12 +581,14 @@ Creates a passthrough filesystem rooted at `hostPath`. The path must be an exist
 
 ```go
 type UIDMapper struct {
-    ToHost   func(uid, gid uint32) (uint32, uint32)
-    FromHost func(uid, gid uint32) (uint32, uint32)
+    ToHost   func(uid, gid uint32) (uint32, uint32) // required, non-nil
+    FromHost func(uid, gid uint32) (uint32, uint32) // required, non-nil
 }
 
 func IdentityMapper() UIDMapper
 ```
+
+Both `ToHost` and `FromHost` MUST be non-nil. Passing a `UIDMapper` with either field nil via `WithUIDMapper` panics on the first translation attempt.
 
 ### Implemented Interfaces
 
@@ -604,7 +625,7 @@ Both `Check` and `CheckFactory` require the root to contain:
 ```
 root/
   file.txt       (content: "hello world")
-  empty           (content: "")
+  empty          (content: "")
   sub/
     nested.txt   (content: "nested content")
 ```
@@ -621,7 +642,7 @@ func NewTestTree(gen *server.QIDGenerator) server.Node
 ### Cases
 
 ```go
-// Cases holds all registered test cases.
+// Cases holds all registered test cases. Callers MUST NOT mutate.
 var Cases []TestCase
 
 type TestCase struct {
@@ -675,7 +696,39 @@ func TestPassthrough(t *testing.T) {
 | `FSStat` | Filesystem statistics (type, block size, counts, etc.) |
 | `Errno` | `uint32` -- Linux errno values on the wire |
 | `Message` | Interface: `Type() MessageType`, `EncodeTo(io.Writer) error`, `DecodeFrom(io.Reader) error` |
-| `MessageType` | `uint8` -- protocol message type byte |
+| `MessageType` | `uint8` -- protocol message type byte; `String()` returns the human-readable name |
+
+### Payloader Interface
+
+`Payloader` is implemented by response messages that carry a large opaque payload (the user data portion of `Rread` and the dirent bytes of `Rreaddir`). The server's write loop detects Payloaders and issues the payload as a separate `net.Buffers` entry, skipping a copy into the pooled body buffer.
+
+```go
+type Payloader interface {
+    // EncodeFixed writes only the non-payload body (e.g., the 4-byte
+    // count prefix for Rread/Rreaddir).
+    EncodeFixed(w io.Writer) error
+
+    // Payload returns the bytes that follow the fixed body on the wire.
+    // The slice may alias a pooled buffer; the server arranges for
+    // release after writev completes.
+    Payload() []byte
+}
+```
+
+Implementations MUST still provide a correct full-message `EncodeTo` for non-server callers (client-side encoders, tests).
+
+### ByteCounter
+
+`ByteCounter` is an `io.Writer` that counts bytes written without materialising a buffer. Used by the OTel middleware to compute wire sizes via `msg.EncodeTo(&c)` without allocation or memcpy cost.
+
+```go
+type ByteCounter int
+
+// Write counts len(p) and discards the bytes. Always succeeds.
+func (c *ByteCounter) Write(p []byte) (int, error)
+```
+
+The `proto.Write*` helpers type-assert `*ByteCounter` and bypass the slice escape that the `io.Writer` interface would otherwise cause -- the counter adds field widths directly with zero allocations.
 
 ### QID Type Constants
 
@@ -689,6 +742,21 @@ func TestPassthrough(t *testing.T) {
 | `QTTMP` | `0x04` | Temporary |
 | `QTSYMLINK` | `0x02` | Symbolic link |
 | `QTFILE` | `0x00` | Regular file |
+
+### Dirent Type Constants
+
+Dirent `Type` bytes match Linux `DT_*` values from `<dirent.h>` (the 9P2000.L kernel client passes the byte verbatim to `dir_emit`). Servers MUST use these, not QID type bits.
+
+| Constant | Value | Meaning |
+|----------|-------|---------|
+| `DT_UNKNOWN` | `0` | Unknown |
+| `DT_FIFO` | `1` | Named pipe (FIFO) |
+| `DT_CHR` | `2` | Character device |
+| `DT_DIR` | `4` | Directory |
+| `DT_BLK` | `6` | Block device |
+| `DT_REG` | `8` | Regular file |
+| `DT_LNK` | `10` | Symbolic link |
+| `DT_SOCK` | `12` | Unix-domain socket |
 
 ### Sentinel Values
 
@@ -711,6 +779,7 @@ The `proto` package defines all Linux errno values (1--133) plus kernel-internal
 | `ENOTDIR` | 20 | Not a directory |
 | `EINVAL` | 22 | Invalid argument |
 | `ENOSPC` | 28 | No space left on device |
+| `EMFILE` | 24 | Too many open files (returned when `WithMaxFids` is exceeded) |
 | `ENOSYS` | 38 | Function not implemented |
 
 ### Wire Encoding Helpers
@@ -731,6 +800,8 @@ func ReadString(r io.Reader) (string, error)
 func ReadQID(r io.Reader) (QID, error)
 ```
 
+Write* helpers take a zero-alloc fast path when the caller supplies a `*bytes.Buffer` or a `*ByteCounter`.
+
 ### Protocol Constants
 
 | Constant | Value | Description |
@@ -739,4 +810,4 @@ func ReadQID(r io.Reader) (QID, error)
 | `MaxWalkElements` | `16` | Max path elements in Twalk |
 | `MaxStringLen` | `65535` | Max 9P string length (uint16 prefix) |
 | `QIDSize` | `13` | Wire size of a QID |
-| `MaxDataSize` | `16 MiB` | Hard cap on data allocations from wire input |
+| `MaxDataSize` | `16 MiB` (`1 << 24`) | Hard cap on data allocations from wire input |

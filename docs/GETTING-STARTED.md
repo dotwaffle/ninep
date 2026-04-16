@@ -7,8 +7,8 @@ with the Linux kernel client.
 
 ## Prerequisites
 
-- **Go >= 1.24** (the module declares `go 1.26`; Go 1.24+ is the minimum
-  that supports the `tool` directive and `testing/synctest`)
+- **Go >= 1.26** (the module declares `go 1.26` in `go.mod`; earlier
+  toolchains cannot build the library)
 - **Linux** for mounting with `mount -t 9p` (the library compiles on any
   OS, but the v9fs mount test requires Linux)
 - A working `$GOPATH` or Go modules environment
@@ -93,6 +93,9 @@ Key points:
   what gets returned on `Tattach`.
 - **`Server.Serve(ctx, ln)`** accepts connections and blocks until the
   context is cancelled or the listener errors.
+- **`NodeReader.Read`** takes a caller-provided buffer: the server sizes
+  `buf` to the Tread count (clamped to `msize`), the implementation fills
+  it, and returns the byte count. Do not allocate a new slice per call.
 
 ## Adding a Directory with Children
 
@@ -226,11 +229,13 @@ use `Server.ServeConn(ctx, conn)` directly.
 
 ## Testing with the Linux v9fs Client
 
-Once your server is running, mount it on Linux:
+Once your server is running, mount it on Linux. The default server `msize`
+is 1 MiB (1048576 bytes); for best throughput, pass a matching `msize` to
+the mount command:
 
 ```bash
 # Mount the filesystem (as root)
-sudo mount -t 9p -o trans=tcp,port=5640,version=9p2000.L,msize=65536 \
+sudo mount -t 9p -o trans=tcp,port=5640,version=9p2000.L,msize=1048576 \
     127.0.0.1 /mnt/9p
 
 # List files
@@ -258,7 +263,7 @@ Common mount options:
 | `trans=unix` | Unix domain socket transport |
 | `port=5640` | TCP port (default: 564) |
 | `version=9p2000.L` | Protocol version (9P2000.L or 9P2000.u) |
-| `msize=65536` | Maximum message size in bytes |
+| `msize=1048576` | Maximum message size in bytes (match the server's `WithMaxMsize`) |
 | `cache=none` | Disable client-side caching |
 | `access=user` | Per-user access control |
 
@@ -440,8 +445,10 @@ required tree shape using internal test node types (no memfs dependency).
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `WithMaxMsize(n)` | 131072 (128KB) | Maximum message size during version negotiation |
+| `WithMaxMsize(n)` | 1048576 (1 MiB) | Maximum message size during version negotiation |
 | `WithMaxInflight(n)` | 64 | Maximum concurrent in-flight requests per connection |
+| `WithMaxConnections(n)` | 0 (unlimited) | Maximum concurrent connections; new ones are rejected when reached |
+| `WithMaxFids(n)` | 0 (unlimited) | Maximum concurrent fids per connection; returns EMFILE when reached |
 | `WithLogger(logger)` | `slog.Default()` with trace correlation | Structured logger (automatically wrapped with `NewTraceHandler`) |
 | `WithIdleTimeout(d)` | 0 (disabled) | Per-connection idle timeout |
 | `WithAnames(map)` | nil | Map of aname strings to root nodes for vhost-style dispatch |
@@ -470,6 +477,11 @@ this to determine how much data to read.
 **ENOSYS on every operation** -- You forgot to call `Init(qid, self)` on
 your node, or your methods are defined on a value receiver instead of a
 pointer receiver, so they do not satisfy the capability interfaces.
+
+**`Read` returns 0 bytes forever** -- The `NodeReader.Read` contract is
+buf-passing: `Read(ctx, buf []byte, offset uint64) (int, error)`. Fill
+`buf` and return the byte count; do not allocate your own slice and
+expect it to be returned. Returning `0, nil` signals EOF.
 
 ## Next Steps
 

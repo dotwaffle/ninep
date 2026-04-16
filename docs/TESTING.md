@@ -148,6 +148,13 @@ The harness includes 20 test cases organized into categories:
 | `unlink/*` | 1 | File unlinking via Tunlinkat |
 | `concurrent/*` | 1 | Concurrent read correctness |
 
+Extended conformance suites also exist alongside `Check` and `CheckFactory`:
+
+- `fstest.CheckLock(t, newRoot)` — exercises Tlock / Tgetlock semantics (`server/fstest/fstest_lock.go`).
+- `fstest.CheckXattr(t, newRoot)` — exercises Txattrwalk / Txattrcreate and the two-phase xattr fid lifecycle (`server/fstest/fstest_xattr.go`).
+
+Both take the factory form because locks and xattr fids attach mutable state to the filesystem.
+
 ### Selective execution
 
 Individual cases can be run via Go's `-run` flag or accessed programmatically through the exported `fstest.Cases` slice:
@@ -163,9 +170,13 @@ for _, tc := range fstest.Cases {
 }
 ```
 
+### Writing new fstest cases
+
+`fstest.Cases` is a package-level `[]TestCase` populated by `init()` in `server/fstest/cases.go`. A test case is just a `{Name string; Run func(t *testing.T, root server.Node)}`. Cases receive a fully-negotiated `testConn` via the internal `newTestConn` helper — they only need to drive the wire protocol and assert on responses. Preserve the `category/case` naming convention (`walk/root_attach`, `read/offset`) so callers can filter by prefix.
+
 ## Fuzz testing
 
-Fuzz tests exist for both codec packages, verifying the round-trip property: any successfully decoded message must re-encode to identical bytes that decode to an identical message.
+Fuzz tests exist for both codec packages, verifying the round-trip property: any successfully decoded message must re-encode to identical bytes that decode to an identical message. See `proto/p9l/fuzz_test.go` and `proto/p9u/fuzz_test.go`.
 
 ### Running fuzz tests
 
@@ -192,6 +203,8 @@ Run with a time limit:
 ```bash
 go test -fuzz=FuzzCodecRoundTrip -fuzztime=30s ./proto/p9l/
 ```
+
+CI runs both fuzzers for 30 seconds on every push and pull request (`.github/workflows/ci.yml` `fuzz` job).
 
 Crash inputs are stored in `proto/p9l/testdata/fuzz/` and `proto/p9u/testdata/fuzz/` and are replayed automatically on subsequent `go test` runs.
 
@@ -223,6 +236,8 @@ These tests require:
 | `TestKernelMountSkipGracefully` | Verify graceful skip without root; also validates errno propagation (ENOENT) |
 
 The `mountV9FS` helper starts a passthrough server on a Unix socket, mounts it with `mount -t 9p`, and registers cleanup (unmount, server shutdown) via `t.Cleanup`.
+
+CI compiles the integration tests every build (`go test -tags integration -run ^$ ./...`) but does not execute them — the kernel mount machinery is exercised locally or on dedicated runners.
 
 ## Writing new tests
 
@@ -307,13 +322,25 @@ For lower-level control, use the test helpers in `server/conn_test.go`:
 
 Tests commonly define inline node types that embed `server.Inode` and implement only the interfaces needed. Examples from the test suite:
 
-- `rootNode` / `dirNode` / `testDir` -- minimal directory nodes with Inode embedding.
-- `testFile` -- minimal file node.
-- `bridgeFile` / `bridgeDir` -- nodes implementing Open, Read, Write, Getattr, Create, etc. for bridge integration tests.
+- `rootNode` (`server/conn_test.go`, built via `newRootNode`) -- minimal directory node used across conn/bench tests.
+- `testDir` / `testFile` (`server/walk_test.go` via `testTree`) -- minimal directory and file nodes.
+- `bridgeFile` / `bridgeDir` (`server/bridge_test.go`) -- nodes implementing Open, Read, Write, Getattr, Create, Mkdir for bridge integration tests.
 - `blockingNode` -- Lookup blocks until a channel is closed or context is cancelled (for flush/cancellation tests).
 - `countingNode` -- tracks concurrent active Lookup calls (for max-inflight tests).
 - `panicNode` -- panics in Lookup (for panic recovery tests).
 - `stuckNode` -- ignores context cancellation (for drain deadline tests).
+
+Node capability signatures a new test node must match (current as of v1.1.3+ buf-passing Read API):
+
+```go
+// Read fills caller-provided buf; returns bytes written.
+func (f *myFile) Read(ctx context.Context, buf []byte, offset uint64) (int, error) { /* ... */ }
+
+// Write accepts data and offset; returns bytes consumed.
+func (f *myFile) Write(ctx context.Context, data []byte, offset uint64) (uint32, error) { /* ... */ }
+```
+
+The older `Read(ctx, offset, count) ([]byte, error)` shape was removed when Read switched to caller-owned buffers so the server can pool response buffers end-to-end.
 
 ### Compile-time interface checks
 
@@ -327,15 +354,87 @@ var (
 )
 ```
 
+## Benchmarks
+
+Benchmarks live in `server/` and follow a consistent pattern: `b.ReportAllocs` on every leaf, `b.SetBytes` wherever throughput is meaningful, and key=value subtest names so `benchstat` can group and diff across runs.
+
+### Benchmark files
+
+| File | What it measures |
+|------|------------------|
+| `server/bench_test.go` | Round-trip dispatch (`BenchmarkRoundTrip`, `BenchmarkRoundTripWithOTel`), readLoop decode (`BenchmarkReadDecode`), fidTable contention, walk+clunk cycles, directory-entry encoding |
+| `server/io_bench_test.go` | Tread/Twrite throughput at varying sizes and access patterns (`BenchmarkRead`, `BenchmarkWrite`, `BenchmarkReadPipelined`) against a 128 MiB in-memory file |
+| `server/writev_bench_test.go` | Write-path syscall cost: sequential writes vs `net.Buffers.WriteTo` (writev) on unix sockets vs `net.Pipe` (`BenchmarkWriteApproach`) |
+| `server/msgalloc_bench_test.go` | Per-request message-struct allocation strategies (heap, `sync.Pool`, stack value) for `BenchmarkMessageAlloc` and `BenchmarkMessageAllocFullDecode` |
+
+### Running benchmarks
+
+```bash
+# A single benchmark file or pattern:
+go test -bench=BenchmarkRoundTrip -benchmem ./server/
+go test -bench=. -benchmem -run ^$ ./server/
+
+# With benchstat-friendly output captured for diffing:
+go test -bench=BenchmarkRead -benchmem -count=10 ./server/ > new.txt
+benchstat old.txt new.txt
+```
+
+The race detector is not used for benchmarks (it distorts throughput and allocation counts).
+
+### Benchmark helpers
+
+All benchmarks build on a small set of helpers from `bench_test.go` and `io_bench_test.go`:
+
+- `newConnPair(tb, root, opts...)` -- server + `net.Pipe` client pair; Tversion already negotiated (`server/walk_test.go`, used by benchmarks via `testing.TB`).
+- `newConnPairMsize(tb, root, msize, opts...)` -- same, but with a caller-chosen negotiated msize; required when a benchmark needs msize > 64 KiB (`server/io_bench_test.go`).
+- `mustEncode(tb, tag, msg)` -- pre-encode a frame once, outside the measurement loop.
+- `drainResponse(c)` -- read and discard exactly one 9P frame from the wire; faster than a full decode.
+- `benchAttachFid0(b, cp)` -- wire fid 0 to the server's root before measurement.
+- `benchWalkOpen(b, cp, fid, newFid, name)` -- walk + open helper for I/O benchmarks; returns the negotiated IOUnit.
+- `treadOffsetPos` / `twriteOffsetPos` constants -- byte offsets for patching the offset field of a pre-encoded Tread/Twrite frame in place (avoids re-encoding per iteration).
+
+Typical skeleton:
+
+```go
+func BenchmarkMyOp(b *testing.B) {
+    root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
+    cp := newConnPair(b, root)
+    b.Cleanup(func() { cp.close(b) })
+
+    benchAttachFid0(b, cp)
+
+    frame := mustEncode(b, proto.Tag(1), &p9l.Tgetattr{Fid: 0, RequestMask: proto.AttrAll})
+    b.ReportAllocs()
+    b.SetBytes(int64(len(frame)))
+    for b.Loop() {
+        if _, err := cp.client.Write(frame); err != nil {
+            b.Fatalf("write: %v", err)
+        }
+        if err := drainResponse(cp.client); err != nil {
+            b.Fatalf("drain: %v", err)
+        }
+    }
+}
+```
+
+### Performance workflow
+
+A few workflow notes that are easy to get wrong:
+
+- **`GODEBUG=gctrace=1`** -- prefix a benchmark run with `GODEBUG=gctrace=1` to surface GC activity between iterations. Heap churn mid-benchmark usually points at pool-drain feedback loops or undersized pools, not at the code being measured.
+- **Memprofile output path** -- write memprofiles to `/tmp/claude/` rather than `/tmp`; the sandbox this repo is developed in only permits writes under `/tmp/claude/`. Example: `go test -bench=BenchmarkRead -memprofile=/tmp/claude/mem.prof ./server/` then `go tool pprof -text -alloc_objects -lines /tmp/claude/mem.prof`.
+- **Transport matters** -- `net.Pipe` does not implement writev, so benchmarks that measure the write path with `net.Pipe` miss the syscall-coalescing savings that real unix and TCP sockets see. Use `writev_bench_test.go`'s `unixPair` helper for realistic numbers on any benchmark where `net.Buffers.WriteTo` is on the hot path; use `pipePair` only as the synthetic A/B baseline.
+- **Response flow** -- since v1.1.15 the server writes responses inline from each worker under `writeMu`; there is no `writeLoop` goroutine and no `responses` channel. This means write-path benchmarks should not expect the response to cross a goroutine boundary before being encoded.
+- **Request flow** -- since v1.1.10 the server uses a lazily-spawned worker pool bounded by `maxInflight` (not goroutine-per-request). Benchmarks that measure concurrent dispatch should size `WithMaxInflight(...)` explicitly if they depend on specific parallelism.
+
 ## Race detector
 
 The race detector (`-race` flag) is mandatory for all test runs. The server uses concurrent goroutines extensively:
 
 - Goroutine-per-connection (`ServeConn`).
-- Goroutine-per-request (dispatch handlers).
-- Single writer goroutine per connection.
+- Worker pool: lazily-spawned goroutines (bounded by `maxInflight`) consume decoded requests from `workCh` and run handlers. Workers encode and writev responses inline under `writeMu` (since v1.1.15 there is no separate writer goroutine).
 - Shared `fidTable` protected by `sync.RWMutex`.
-- `inflightMap` for tag tracking and flush cancellation.
+- `inflightMap` for tag tracking and Tflush cancellation.
 
 Run with race detection:
 
@@ -352,14 +451,12 @@ The `-count=1` flag disables test caching, ensuring every run exercises the race
 
 ## CI integration
 
-No CI pipeline configuration files (`.github/workflows/`) are present in the repository. The recommended CI test command is:
+CI is defined in `.github/workflows/ci.yml` and runs on every push to `main` and every pull request. Three jobs execute in parallel:
 
-```bash
-go test -race -count=1 ./...
-```
+| Job | Command | Purpose |
+|-----|---------|---------|
+| `test` | `go vet ./...`, `go test -race -count=1 ./...`, `go build -trimpath ./...`, `go test -tags integration -run ^$ ./...` | Vet, race-enabled test suite, reproducible build, integration-test compile check |
+| `lint` | `golangci-lint run` (via `golangci/golangci-lint-action@v9`, version `latest`) | Static analysis |
+| `fuzz` | `go test -fuzz=FuzzCodecRoundTrip -fuzztime=30s ./proto/p9l/` and `./proto/p9u/` | 30s codec fuzz per protocol |
 
-For CI environments with Linux kernel support, also run the integration tests:
-
-```bash
-go test -race -tags integration ./server/passthrough/
-```
+Go version tracks `stable` via `actions/setup-go@v6`. The integration-test step compiles but does not execute the kernel tests (the `-run ^$` pattern matches no tests); actual kernel mount tests run locally or on dedicated runners.
