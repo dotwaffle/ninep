@@ -13,6 +13,27 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9u"
 )
 
+// validatePathElement rejects 9P name components that contain embedded
+// path separators or NUL bytes. Such names would traverse multiple
+// directories in a single walk step or truncate at the C-layer syscall
+// boundary, both of which violate 9P2000.L walk semantics. Empty names
+// are also rejected. "." and ".." are permitted (spec-compliant walk
+// elements).
+//
+// Create-style handlers (Tlcreate, Tmkdir, Tsymlink, Tlink, Tmknod,
+// Trename, Trenameat) use the stricter validName helper (bridge.go),
+// which additionally rejects "." and ".." -- those names are spec
+// compliant for walk but not for creating or renaming entries.
+func validatePathElement(name string) error {
+	if name == "" {
+		return proto.EINVAL
+	}
+	if strings.ContainsAny(name, "/\x00") {
+		return proto.EINVAL
+	}
+	return nil
+}
+
 // dispatch routes a decoded message to the appropriate handler and returns the
 // response message. It returns nil for message types that are handled inline
 // (e.g. Tflush is handled in the read loop, not here). Callers are responsible
@@ -139,6 +160,18 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 		}
 		c.otelInst.recordFidChange(1)
 		return &proto.Rwalk{}
+	}
+
+	// Validate every name component BEFORE touching any fid resolution or
+	// Lookup. Names containing '/' would traverse multiple directories in a
+	// single walk step (path-traversal against passthrough-backed servers
+	// that pass the name straight to unix.Fstatat); NUL bytes truncate at
+	// the C syscall boundary. Empty names are also invalid per spec.
+	// "." and ".." remain permitted -- they are legal walk elements.
+	for _, name := range tw.Names {
+		if err := validatePathElement(name); err != nil {
+			return c.errorMsg(proto.EINVAL)
+		}
 	}
 
 	// nwname>0: walk path elements.
