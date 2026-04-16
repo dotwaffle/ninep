@@ -15,7 +15,9 @@ const cleanupDeadline = 5 * time.Second
 //  2. Wait for inflight handlers to finish (with deadline).
 //  3. Close the work channel and wait for workers to exit.
 //  4. Clunk all fids.
-//  5. Close the responses channel (terminates writer goroutine).
+//
+// Since workers write responses inline (no writeLoop goroutine), there
+// is no response channel to drain on shutdown.
 func (c *conn) cleanup() {
 	// Step 1: Cancel all inflight requests.
 	c.inflight.cancelAll()
@@ -74,7 +76,4 @@ func (c *conn) cleanup() {
 			slog.Int("count", len(states)),
 		)
 	}
-
-	// Step 5: Close responses channel to terminate writer goroutine.
-	close(c.responses)
 }

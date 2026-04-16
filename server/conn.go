@@ -98,19 +98,10 @@ func (c *conn) negotiate(tv *proto.Tversion) (negotiationResult, error) {
 	return res, nil
 }
 
-// taggedResponse pairs a tag with a response for the writer goroutine.
-// The optional release func is called after the response is encoded; it
-// returns pooled buffers (e.g. bridge Rread/Rreaddir data buffers) to
-// their pools.
-type taggedResponse struct {
-	tag     proto.Tag
-	msg     proto.Message
-	release releaser // called after encode; nil when no pooled buffer is held
-}
-
 // releaser is implemented by response messages that carry pooled buffers
 // which must be returned to the pool after wire encoding completes.
 // Currently used by pooledRread and pooledRreaddir in bridge.go.
+// sendResponseInline calls Release after the writev completes.
 type releaser interface {
 	Release()
 }
@@ -140,10 +131,21 @@ type conn struct {
 	msize    uint32 // Negotiated msize (0 until version negotiation).
 	codec    codec
 
-	// writeMu serializes all writes to nc. Both writeRaw (used during
-	// version negotiation) and writeLoop write to the same net.Conn;
-	// this mutex prevents interleaved wire frames (GO-CC-3).
+	// writeMu serializes all writes to nc. Workers acquire it in
+	// sendResponseInline, and writeRaw (used during version negotiation)
+	// takes it as well. This prevents interleaved wire frames (GO-CC-3).
 	writeMu sync.Mutex
+
+	// encHdr holds the 7-byte response header (size[4] + type[1] + tag[2])
+	// between "fill" and "writev" inside sendResponseInline. Guarded by
+	// writeMu; storing it on conn avoids per-response heap escape.
+	encHdr [proto.HeaderSize]byte
+
+	// encBufsArr is the backing array for the net.Buffers slice built in
+	// sendResponseInline. Payloader responses use all three entries
+	// (hdr, fixedBody, payload); non-Payloader responses use two.
+	// Guarded by writeMu.
+	encBufsArr [3][]byte
 
 	// hdrBuf is reused for reading 4-byte frame size headers from nc.
 	// Stored on conn (heap-allocated) so hdrBuf[:] does not escape to
@@ -154,24 +156,6 @@ type conn struct {
 	// as an io.Reader for DecodeFrom. Reset() instead of bytes.NewReader
 	// avoids a per-message allocation.
 	bodyReader bytes.Reader
-
-	// Write coalescing: the writeLoop drains pending responses non-
-	// blockingly and writev()s them in a single syscall. Slabs are
-	// sized to maxInflight (the upper bound on queued responses) so
-	// batching never needs to allocate.
-	//
-	//   hdrSlab:   raw bytes for per-response 7-byte headers
-	//   encBufs:   [][]byte alternating hdr/body, 2*maxInflight entries
-	//   bodies:    pooled body buffers for post-write release tracking
-	//   batch:     captured taggedResponse entries, for release callbacks
-	hdrSlab []byte
-	encBufs net.Buffers
-	bodies  []*bytes.Buffer
-	batch   []taggedResponse
-
-	// responses carries encoded responses to the writeLoop goroutine.
-	// The sender (readLoop/dispatch) closes this channel; the writer drains it.
-	responses chan taggedResponse
 
 	// inflight tracks per-request goroutines for flush cancellation and
 	// drain-on-disconnect.
@@ -202,19 +186,13 @@ type conn struct {
 // newConn creates a new conn for the given server and network connection.
 func newConn(s *Server, nc net.Conn) *conn {
 	c := &conn{
-		server:    s,
-		nc:        nc,
-		fids:      newFidTable(),
-		maxFids:   s.maxFids,
-		responses: make(chan taggedResponse, s.maxInflight),
-		inflight:  newInflightMap(),
-		// Coalescing slabs sized to maxInflight responses.
-		hdrSlab: make([]byte, s.maxInflight*int(proto.HeaderSize)),
-		encBufs: make(net.Buffers, 0, 2*s.maxInflight),
-		bodies:  make([]*bytes.Buffer, 0, s.maxInflight),
-		batch:   make([]taggedResponse, 0, s.maxInflight),
-		workCh:    make(chan workItem, s.maxInflight),
-		logger:    s.logger.With(slog.String("remote", nc.RemoteAddr().String())),
+		server:   s,
+		nc:       nc,
+		fids:     newFidTable(),
+		maxFids:  s.maxFids,
+		inflight: newInflightMap(),
+		workCh:   make(chan workItem, s.maxInflight),
+		logger:   s.logger.With(slog.String("remote", nc.RemoteAddr().String())),
 	}
 	// Build the middleware-wrapped dispatch chain. The closure captures c so
 	// it must be created after c is initialized. If no middleware is
@@ -274,20 +252,12 @@ func (c *conn) serve(ctx context.Context) {
 
 	// Start writer goroutine. writeLoop exits when c.responses is closed
 	// (by cleanup) or ctx is done (GO-CC-1).
-	writerDone := make(chan struct{})
-	go func() {
-		defer close(writerDone)
-		c.writeLoop(ctx)
-	}()
-
 	c.readLoop(ctx)
 
-	// Orderly shutdown: cancel inflight, drain with deadline, clunk fids,
-	// close responses channel (which terminates the writer).
+	// Orderly shutdown: cancel inflight, drain with deadline, close workCh,
+	// wait for workers, clunk fids. Workers write responses inline (no
+	// writeLoop goroutine) so there's nothing else to drain after that.
 	c.cleanup()
-
-	// Wait for the writer to drain and exit.
-	<-writerDone
 }
 
 // negotiateVersion reads the first Tversion from the client and negotiates
@@ -615,12 +585,12 @@ func (c *conn) handleWorkItem(item workItem) {
 		// Store the releaser interface verbatim on taggedResponse — taking
 		// r.Release as a method value would allocate a heap closure on
 		// every request. Passing the interface value costs no extra alloc
-		// and the writeLoop invokes release.Release() virtually.
+		// and sendResponseInline invokes release.Release() virtually.
 		var release releaser
 		if r, ok := resp.(releaser); ok {
 			release = r
 		}
-		c.sendResponseWithRelease(item.tag, resp, release)
+		c.sendResponseInline(item.tag, resp, release)
 	}
 }
 
@@ -752,177 +722,98 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 	}
 }
 
-// writeLoop drains the responses channel, encodes responses to the
-// connection, and coalesces pending responses into a single writev() syscall
-// where possible. It exits when the channel is closed or ctx is done.
+// sendResponseInline encodes a response and writes it to the connection
+// directly from the worker goroutine. This replaces the previous
+// writeLoop-per-connection model so there is no inter-goroutine handoff
+// between the worker and the writer — saves one context switch per
+// request (~1-3 μs) on the small-file hot path.
 //
-// Coalescing: when a response arrives, writeLoop drains any additional
-// pending responses non-blockingly (up to maxInflight), then issues one
-// net.Buffers.WriteTo for the entire batch. On TCP/unix-domain sockets
-// this maps to a single writev() syscall; net.Pipe still falls back to
-// sequential Writes internally.
-func (c *conn) writeLoop(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case resp, ok := <-c.responses:
-			if !ok {
-				return
-			}
-			c.flushBatch(resp)
-		}
-	}
-}
+// Serialises concurrent worker writes via writeMu, and uses the
+// conn-resident encHdr/encBufsArr buffers (guarded by writeMu) to
+// avoid per-response allocation. On TCP / unix-domain sockets the write
+// is a single writev syscall covering header + body (+ optional Payloader
+// payload).
+//
+// rel, when non-nil, has its Release method called after the writev
+// completes so pooled Rread/Rreaddir buffers return to their pool even
+// when the write fails.
+func (c *conn) sendResponseInline(tag proto.Tag, msg proto.Message, rel releaser) {
+	// Encode outside writeMu to keep the critical section short.
+	body := bufpool.GetBuf()
 
-// flushBatch collects resp plus any additional pending responses,
-// encodes them all, and writes them in a single net.Buffers.WriteTo.
-func (c *conn) flushBatch(first taggedResponse) {
-	// Reset reusable batch state (keeps backing arrays).
-	c.batch = c.batch[:0]
-	c.bodies = c.bodies[:0]
-	c.encBufs = c.encBufs[:0]
-
-	// Seed with first response.
-	c.batch = append(c.batch, first)
-
-	// Drain additional pending responses non-blockingly. Bound by the
-	// pre-allocated slab size so we never reallocate; the channel size
-	// itself is bounded by maxInflight.
-	maxBatch := cap(c.batch)
-drainLoop:
-	for len(c.batch) < maxBatch {
-		select {
-		case resp, ok := <-c.responses:
-			if !ok {
-				break drainLoop
-			}
-			c.batch = append(c.batch, resp)
-		default:
-			break drainLoop
-		}
-	}
-
-	// Encode each response: fixed body bytes into a pooled buffer, header
-	// into the hdrSlab slot. Messages implementing proto.Payloader have
-	// their payload placed as a separate net.Buffers entry so the bytes
-	// go from the response struct directly to the socket via writev —
-	// skipping the copy into the pooled body buffer for large Rread/Rreaddir
-	// responses.
-	for i, resp := range c.batch {
-		body := bufpool.GetBuf()
-
-		// Payloader fast path: encode only the fixed part (e.g. 4-byte
-		// count for Rread) into body; keep the payload slice as a
-		// separate net.Buffers entry.
-		var payload []byte
-		if pl, ok := resp.msg.(proto.Payloader); ok {
-			if err := pl.EncodeFixed(body); err != nil {
-				c.logger.Warn("encode error",
-					slog.String("type", resp.msg.Type().String()),
-					slog.Any("error", err),
-				)
-				bufpool.PutBuf(body)
-				if resp.release != nil {
-					resp.release.Release()
-				}
-				c.bodies = append(c.bodies, nil)
-				continue
-			}
-			payload = pl.Payload()
-		} else if err := resp.msg.EncodeTo(body); err != nil {
+	var payload []byte
+	if pl, ok := msg.(proto.Payloader); ok {
+		if err := pl.EncodeFixed(body); err != nil {
 			c.logger.Warn("encode error",
-				slog.String("type", resp.msg.Type().String()),
+				slog.String("type", msg.Type().String()),
 				slog.Any("error", err),
 			)
 			bufpool.PutBuf(body)
-			if resp.release != nil {
-				resp.release.Release()
+			if rel != nil {
+				rel.Release()
 			}
-			c.bodies = append(c.bodies, nil)
-			continue
+			return
 		}
-		c.bodies = append(c.bodies, body)
-
-		size := uint32(proto.HeaderSize) + uint32(body.Len()) + uint32(len(payload))
-		hdrSlot := c.hdrSlab[i*int(proto.HeaderSize) : (i+1)*int(proto.HeaderSize)]
-		binary.LittleEndian.PutUint32(hdrSlot[0:4], size)
-		hdrSlot[4] = uint8(resp.msg.Type())
-		binary.LittleEndian.PutUint16(hdrSlot[5:7], uint16(resp.tag))
-		c.encBufs = append(c.encBufs, hdrSlot, body.Bytes())
-		if len(payload) > 0 {
-			c.encBufs = append(c.encBufs, payload)
+		payload = pl.Payload()
+	} else if err := msg.EncodeTo(body); err != nil {
+		c.logger.Warn("encode error",
+			slog.String("type", msg.Type().String()),
+			slog.Any("error", err),
+		)
+		bufpool.PutBuf(body)
+		if rel != nil {
+			rel.Release()
 		}
+		return
 	}
 
-	// Single writev under writeMu.
 	c.writeMu.Lock()
 	if c.server.idleTimeout > 0 {
 		if err := c.nc.SetWriteDeadline(time.Now().Add(c.server.idleTimeout)); err != nil {
 			c.writeMu.Unlock()
 			c.logger.Warn("failed to set write deadline", slog.Any("error", err))
-			// Still release all batch resources on failure.
-			c.releaseBatch()
+			bufpool.PutBuf(body)
+			if rel != nil {
+				rel.Release()
+			}
 			return
 		}
 	}
-	_, err := c.encBufs.WriteTo(c.nc)
+
+	size := uint32(proto.HeaderSize) + uint32(body.Len()) + uint32(len(payload))
+	binary.LittleEndian.PutUint32(c.encHdr[0:4], size)
+	c.encHdr[4] = uint8(msg.Type())
+	binary.LittleEndian.PutUint16(c.encHdr[5:7], uint16(tag))
+
+	c.encBufsArr[0] = c.encHdr[:]
+	c.encBufsArr[1] = body.Bytes()
+	n := 2
+	if len(payload) > 0 {
+		c.encBufsArr[2] = payload
+		n = 3
+	}
+	bufs := net.Buffers(c.encBufsArr[:n])
+	_, err := bufs.WriteTo(c.nc)
 	c.writeMu.Unlock()
 
-	// Release all pooled body buffers and run all release callbacks.
-	c.releaseBatch()
+	bufpool.PutBuf(body)
+	if rel != nil {
+		rel.Release()
+	}
 
 	if err != nil {
 		c.logger.Warn("write error",
-			slog.Int("batch_size", len(c.batch)),
+			slog.String("type", msg.Type().String()),
 			slog.Any("error", err),
 		)
 	}
 }
 
-// releaseBatch returns pooled body buffers and calls per-response release
-// callbacks after a batched write completes (or fails).
-func (c *conn) releaseBatch() {
-	for i, resp := range c.batch {
-		if i < len(c.bodies) && c.bodies[i] != nil {
-			bufpool.PutBuf(c.bodies[i])
-		}
-		if resp.release != nil {
-			resp.release.Release()
-		}
-	}
-}
-
-// sendResponse queues a response for the writer goroutine. The send blocks
-// until the writeLoop drains the channel, ensuring clients always receive
-// their replies. If the responses channel has been closed (connection cleanup
-// completed), the send panics and is recovered -- this handles the case where
-// a stuck handler outlasts the cleanup deadline.
+// sendResponse sends a response with no attached releaser. Thin wrapper
+// over sendResponseInline for callers that don't have a pooled buffer
+// to return (e.g. the panic-recovery error path).
 func (c *conn) sendResponse(tag proto.Tag, msg proto.Message) {
-	c.sendResponseWithRelease(tag, msg, nil)
-}
-
-// sendResponseWithRelease queues a response with an optional release func
-// that is called by the writeLoop after the response has been encoded on
-// the wire. Used for pooled-buffer responses (e.g. Rread, Rreaddir).
-// If the responses channel has been closed (cleanup complete), the send
-// panics and the release runs during recovery so pool buffers are not
-// leaked when the handler outlives the connection.
-func (c *conn) sendResponseWithRelease(tag proto.Tag, msg proto.Message, release releaser) {
-	defer func() {
-		if r := recover(); r != nil {
-			// Channel was closed by cleanup -- drop the response, but
-			// still return any pooled buffers to avoid leaks.
-			if release != nil {
-				release.Release()
-			}
-			c.logger.Debug("response dropped after cleanup",
-				slog.String("type", msg.Type().String()),
-			)
-		}
-	}()
-
-	c.responses <- taggedResponse{tag: tag, msg: msg, release: release}
+	c.sendResponseInline(tag, msg, nil)
 }
 
 // sendError queues a protocol-appropriate error response.
