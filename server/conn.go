@@ -128,6 +128,12 @@ type conn struct {
 	// avoids a per-message allocation.
 	bodyReader bytes.Reader
 
+	// encHdr is reused for writing the 7-byte response header
+	// (size[4]+type[1]+tag[2]) to nc. Writing all header fields in a
+	// single nc.Write avoids three separate Write* calls that each
+	// allocate a temp buffer via the io.Writer interface fallback path.
+	encHdr [proto.HeaderSize]byte
+
 	// responses carries encoded responses to the writeLoop goroutine.
 	// The sender (readLoop/dispatch) closes this channel; the writer drains it.
 	responses chan taggedResponse
@@ -340,6 +346,35 @@ func (c *conn) writeRaw(tag proto.Tag, msg proto.Message) error {
 	}
 	if err := proto.WriteUint16(c.nc, uint16(tag)); err != nil {
 		return fmt.Errorf("write tag: %w", err)
+	}
+	if _, err := c.nc.Write(body.Bytes()); err != nil {
+		return fmt.Errorf("write body: %w", err)
+	}
+	return nil
+}
+
+// encodeResponse encodes a single message directly to c.nc from the writeLoop.
+// Uses c.encHdr (a fixed array on the heap-allocated conn) to build the 7-byte
+// header in one nc.Write, avoiding the three heap allocations that separate
+// WriteUint32/WriteUint8/WriteUint16 calls to net.Conn incur via the io.Writer
+// interface fallback. The caller (writeLoop) holds writeMu.
+//
+// Protocol-neutral: the 9P header format (size+type+tag) is identical for
+// 9P2000.L and 9P2000.u; only message bodies differ (handled by msg.EncodeTo).
+func (c *conn) encodeResponse(tag proto.Tag, msg proto.Message) error {
+	body := bufpool.GetBuf()
+	defer bufpool.PutBuf(body)
+	if err := msg.EncodeTo(body); err != nil {
+		return fmt.Errorf("encode %s body: %w", msg.Type(), err)
+	}
+
+	size := uint32(proto.HeaderSize) + uint32(body.Len())
+	binary.LittleEndian.PutUint32(c.encHdr[0:4], size)
+	c.encHdr[4] = uint8(msg.Type())
+	binary.LittleEndian.PutUint16(c.encHdr[5:7], uint16(tag))
+
+	if _, err := c.nc.Write(c.encHdr[:]); err != nil {
+		return fmt.Errorf("write header: %w", err)
 	}
 	if _, err := c.nc.Write(body.Bytes()); err != nil {
 		return fmt.Errorf("write body: %w", err)
@@ -644,7 +679,7 @@ func (c *conn) writeLoop(ctx context.Context) {
 					return
 				}
 			}
-			err := c.codec.encode(c.nc, resp.tag, resp.msg)
+			err := c.encodeResponse(resp.tag, resp.msg)
 			c.writeMu.Unlock()
 			if err != nil {
 				c.logger.Warn("write error",
