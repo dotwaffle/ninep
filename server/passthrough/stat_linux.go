@@ -20,7 +20,7 @@ func statToAttr(st *unix.Stat_t, mapper UIDMapper) proto.Attr {
 		Mode:      st.Mode,
 		UID:       uid,
 		GID:       gid,
-		NLink:     st.Nlink,
+		NLink:     uint64(st.Nlink),
 		RDev:      st.Rdev,
 		Size:      uint64(st.Size),
 		BlkSize:   uint64(st.Blksize),

@@ -85,7 +85,7 @@ func TestStatToAttr(t *testing.T) {
 	if attr.GID != st.Gid {
 		t.Errorf("GID = %d, want %d", attr.GID, st.Gid)
 	}
-	if attr.NLink != st.Nlink {
+	if attr.NLink != uint64(st.Nlink) {
 		t.Errorf("NLink = %d, want %d", attr.NLink, st.Nlink)
 	}
 	if attr.Size != uint64(st.Size) {
