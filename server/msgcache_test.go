@@ -84,6 +84,7 @@ func TestCachedMsgReuseDoesNotAliasFields(t *testing.T) {
 		{"Tclunk/fields_zeroed_on_get", testTclunkAliasing},
 		{"Tlopen/fields_zeroed_on_get", testTlopenAliasing},
 		{"Tgetattr/fields_zeroed_on_get", testTgetattrAliasing},
+		{"Tlcreate/fields_zeroed_on_get", testTlcreateAliasing},
 	}
 	for _, tc := range cases {
 		// Subtests NOT parallel: the cache chans are package-global.
@@ -255,5 +256,47 @@ func testTgetattrAliasing(t *testing.T) {
 	t.Cleanup(func() { putCachedMsg(m2) })
 	if m2.Fid != 0 || m2.RequestMask != 0 {
 		t.Errorf("getCachedTgetattr did not zero struct: got %+v, want all zero", *m2)
+	}
+}
+
+// testTlcreateAliasing exercises the zero-reset for the Tlcreate cache
+// (added in 13-05). Fields: Fid, Name, Flags, Mode, GID. Name is a Go string,
+// which is immutable — the shared backing store cannot be mutated through the
+// cached struct — so the zero-struct reset in getCachedTlcreate is the full
+// aliasing defence. The test encodes two distinct Tlcreate frames with
+// different Name values and verifies the second decode reflects ONLY the
+// second payload's values.
+func testTlcreateAliasing(t *testing.T) {
+	m1 := getCachedTlcreate()
+	body1 := encodeBody(t, &p9l.Tlcreate{
+		Fid:   1,
+		Name:  "first-file",
+		Flags: 0x0002 | 0x0040, // O_RDWR | O_CREAT
+		Mode:  proto.FileMode(0o644),
+		GID:   1000,
+	})
+	decodeBody(t, m1, body1)
+	if m1.Name != "first-file" {
+		t.Fatalf("first decode: got Name=%q, want first-file", m1.Name)
+	}
+
+	putCachedMsg(m1)
+	m2 := getCachedTlcreate()
+	t.Cleanup(func() { putCachedMsg(m2) })
+
+	body2 := encodeBody(t, &p9l.Tlcreate{
+		Fid:   99,
+		Name:  "second",
+		Flags: 0,
+		Mode:  proto.FileMode(0o600),
+		GID:   2000,
+	})
+	decodeBody(t, m2, body2)
+
+	if m2.Name != "second" {
+		t.Errorf("cache reuse leaked Name: got %q, want second", m2.Name)
+	}
+	if m2.Fid != 99 || m2.Flags != 0 || m2.Mode != proto.FileMode(0o600) || m2.GID != 2000 {
+		t.Errorf("cache reuse leaked scalar fields: got %+v, want Fid=99 Flags=0 Mode=0o600 GID=2000", *m2)
 	}
 }
