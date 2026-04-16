@@ -407,3 +407,67 @@ func BenchmarkWrite(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkServerRead4K_UnderGC reproduces the Q-side seq_read_4k variance
+// workload over unix domain socket: 4 KiB sequential reads with runtime.GC()
+// fired every 1000 iterations INSIDE the hot loop (D-03). The handoff's
+// Target G acceptance (PERF-04.3) is stddev/mean <= 10% over 10 independent
+// runs, measured via `benchstat` on the MB/s column. This bench is the
+// producer of that measurement — the 10-run aggregation lives in the
+// phase summary, not here.
+//
+// Transport is hard-coded to "unix" because net.Pipe hides writev-related
+// variance: the Payloader path (proto.Payloader, v1.1.18) emits a single
+// writev(header + payload) on unix, sequential Write(header); Write(payload)
+// on pipe. The variance this bench measures is the bufpool drain-feedback
+// interaction with writev batching — absent writev, there's no signal.
+// See CLAUDE.md §Performance and 13-RESEARCH.md Anti-Pattern 2.
+//
+// Wrapped in a transport=unix subtest so future comparison with pipe can
+// be added by expanding the slice without restructuring the bench.
+func BenchmarkServerRead4K_UnderGC(b *testing.B) {
+	const readSize uint32 = 4096
+	const msize uint32 = 1 << 20 // 1 MiB negotiated (matches BenchmarkRead/size=iounit)
+
+	for _, transport := range []string{"unix"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			root := newBenchTree(b)
+			cp := newConnPairMsizeTransport(b, transport, root, msize)
+			b.Cleanup(func() { cp.close(b) })
+
+			benchAttachFid0(b, cp)
+			benchWalkOpen(b, cp, 0, 1, "data")
+
+			// Pre-encode the Tread frame ONCE. Patch offset per-iter via treadOffsetPos.
+			frame := mustEncode(b, proto.Tag(1), &proto.Tread{
+				Fid:    1,
+				Offset: 0,
+				Count:  readSize,
+			})
+
+			// Pre-generate sequential offsets covering 128 MiB in 4K steps.
+			offsets := make([]uint64, numOffsets)
+			maxOffset := uint64(benchFileSize) - uint64(readSize)
+			for i := range offsets {
+				offsets[i] = (uint64(i) * uint64(readSize)) % (maxOffset + 1)
+			}
+
+			b.ReportAllocs()
+			b.SetBytes(int64(readSize))
+			var idx int
+			for b.Loop() {
+				binary.LittleEndian.PutUint64(frame[treadOffsetPos:], offsets[idx%numOffsets])
+				if _, err := cp.client.Write(frame); err != nil {
+					b.Fatalf("write: %v", err)
+				}
+				if err := drainResponse(cp.client); err != nil {
+					b.Fatalf("drain: %v", err)
+				}
+				idx++
+				if idx%1000 == 0 {
+					runtime.GC()
+				}
+			}
+		})
+	}
+}
