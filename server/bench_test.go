@@ -62,19 +62,21 @@ func drainResponse(c net.Conn) error {
 
 // benchAttachFid0 attaches fid 0 to the root over cp.client. Separated from
 // newConnPair so the measurement loop starts with a fid that handlers can use.
-func benchAttachFid0(b *testing.B, cp *connPair) {
-	b.Helper()
-	wire := mustEncode(b, proto.Tag(1), &proto.Tattach{
+// Accepts testing.TB (not *testing.B) so the Phase 14 strace helper test
+// (plan 14-03) can reuse the same prelude without a second implementation.
+func benchAttachFid0(tb testing.TB, cp *connPair) {
+	tb.Helper()
+	wire := mustEncode(tb, proto.Tag(1), &proto.Tattach{
 		Fid:   0,
 		Afid:  proto.NoFid,
 		Uname: "u",
 		Aname: "",
 	})
 	if _, err := cp.client.Write(wire); err != nil {
-		b.Fatalf("attach write: %v", err)
+		tb.Fatalf("attach write: %v", err)
 	}
 	if err := drainResponse(cp.client); err != nil {
-		b.Fatalf("attach drain: %v", err)
+		tb.Fatalf("attach drain: %v", err)
 	}
 }
 

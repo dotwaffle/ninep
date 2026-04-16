@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dotwaffle/ninep/internal/bufpool"
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
 )
@@ -122,43 +123,45 @@ func newConnPairMsize(tb testing.TB, root Node, msize uint32, opts ...Option) *c
 
 // benchWalkOpen walks from fid to name, allocating newFid, then opens newFid.
 // Returns the IOUnit from Rlopen. Must be called before the measurement loop.
-func benchWalkOpen(b *testing.B, cp *connPair, fid, newFid proto.Fid, name string) uint32 {
-	b.Helper()
+// Accepts testing.TB so the Phase 14 strace helper test (plan 14-03) can
+// reuse the prelude from a *testing.T context.
+func benchWalkOpen(tb testing.TB, cp *connPair, fid, newFid proto.Fid, name string) uint32 {
+	tb.Helper()
 
 	// Walk.
-	walkFrame := mustEncode(b, proto.Tag(10), &proto.Twalk{
+	walkFrame := mustEncode(tb, proto.Tag(10), &proto.Twalk{
 		Fid:    fid,
 		NewFid: newFid,
 		Names:  []string{name},
 	})
 	if _, err := cp.client.Write(walkFrame); err != nil {
-		b.Fatalf("walk write: %v", err)
+		tb.Fatalf("walk write: %v", err)
 	}
 	if err := drainResponse(cp.client); err != nil {
-		b.Fatalf("walk drain: %v", err)
+		tb.Fatalf("walk drain: %v", err)
 	}
 
 	// Open — need to decode the response to get IOUnit.
-	openFrame := mustEncode(b, proto.Tag(11), &p9l.Tlopen{
+	openFrame := mustEncode(tb, proto.Tag(11), &p9l.Tlopen{
 		Fid:   newFid,
 		Flags: 0,
 	})
 	if _, err := cp.client.Write(openFrame); err != nil {
-		b.Fatalf("open write: %v", err)
+		tb.Fatalf("open write: %v", err)
 	}
 	// Read and decode the Rlopen to extract IOUnit.
 	var hdr [4]byte
 	if _, err := io.ReadFull(cp.client, hdr[:]); err != nil {
-		b.Fatalf("open read hdr: %v", err)
+		tb.Fatalf("open read hdr: %v", err)
 	}
 	size := binary.LittleEndian.Uint32(hdr[:])
 	body := make([]byte, size-4)
 	if _, err := io.ReadFull(cp.client, body); err != nil {
-		b.Fatalf("open read body: %v", err)
+		tb.Fatalf("open read body: %v", err)
 	}
 	// body[0] = type, body[1:3] = tag, body[3:] = Rlopen payload
 	if proto.MessageType(body[0]) != proto.TypeRlopen {
-		b.Fatalf("expected Rlopen, got type %d", body[0])
+		tb.Fatalf("expected Rlopen, got type %d", body[0])
 	}
 	// Rlopen payload: QID[13] + IOUnit[4]
 	iounit := binary.LittleEndian.Uint32(body[3+13 : 3+13+4])
@@ -172,8 +175,10 @@ const (
 
 // newBenchTree creates a directory with a single 128MiB file named "data" for
 // benchmarking. The file is pre-filled with deterministic random bytes.
-func newBenchTree(b *testing.B) *benchDir {
-	b.Helper()
+// Accepts testing.TB so the Phase 14 strace helper test (plan 14-03) can
+// reuse the same fixture from a *testing.T context.
+func newBenchTree(tb testing.TB) *benchDir {
+	tb.Helper()
 	var gen QIDGenerator
 
 	dir := &benchDir{}
@@ -190,6 +195,65 @@ func newBenchTree(b *testing.B) *benchDir {
 	dir.AddChild("data", file.EmbeddedInode())
 
 	return dir
+}
+
+// nonPayloaderRread wraps a proto.Rread but deliberately does NOT embed it,
+// so *nonPayloaderRread does not satisfy proto.Payloader (EncodeFixed/Payload
+// are NOT method-promoted because inner is a field, not an embedded type).
+// This forces sendResponseInline to take the EncodeTo fallback branch
+// (server/conn.go:833) — the pre-v1.1.18 copy path.
+//
+// Used by BenchmarkServerRead_{4K,1M}/encode=copy subtests to reconstruct a
+// same-binary copy-path baseline per phase 14 D-01 (no git-checkout baselines
+// per D-02). The bufPtr field carries ownership of the pooled buffer backing
+// the original Rread.Data slice; Release returns it to bufpool after the
+// writev completes, preserving the same payload-lifetime contract as
+// pooledRread in server/bridge.go.
+type nonPayloaderRread struct {
+	inner  proto.Rread // NOTE: field, NOT embedded — prevents Payloader method promotion
+	bufPtr *[]byte
+}
+
+// Type delegates to the inner Rread.
+func (r *nonPayloaderRread) Type() proto.MessageType { return r.inner.Type() }
+
+// EncodeTo delegates to the inner Rread — this writes count[4] + data[count]
+// into the body buffer, which is exactly the pre-Payloader copy path.
+func (r *nonPayloaderRread) EncodeTo(w io.Writer) error { return r.inner.EncodeTo(w) }
+
+// DecodeFrom delegates to the inner Rread (unused on the server side but
+// required to satisfy proto.Message).
+func (r *nonPayloaderRread) DecodeFrom(rd io.Reader) error { return r.inner.DecodeFrom(rd) }
+
+// Release returns the pooled buffer that backed the original Rread.Data
+// slice. Called by sendResponseInline after the writev completes.
+func (r *nonPayloaderRread) Release() { bufpool.PutMsgBuf(r.bufPtr) }
+
+// Compile-time guards: MUST be a proto.Message and a releaser, MUST NOT
+// be a proto.Payloader. The absence of the Payloader guard line is
+// intentional — see nonPayloaderRread godoc and the
+// TestNonPayloaderRread_DoesNotSatisfyPayloader runtime assertion.
+var _ proto.Message = (*nonPayloaderRread)(nil)
+var _ releaser = (*nonPayloaderRread)(nil)
+
+// forceCopyMiddleware intercepts *pooledRread responses and swaps them for
+// *nonPayloaderRread with the same bufPtr, preserving the Release contract
+// while forcing the EncodeTo fallback path in sendResponseInline. Used by
+// BenchmarkServerRead_{4K,1M}/encode=copy subtests to produce a same-binary
+// A/B against the production Payloader path (phase 14 D-01, PERF-07.1/.2).
+//
+// Non-pooledRread responses pass through unchanged so this middleware is
+// safe to install on any bench harness that touches other message types
+// (Tversion, Tattach, Twalk, Tlopen, Tclunk all produce non-pooledRread
+// responses).
+var forceCopyMiddleware Middleware = func(next Handler) Handler {
+	return func(ctx context.Context, tag proto.Tag, msg proto.Message) proto.Message {
+		resp := next(ctx, tag, msg)
+		if pr, ok := resp.(*pooledRread); ok {
+			return &nonPayloaderRread{inner: pr.Rread, bufPtr: pr.bufPtr}
+		}
+		return resp
+	}
 }
 
 // treadOffsetPos is the byte offset of the Offset field in a Tread wire frame.
