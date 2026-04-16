@@ -1031,6 +1031,16 @@ type Rreaddir struct {
 // Type returns proto.TypeRreaddir.
 func (m *Rreaddir) Type() proto.MessageType { return proto.TypeRreaddir }
 
+// EncodeFixed implements proto.Payloader. Writes only the 4-byte count
+// prefix so the server's writeLoop can writev m.Data as a separate
+// net.Buffers entry.
+func (m *Rreaddir) EncodeFixed(w io.Writer) error {
+	return proto.WriteUint32(w, uint32(len(m.Data)))
+}
+
+// Payload implements proto.Payloader. Returns m.Data directly.
+func (m *Rreaddir) Payload() []byte { return m.Data }
+
 // EncodeTo writes the Rreaddir body: count[4] data[count].
 func (m *Rreaddir) EncodeTo(w io.Writer) error {
 	if err := proto.WriteUint32(w, uint32(len(m.Data))); err != nil {

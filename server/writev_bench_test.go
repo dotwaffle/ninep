@@ -97,11 +97,33 @@ func BenchmarkWriteApproach(b *testing.B) {
 		{"transport=pipe", pipePair},
 	}
 
+	// Third approach variant simulates the v1.1.9 Payloader pattern: the
+	// fixed body + payload are separate net.Buffers entries so the payload
+	// bytes go direct to socket via writev (no memcpy into a shared body
+	// buffer). The caller passes the payload as body here; we split into
+	// [hdr, fixedBody(4 bytes of count prefix stand-in), payload].
 	approaches := []struct {
 		name string
 		// fn takes a conn, header, and body, and writes a full response.
 		fn func(c net.Conn, hdr, body []byte) error
 	}{
+		{
+			name: "approach=buffers_payload_split",
+			fn: func() func(c net.Conn, hdr, body []byte) error {
+				// Mirrors flushBatch + Payloader: [hdr, fixedBody, payload].
+				// We simulate a 4-byte fixed body (Rread count prefix).
+				fixedBody := make([]byte, 4)
+				var arr [3][]byte
+				return func(c net.Conn, hdr, body []byte) error {
+					arr[0] = hdr
+					arr[1] = fixedBody
+					arr[2] = body // payload — NOT copied into fixedBody
+					bufs := net.Buffers(arr[:])
+					_, err := bufs.WriteTo(c)
+					return err
+				}
+			}(),
+		},
 		{
 			name: "approach=sequential",
 			fn: func(c net.Conn, hdr, body []byte) error {

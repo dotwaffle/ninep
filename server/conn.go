@@ -740,14 +740,34 @@ drainLoop:
 		}
 	}
 
-	// Encode each response: body into a pooled buffer, header into the
-	// hdrSlab slot. Build the net.Buffers entries as we go.
+	// Encode each response: fixed body bytes into a pooled buffer, header
+	// into the hdrSlab slot. Messages implementing proto.Payloader have
+	// their payload placed as a separate net.Buffers entry so the bytes
+	// go from the response struct directly to the socket via writev —
+	// skipping the copy into the pooled body buffer for large Rread/Rreaddir
+	// responses.
 	for i, resp := range c.batch {
 		body := bufpool.GetBuf()
-		if err := resp.msg.EncodeTo(body); err != nil {
-			// Encode failure is logged; we still release what we've got
-			// and skip this response. The client will see a hung tag but
-			// EncodeTo for a valid message should not fail in practice.
+
+		// Payloader fast path: encode only the fixed part (e.g. 4-byte
+		// count for Rread) into body; keep the payload slice as a
+		// separate net.Buffers entry.
+		var payload []byte
+		if pl, ok := resp.msg.(proto.Payloader); ok {
+			if err := pl.EncodeFixed(body); err != nil {
+				c.logger.Warn("encode error",
+					slog.String("type", resp.msg.Type().String()),
+					slog.Any("error", err),
+				)
+				bufpool.PutBuf(body)
+				if resp.release != nil {
+					resp.release()
+				}
+				c.bodies = append(c.bodies, nil)
+				continue
+			}
+			payload = pl.Payload()
+		} else if err := resp.msg.EncodeTo(body); err != nil {
 			c.logger.Warn("encode error",
 				slog.String("type", resp.msg.Type().String()),
 				slog.Any("error", err),
@@ -756,19 +776,20 @@ drainLoop:
 			if resp.release != nil {
 				resp.release()
 			}
-			// Shift subsequent batch items down and continue.
-			// Simpler: mark this slot as nil-body and skip during write.
 			c.bodies = append(c.bodies, nil)
 			continue
 		}
 		c.bodies = append(c.bodies, body)
 
-		size := uint32(proto.HeaderSize) + uint32(body.Len())
+		size := uint32(proto.HeaderSize) + uint32(body.Len()) + uint32(len(payload))
 		hdrSlot := c.hdrSlab[i*int(proto.HeaderSize) : (i+1)*int(proto.HeaderSize)]
 		binary.LittleEndian.PutUint32(hdrSlot[0:4], size)
 		hdrSlot[4] = uint8(resp.msg.Type())
 		binary.LittleEndian.PutUint16(hdrSlot[5:7], uint16(resp.tag))
 		c.encBufs = append(c.encBufs, hdrSlot, body.Bytes())
+		if len(payload) > 0 {
+			c.encBufs = append(c.encBufs, payload)
+		}
 	}
 
 	// Single writev under writeMu.
