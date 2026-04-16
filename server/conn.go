@@ -118,11 +118,16 @@ type releaser interface {
 // workItem is a decoded request ready for handler dispatch. The readLoop
 // populates it and sends to conn.workCh; an idle worker picks it up and
 // runs the handler chain synchronously, then loops back for the next item.
+//
+// bufPtr, when non-nil, points at a pooled message body buffer that the
+// request aliases (currently only Twrite.Data). handleWorkItem returns
+// it to bufpool after the handler completes — storing the pointer directly
+// instead of wrapping it in a closure avoids a per-request heap alloc.
 type workItem struct {
-	ctx     context.Context
-	tag     proto.Tag
-	msg     proto.Message
-	release func() // called after handler returns; nil when no pooled buffer held
+	ctx    context.Context
+	tag    proto.Tag
+	msg    proto.Message
+	bufPtr *[]byte
 }
 
 // conn represents a single client connection to the server.
@@ -493,12 +498,13 @@ func (c *conn) readLoop(ctx context.Context) {
 			continue
 		}
 
-		// msgRelease is called after the handler returns (in handleRequest
-		// defer). nil for messages whose DecodeFrom copies all data out of
-		// the pool buffer — the buffer is returned to the pool immediately.
-		// Non-nil for Twrite (DecodeFromBuf aliases m.Data into bufPtr) so
-		// the buffer survives handler execution.
-		var msgRelease func()
+		// deferredBufPtr is the pooled message-body buffer carried over
+		// to the handler when the request aliases into it (currently only
+		// Twrite with DecodeFromBuf). nil for messages whose DecodeFrom
+		// copies all data out — the buffer is returned to the pool
+		// immediately. Carrying a raw pointer avoids the per-request
+		// closure alloc that wrapping PutMsgBuf in func() would cost.
+		var deferredBufPtr *[]byte
 
 		if tw, ok := msg.(*proto.Twrite); ok {
 			// Zero-copy Twrite: m.Data aliases bufPtr; defer release.
@@ -510,10 +516,9 @@ func (c *conn) readLoop(ctx context.Context) {
 				)
 				return // Fatal decode error.
 			}
-			bp := bufPtr
-			msgRelease = func() { bufpool.PutMsgBuf(bp) }
-			// Do NOT put bufPtr to the pool here — it is released by
-			// handleRequest's defer after the handler finishes with Data.
+			deferredBufPtr = bufPtr
+			// Do NOT put bufPtr to the pool here — handleWorkItem's
+			// defer returns it after the handler finishes with Data.
 		} else {
 			c.bodyReader.Reset(b[3:])
 			if err := msg.DecodeFrom(&c.bodyReader); err != nil {
@@ -546,10 +551,10 @@ func (c *conn) readLoop(ctx context.Context) {
 		// reached), providing the same back-pressure the old semaphore
 		// offered. On ctx cancellation, clean up the request state.
 		select {
-		case c.workCh <- workItem{ctx: reqCtx, tag: tag, msg: msg, release: msgRelease}:
+		case c.workCh <- workItem{ctx: reqCtx, tag: tag, msg: msg, bufPtr: deferredBufPtr}:
 		case <-ctx.Done():
-			if msgRelease != nil {
-				msgRelease()
+			if deferredBufPtr != nil {
+				bufpool.PutMsgBuf(deferredBufPtr)
 			}
 			c.inflight.finish(tag)
 			return
@@ -581,12 +586,13 @@ func (c *conn) worker(_ context.Context) {
 // handleWorkItem runs one request through the middleware + dispatch chain
 // with panic recovery. Invoked synchronously by worker(); a panic is
 // caught, turned into an EIO response, and the worker loop continues.
-// release, when non-nil, returns any pooled buffers aliased by the request
-// (e.g. Twrite.Data) after the handler returns.
+// item.bufPtr, when non-nil, is a pooled message-body buffer the request
+// aliases (e.g. Twrite.Data); it is returned to bufpool after the handler
+// finishes with it.
 func (c *conn) handleWorkItem(item workItem) {
 	defer func() {
-		if item.release != nil {
-			item.release()
+		if item.bufPtr != nil {
+			bufpool.PutMsgBuf(item.bufPtr)
 		}
 		if r := recover(); r != nil {
 			// SERV-06: Handler panic -> EIO, never crash the server.
