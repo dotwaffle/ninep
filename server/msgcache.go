@@ -47,6 +47,17 @@ var (
 	tlcreateCache = make(chan *p9l.Tlcreate, msgCacheCap)
 )
 
+// NOT_CACHED — The following T* types carry string/slice fields but were
+// evaluated for caching and DECLINED per 13-05 profile audit (2026-04-16).
+// The 17-bench suite captured 0 allocs for each of these types because none
+// of the benches exercise cold-path ops (rename, setattr, mkdir, symlink,
+// mknod, link, xattr, lock). A future milestone that adds cold-path benches
+// or profiles a real workload (tar-extract, rm -rf, chmod -R) may justify
+// revisiting. See .planning/phases/13/13-05-audit.md.
+//
+// DECLINED: Trename, Tsetattr, Tmkdir, Tsymlink, Tmknod, Trenameat, Tunlinkat,
+//           Tlink, Txattrwalk, Txattrcreate, Tlock, Tgetlock
+
 // getCachedTread returns a *proto.Tread from the cache (zeroed) or a fresh
 // allocation if the cache is empty. Safe for concurrent use; the non-blocking
 // receive falls through to the default case if no cached entry is available.
