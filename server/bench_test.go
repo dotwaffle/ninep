@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -443,5 +444,99 @@ func BenchmarkEncodeDirents(b *testing.B) {
 				_, _ = EncodeDirents(dirents, maxBytes)
 			}
 		})
+	}
+}
+
+// benchCreateDir is a bench-only directory node that implements NodeCreater
+// (server/node.go:85-88) so BenchmarkCreateWriteClose exercises Tlcreate
+// through the full bridge path rather than bouncing off Rlerror(ENOSYS).
+// Created files live in-memory, share no storage with the parent, and are
+// never read back — the bench measures create→write→clunk round-trip cost,
+// not file content persistence.
+//
+// Compare with benchDir in io_bench_test.go (lines 58-63) which only
+// implements Open; benchCreateDir is a strict superset.
+type benchCreateDir struct {
+	Inode
+	gen *QIDGenerator // for creating child QIDs
+}
+
+func (d *benchCreateDir) Open(_ context.Context, _ uint32) (FileHandle, uint32, error) {
+	return nil, 0, nil
+}
+
+func (d *benchCreateDir) Create(_ context.Context, name string, flags uint32, mode proto.FileMode, gid uint32) (Node, FileHandle, uint32, error) {
+	_ = name
+	_ = flags
+	_ = mode
+	_ = gid
+	child := &benchFile{data: make([]byte, 4096)}
+	child.Init(d.gen.Next(proto.QTFILE), child)
+	// Do not d.AddChild — the bench does not re-walk; the created child
+	// is referenced only via the Tlcreate-returned fid for the same iteration.
+	return child, nil, 0, nil
+}
+
+// newBenchCreateTree builds a benchCreateDir root for BenchmarkCreateWriteClose.
+func newBenchCreateTree(b *testing.B) *benchCreateDir {
+	b.Helper()
+	var gen QIDGenerator
+	dir := &benchCreateDir{gen: &gen}
+	dir.Init(gen.Next(proto.QTDIR), dir)
+	return dir
+}
+
+// BenchmarkCreateWriteClose measures the 4-message create-write-close pipeline
+// (Twalk(clone) → Tlcreate → Twrite(4K) → Tclunk) over a unix domain socket.
+// Mirrors the Q workload's small_file_create pattern without a kernel 9p
+// mount: every iteration creates a fresh file, writes 4 KiB, and clunks.
+//
+// Acceptance (PERF-05.1, success criterion 4): allocs/op reported here MUST
+// be at least 4 lower than the `-tags nocache` run of the same bench.
+// The A/B comparison is produced via `benchstat` on the two runs.
+//
+// Transport is unix-only: pipe hides writev-related effects, and the Q
+// workload runs over kernel 9p (unix socket + v9fs). See 13-RESEARCH.md
+// Pitfall 7 and CLAUDE.md §Performance.
+func BenchmarkCreateWriteClose(b *testing.B) {
+	root := newBenchCreateTree(b)
+	cp := newConnPairMsizeTransport(b, "unix", root, 65536)
+	b.Cleanup(func() { cp.close(b) })
+
+	benchAttachFid0(b, cp)
+
+	writeData := make([]byte, 4096)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(writeData)))
+	var seq uint32
+	for b.Loop() {
+		seq++
+		newFid := proto.Fid(1000 + seq)
+		walk := mustEncode(b, proto.Tag(1), &proto.Twalk{
+			Fid:    0,
+			NewFid: newFid,
+			Names:  nil,
+		})
+		create := mustEncode(b, proto.Tag(2), &p9l.Tlcreate{
+			Fid:   newFid,
+			Name:  "f" + strconv.FormatUint(uint64(seq), 10),
+			Flags: 0x0002 | 0x0040, // O_RDWR | O_CREAT
+			Mode:  0o644,
+		})
+		write := mustEncode(b, proto.Tag(3), &proto.Twrite{
+			Fid:    newFid,
+			Offset: 0,
+			Data:   writeData,
+		})
+		clunk := mustEncode(b, proto.Tag(4), &proto.Tclunk{Fid: newFid})
+
+		for _, frame := range [][]byte{walk, create, write, clunk} {
+			if _, err := cp.client.Write(frame); err != nil {
+				b.Fatalf("write: %v", err)
+			}
+			if err := drainResponse(cp.client); err != nil {
+				b.Fatalf("drain: %v", err)
+			}
+		}
 	}
 }
