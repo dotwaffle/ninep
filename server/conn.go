@@ -614,13 +614,16 @@ func (c *conn) handleRequest(ctx context.Context) {
 			continue
 		}
 
-		// Per-request context with cancellation for flush support.
-		reqCtx, cancel := context.WithCancel(ctx)
-		c.inflight.start(tag, cancel)
+		// Per-request context with lazy-cancel flush support. Pooled via
+		// requestCtxPool; returned to the pool in dispatchInline's defer
+		// chain AFTER inflight.finish (LIFO ordering — putRequestCtx is
+		// registered first so it executes last). See D-07 / Pitfall 4.
+		rctx := getRequestCtx(ctx)
+		c.inflight.start(tag, rctx)
 
 		// Dispatch + send response inline (this folds in the work that
 		// was previously the worker's responsibility).
-		c.dispatchInline(reqCtx, tag, msg, deferredBufPtr)
+		c.dispatchInline(rctx, tag, msg, deferredBufPtr)
 	}
 }
 
@@ -634,7 +637,15 @@ func (c *conn) handleRequest(ctx context.Context) {
 // the pool BEFORE putCachedMsg: defer is LIFO and Twrite.Data aliases the
 // buffer; clearing the cache before release would zero Data while it
 // still references the recycled buffer (RESEARCH P10).
-func (c *conn) dispatchInline(ctx context.Context, tag proto.Tag, msg proto.Message, bufPtr *[]byte) {
+func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message, bufPtr *[]byte) {
+	// LIFO: registered FIRST so it runs LAST — after c.inflight.finish(tag)
+	// in the defer below. Required by D-07 / Pitfall 4: a concurrent Tflush
+	// must be able to look up `tag` in the inflight map until finish()
+	// removes it; only then is it safe to recycle rctx back to the pool.
+	// Violating this ordering causes Tflush to call flush() on a
+	// pool-recycled requestCtx belonging to an unrelated later request.
+	defer putRequestCtx(rctx)
+
 	defer func() {
 		if bufPtr != nil {
 			bufpool.PutMsgBuf(bufPtr)
@@ -652,7 +663,7 @@ func (c *conn) dispatchInline(ctx context.Context, tag proto.Tag, msg proto.Mess
 		c.inflight.finish(tag)
 	}()
 
-	resp := c.handler(ctx, tag, msg)
+	resp := c.handler(rctx, tag, msg) // *requestCtx satisfies context.Context
 	if resp != nil {
 		// Store the releaser interface verbatim -- taking r.Release as
 		// a method value would allocate a heap closure on every request.
