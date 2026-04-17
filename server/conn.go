@@ -16,9 +16,6 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9l"
 	"github.com/dotwaffle/ninep/proto/p9u"
 
-	metricnoop "go.opentelemetry.io/otel/metric/noop"
-	tracenoop "go.opentelemetry.io/otel/trace/noop"
-
 	"context"
 	"sync"
 )
@@ -201,19 +198,17 @@ func newConn(s *Server, nc net.Conn) *conn {
 		return c.dispatch(ctx, tag, msg)
 	}
 
-	// If OTel providers are configured, prepend OTel middleware (outermost)
-	// and create connection-level gauge instruments.
+	// If either probe at server.New detected a recording tracer or enabled
+	// meter, prepend OTel middleware (outermost) and create connection-level
+	// gauge instruments. The nil-to-noop fallback that previously lived here
+	// has been moved to server.New (D-04): by the time we reach this block,
+	// either (a) s.tracerRecording and s.meterEnabled are both false and we
+	// skip the install entirely (short-circuit path -- no middleware call
+	// frame, no context.WithValue wrap, no span.Start), or (b) at least one
+	// is true and both s.tracerProvider and s.meterProvider are non-nil.
 	mws := s.middlewares
-	if s.tracerProvider != nil || s.meterProvider != nil {
-		tp := s.tracerProvider
-		if tp == nil {
-			tp = tracenoop.NewTracerProvider()
-		}
-		mp := s.meterProvider
-		if mp == nil {
-			mp = metricnoop.NewMeterProvider()
-		}
-		mws = append([]Middleware{newOTelMiddleware(tp, mp, c)}, mws...)
+	if s.tracerRecording || s.meterEnabled {
+		mws = append([]Middleware{newOTelMiddleware(s.tracerProvider, s.meterProvider, c)}, mws...)
 		c.otelInst = newConnOTelInstruments(s.meterProvider)
 	}
 
