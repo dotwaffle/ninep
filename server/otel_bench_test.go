@@ -6,6 +6,7 @@ import (
 
 	"github.com/dotwaffle/ninep/proto"
 
+	"go.opentelemetry.io/otel"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 )
 
@@ -79,5 +80,108 @@ func BenchmarkOTelMiddleware(b *testing.B) {
 				idx++
 			}
 		})
+	}
+}
+
+// BenchmarkHandleRead_NoOTel is the control case for PERF-06 SC-2: server
+// built with NO telemetry options. Reports the steady-state allocs/op and
+// ns/op for a 4 KiB Tread round-trip without any OTel middleware in the
+// chain. Per D-08.
+//
+// Pair with BenchmarkHandleRead_NoopOTel under -count=10 -benchmem and
+// compare via benchstat. Acceptance (D-10): allocs/op MUST be equal;
+// ns/op within 1%. If ns/op exceeds 1% but allocs/op equality holds,
+// surface at checkpoint -- ns/op at 4 KiB lives at timing noise-floor
+// per Phase 14 experience.
+func BenchmarkHandleRead_NoOTel(b *testing.B) {
+	const readSize uint32 = 4096
+
+	root := newBenchTree(b)
+	cp := newConnPair(b, root) // no telemetry options -- D-08 control
+	b.Cleanup(func() { cp.close(b) })
+
+	benchAttachFid0(b, cp)
+	benchWalkOpen(b, cp, 0, 1, "data")
+
+	frame := mustEncode(b, proto.Tag(1), &proto.Tread{
+		Fid:    1,
+		Offset: 0,
+		Count:  readSize,
+	})
+
+	maxOffset := uint64(benchFileSize) - uint64(readSize)
+	offsets := make([]uint64, numOffsets)
+	for i := range offsets {
+		offsets[i] = (uint64(i) * uint64(readSize)) % (maxOffset + 1)
+	}
+
+	b.ReportAllocs()
+	b.SetBytes(int64(readSize))
+	var idx int
+	for b.Loop() {
+		binary.LittleEndian.PutUint64(frame[treadOffsetPos:], offsets[idx%numOffsets])
+		if _, err := cp.client.Write(frame); err != nil {
+			b.Fatalf("write: %v", err)
+		}
+		if err := drainResponse(cp.client); err != nil {
+			b.Fatalf("drain: %v", err)
+		}
+		idx++
+	}
+}
+
+// BenchmarkHandleRead_NoopOTel is the treatment case for PERF-06 SC-2:
+// server built with WithTracer(otel.GetTracerProvider()) +
+// WithMeter(otel.GetMeterProvider()) against an uninitialized OTel SDK,
+// matching Q's cmd/qmount/main.go:310-311 wiring. Per D-09. With the
+// probe-based short-circuit in place (plan 15-01), both probes return
+// false at server.New(), the middleware is NOT installed at newConn,
+// and per-request cost drops to the BenchmarkHandleRead_NoOTel baseline.
+//
+// Acceptance (D-10): allocs/op EXACTLY equals BenchmarkHandleRead_NoOTel;
+// ns/op within 1%. Any allocs/op delta proves the middleware is still
+// installed and the short-circuit is broken.
+//
+// Note: this benchmark relies on global OTel state staying noop. No
+// other test or benchmark in the server package calls otel.SetTracerProvider
+// or otel.SetMeterProvider (verified via grep; setupOTelTest uses
+// WithTracer/WithMeter on the server only, not the global). Safe.
+func BenchmarkHandleRead_NoopOTel(b *testing.B) {
+	const readSize uint32 = 4096
+
+	root := newBenchTree(b)
+	cp := newConnPair(b, root,
+		WithTracer(otel.GetTracerProvider()),
+		WithMeter(otel.GetMeterProvider()),
+	)
+	b.Cleanup(func() { cp.close(b) })
+
+	benchAttachFid0(b, cp)
+	benchWalkOpen(b, cp, 0, 1, "data")
+
+	frame := mustEncode(b, proto.Tag(1), &proto.Tread{
+		Fid:    1,
+		Offset: 0,
+		Count:  readSize,
+	})
+
+	maxOffset := uint64(benchFileSize) - uint64(readSize)
+	offsets := make([]uint64, numOffsets)
+	for i := range offsets {
+		offsets[i] = (uint64(i) * uint64(readSize)) % (maxOffset + 1)
+	}
+
+	b.ReportAllocs()
+	b.SetBytes(int64(readSize))
+	var idx int
+	for b.Loop() {
+		binary.LittleEndian.PutUint64(frame[treadOffsetPos:], offsets[idx%numOffsets])
+		if _, err := cp.client.Write(frame); err != nil {
+			b.Fatalf("write: %v", err)
+		}
+		if err := drainResponse(cp.client); err != nil {
+			b.Fatalf("drain: %v", err)
+		}
+		idx++
 	}
 }
