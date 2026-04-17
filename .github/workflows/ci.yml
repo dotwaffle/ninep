@@ -58,3 +58,15 @@ jobs:
 
       - name: Fuzz p9u codec
         run: go test -fuzz=FuzzCodecRoundTrip -fuzztime=30s ./proto/p9u/
+
+  stress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - name: Stress tests (requestCtx race surface)
+        run: go test -tags=stress -race -count=1 ./server/...
