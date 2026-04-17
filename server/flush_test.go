@@ -20,10 +20,10 @@ func TestInflightMap_StartFinish(t *testing.T) {
 	t.Parallel()
 
 	im := newInflightMap()
-	_, cancel := context.WithCancel(t.Context())
-	defer cancel()
+	rctx := getRequestCtx(t.Context())
+	defer putRequestCtx(rctx)
 
-	im.start(1, cancel)
+	im.start(1, rctx)
 	if im.len() != 1 {
 		t.Fatalf("len after start = %d, want 1", im.len())
 	}
@@ -38,19 +38,26 @@ func TestInflightMap_FlushCancelsContext(t *testing.T) {
 	t.Parallel()
 
 	im := newInflightMap()
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
+	rctx := getRequestCtx(t.Context())
+	defer putRequestCtx(rctx)
 
-	im.start(1, cancel)
+	im.start(1, rctx)
+
+	// Observe Done() before flush so the channel is allocated and flush's
+	// close-path exercises the initialized-channel branch.
+	done := rctx.Done()
 
 	// Flush should cancel the context.
 	im.flush(1)
 
 	select {
-	case <-ctx.Done():
+	case <-done:
 		// Expected: context was cancelled.
 	case <-time.After(time.Second):
 		t.Fatal("context not cancelled after flush")
+	}
+	if rctx.Err() != context.Canceled {
+		t.Fatalf("Err() after flush = %v, want context.Canceled", rctx.Err())
 	}
 
 	// Entry should still be present (handler hasn't finished yet).
@@ -78,21 +85,31 @@ func TestInflightMap_CancelAll(t *testing.T) {
 
 	im := newInflightMap()
 
-	ctxs := make([]context.Context, 3)
+	rctxs := make([]*requestCtx, 3)
+	dones := make([]<-chan struct{}, 3)
 	for i := range 3 {
-		ctx, cancel := context.WithCancel(t.Context())
-		ctxs[i] = ctx
-		im.start(proto.Tag(i), cancel)
+		r := getRequestCtx(t.Context())
+		rctxs[i] = r
+		dones[i] = r.Done() // allocate channel up-front so cancelAll's close fires
+		im.start(proto.Tag(i), r)
 	}
+	defer func() {
+		for _, r := range rctxs {
+			putRequestCtx(r)
+		}
+	}()
 
 	im.cancelAll()
 
-	for i, ctx := range ctxs {
+	for i, done := range dones {
 		select {
-		case <-ctx.Done():
+		case <-done:
 			// Expected.
 		default:
 			t.Errorf("context %d not cancelled after cancelAll", i)
+		}
+		if rctxs[i].Err() != context.Canceled {
+			t.Errorf("ctx %d Err() = %v, want context.Canceled", i, rctxs[i].Err())
 		}
 	}
 
@@ -110,10 +127,10 @@ func TestInflightMap_Wait(t *testing.T) {
 	t.Parallel()
 
 	im := newInflightMap()
-	_, cancel := context.WithCancel(t.Context())
-	defer cancel()
+	rctx := getRequestCtx(t.Context())
+	defer putRequestCtx(rctx)
 
-	im.start(1, cancel)
+	im.start(1, rctx)
 
 	done := make(chan struct{})
 	go func() {
@@ -143,10 +160,10 @@ func TestInflightMap_WaitWithDeadline(t *testing.T) {
 	t.Parallel()
 
 	im := newInflightMap()
-	_, cancel := context.WithCancel(t.Context())
-	defer cancel()
+	rctx := getRequestCtx(t.Context())
+	defer putRequestCtx(rctx)
 
-	im.start(1, cancel)
+	im.start(1, rctx)
 
 	deadlineCtx, deadlineCancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer deadlineCancel()
