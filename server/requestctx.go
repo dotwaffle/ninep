@@ -94,6 +94,14 @@ func (r *requestCtx) Value(key any) any { return r.parent.Value(key) }
 // Idempotent via a CAS on flushed; double-close of the done channel is
 // prevented by closeOnce.
 //
+// Goes through initOnce to synchronize the read of r.done against a
+// concurrent Done() caller's write. A bare read here would race with
+// Done()'s initOnce.Do(func() { r.done = make(...) }) because initOnce
+// only establishes happens-before between goroutines that both call
+// initOnce.Do — which Done() does but flush() otherwise would not. By
+// routing flush through initOnce, both paths observe the same r.done
+// value under the same sync.Once guarantee.
+//
 // The err argument is reserved for future context.Cause support; current
 // Err() returns context.Canceled to preserve behavioural parity with the
 // prior context.WithCancel implementation (CONTEXT D-05, RESEARCH OQ-2).
@@ -101,9 +109,11 @@ func (r *requestCtx) flush(_ error) {
 	if !r.flushed.CompareAndSwap(false, true) {
 		return
 	}
-	if r.done != nil {
-		r.closeOnce.Do(func() { close(r.done) })
-	}
+	// Synchronize r.done access with Done()'s initOnce write. If Done()
+	// has not yet run, we allocate the channel here so Done() returns the
+	// already-closed channel immediately on its first call.
+	r.initOnce.Do(func() { r.done = make(chan struct{}) })
+	r.closeOnce.Do(func() { close(r.done) })
 }
 
 // requestCtxPool backs getRequestCtx / putRequestCtx. Package-global per
