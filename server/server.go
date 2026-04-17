@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/metric"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 // Server serves the 9P protocol over network connections. Create with New.
@@ -29,6 +31,15 @@ type Server struct {
 	tracerProvider trace.TracerProvider
 	meterProvider  metric.MeterProvider
 	otelInst       *serverOTelInstruments // server-level metrics (nil if no MeterProvider)
+
+	// tracerRecording is true when the configured TracerProvider produces
+	// recording spans. Populated once by probeOTelProviders in New(), then
+	// immutable. When both tracerRecording and meterEnabled are false, the
+	// OTel middleware is NOT installed at newConn time.
+	tracerRecording bool
+	// meterEnabled is true when the configured MeterProvider produces
+	// instruments whose Enabled(ctx) returns true. See tracerRecording docs.
+	meterEnabled bool
 }
 
 // New creates a Server rooted at the given Node. Options configure behavior.
@@ -44,6 +55,24 @@ func New(root Node, opts ...Option) *Server {
 	for _, opt := range opts {
 		opt(s)
 	}
+
+	// Probe OTel providers once at construction. The cached booleans drive
+	// the install gate in newConn (server/conn.go). When both providers are
+	// nil, skip the probe entirely -- tracerRecording and meterEnabled stay
+	// false and newConn's gate is false, so the middleware is never installed.
+	// When either is non-nil, fill the other with a noop default (matching
+	// the prior conn.go install-gate pattern, moved up here per D-04) and run
+	// the probe against the real (possibly noop) providers.
+	if s.tracerProvider != nil || s.meterProvider != nil {
+		if s.tracerProvider == nil {
+			s.tracerProvider = tracenoop.NewTracerProvider()
+		}
+		if s.meterProvider == nil {
+			s.meterProvider = metricnoop.NewMeterProvider()
+		}
+		probeOTelProviders(s)
+	}
+
 	s.otelInst = newServerOTelInstruments(s.meterProvider) // nil if no MeterProvider
 	return s
 }

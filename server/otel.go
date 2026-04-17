@@ -158,6 +158,44 @@ func newOTelMiddleware(tp trace.TracerProvider, mp metric.MeterProvider, c *conn
 	}
 }
 
+// probeOTelProviders populates s.tracerRecording and s.meterEnabled via a
+// one-time probe of the configured providers. Called exactly once from
+// server.New after options apply and after nil providers have been filled
+// with noop defaults. Probe objects (span + counter) are discarded
+// immediately; only the two booleans are retained.
+//
+// The probe creates a span with instrumentationName scope and an
+// Int64Counter named "probe" in the same scope. If a real OTel SDK is later
+// installed via otel.SetTracerProvider / otel.SetMeterProvider AFTER
+// server.New returns, the probe instrument may surface as a zero-valued
+// "probe" counter under the ninep scope. This is acceptable because Q wires
+// OTel BEFORE server.New (per 15-CONTEXT.md canonical refs), so in practice
+// the probe never reaches a real SDK. Re-probing to handle post-New provider
+// swaps is explicitly deferred (D-04).
+//
+// Preconditions: s.tracerProvider and s.meterProvider MUST be non-nil. The
+// caller (New) ensures this.
+func probeOTelProviders(s *Server) {
+	// Tracer probe: IsRecording() is false for both noop.NewTracerProvider()
+	// and otel.GetTracerProvider() before any SDK is installed.
+	tracer := s.tracerProvider.Tracer(instrumentationName)
+	_, span := tracer.Start(context.Background(), "probe")
+	s.tracerRecording = span.IsRecording()
+	span.End()
+
+	// Meter probe: Enabled(ctx) is false for both noop.NewMeterProvider()
+	// and otel.GetMeterProvider() before any SDK is installed. Stable API
+	// since OTel v1.40.0.
+	meter := s.meterProvider.Meter(instrumentationName)
+	counter, err := meter.Int64Counter("probe")
+	if err != nil {
+		// Int64Counter only errors on invalid names; "probe" is valid.
+		// Defensive: leave meterEnabled at its zero value (false).
+		return
+	}
+	s.meterEnabled = counter.Enabled(context.Background())
+}
+
 // requestMessageTypes lists every T-message type the server may dispatch.
 // Used by buildOpNameAttrs to pre-build the metric.MeasurementOption cache.
 // Responses (R-prefixed types) and Tlerror (never sent on the wire) are
