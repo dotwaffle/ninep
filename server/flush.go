@@ -16,7 +16,7 @@ type inflightMap struct {
 }
 
 type inflightEntry struct {
-	cancel context.CancelFunc
+	rctx *requestCtx
 }
 
 // newInflightMap returns an initialized inflight map.
@@ -24,13 +24,14 @@ func newInflightMap() *inflightMap {
 	return &inflightMap{entries: make(map[proto.Tag]inflightEntry)}
 }
 
-// start registers a new in-flight request. The cancel function is stored so
-// that flush can cancel the request's context. Caller must call finish(tag)
-// when the handler goroutine completes.
-func (im *inflightMap) start(tag proto.Tag, cancel context.CancelFunc) {
+// start registers a new in-flight request. The *requestCtx is stored so
+// that flush can trigger cancellation without an additional indirection
+// through context.CancelFunc. Caller must call finish(tag) when the handler
+// goroutine completes.
+func (im *inflightMap) start(tag proto.Tag, rctx *requestCtx) {
 	im.mu.Lock()
 	defer im.mu.Unlock()
-	im.entries[tag] = inflightEntry{cancel: cancel}
+	im.entries[tag] = inflightEntry{rctx: rctx}
 	im.wg.Add(1)
 }
 
@@ -50,7 +51,7 @@ func (im *inflightMap) flush(tag proto.Tag) {
 	im.mu.Lock()
 	defer im.mu.Unlock()
 	if entry, ok := im.entries[tag]; ok {
-		entry.cancel()
+		entry.rctx.flush(errTflushCancelled)
 	}
 }
 
@@ -60,7 +61,7 @@ func (im *inflightMap) cancelAll() {
 	im.mu.Lock()
 	defer im.mu.Unlock()
 	for _, entry := range im.entries {
-		entry.cancel()
+		entry.rctx.flush(errConnCleanup)
 	}
 }
 
