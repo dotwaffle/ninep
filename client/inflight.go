@@ -49,10 +49,17 @@ func (im *inflightMap) register(tag proto.Tag) chan proto.Message {
 // was not registered (Pitfall 10-A: late response after cancel, or a
 // misbehaving server), the msg is silently dropped — caller logs upstream
 // if desired.
+//
+// The send happens under RLock to serialize against cancelAll's close(ch)
+// call. Without this, the -race detector flags (correctly) that chansend
+// and closechan may be concurrent on the same channel when the read loop
+// delivers a message while Close is tearing down. The RLock is released
+// immediately after the non-blocking select so deliver never parks while
+// holding the lock.
 func (im *inflightMap) deliver(tag proto.Tag, msg proto.Message) {
 	im.mu.RLock()
+	defer im.mu.RUnlock()
 	ch := im.entries[tag]
-	im.mu.RUnlock()
 	if ch == nil {
 		return
 	}
