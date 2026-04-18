@@ -122,3 +122,163 @@ func expectRType(msg proto.Message, wantTypes ...proto.MessageType) error {
 	}
 	return fmt.Errorf("client: unexpected response type %v", got)
 }
+
+// Attach associates fid with the root of the file tree named by aname and
+// establishes the session for user uname. Per D-17/D-18 Phase 19 supports
+// only afid=NoFid (no authentication); Tauth is not implemented. aname
+// selects the mount point, server-defined; the empty string is the
+// conventional "default" root.
+//
+// Returns the root QID on success, or a *Error translated from Rlerror/Rerror
+// on server-side failure.
+func (c *Conn) Attach(ctx context.Context, fid proto.Fid, uname, aname string) (proto.QID, error) {
+	req := &proto.Tattach{
+		Fid:   fid,
+		Afid:  proto.NoFid,
+		Uname: uname,
+		Aname: aname,
+	}
+	resp, err := c.roundTrip(ctx, req)
+	if err != nil {
+		return proto.QID{}, err
+	}
+	if err := toError(resp); err != nil {
+		return proto.QID{}, err
+	}
+	r, ok := resp.(*proto.Rattach)
+	if !ok {
+		return proto.QID{}, fmt.Errorf("client: expected Rattach, got %v", resp.Type())
+	}
+	// Rattach is not cached (cold path; once per Attach) but go through
+	// putCachedRMsg anyway so future cache-additions do not silently miss
+	// this return path.
+	qid := r.QID
+	putCachedRMsg(resp)
+	return qid, nil
+}
+
+// Walk descends from fid along names, creating newFid at the final element.
+// An empty names slice clones fid into newFid without navigating. Returns
+// one QID per successfully walked element.
+//
+// The returned []proto.QID is caller-owned — it is copied out of the pooled
+// Rwalk struct before the struct is returned to the cache, so callers may
+// retain the slice indefinitely.
+func (c *Conn) Walk(ctx context.Context, fid, newFid proto.Fid, names []string) ([]proto.QID, error) {
+	req := &proto.Twalk{Fid: fid, NewFid: newFid, Names: names}
+	resp, err := c.roundTrip(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if err := toError(resp); err != nil {
+		return nil, err
+	}
+	r, ok := resp.(*proto.Rwalk)
+	if !ok {
+		return nil, fmt.Errorf("client: expected Rwalk, got %v", resp.Type())
+	}
+	// Copy out before cache return — Rwalk.QIDs aliases a decoder-allocated
+	// slice that the cache returns to a zero-reset state on next Get.
+	qids := make([]proto.QID, len(r.QIDs))
+	copy(qids, r.QIDs)
+	putCachedRMsg(resp)
+	return qids, nil
+}
+
+// Clunk releases fid. After a successful clunk, fid is no longer valid;
+// the server deallocates any associated state. Errors from Rlerror/Rerror
+// surface as *Error; type-mismatch as a descriptive error.
+func (c *Conn) Clunk(ctx context.Context, fid proto.Fid) error {
+	req := &proto.Tclunk{Fid: fid}
+	resp, err := c.roundTrip(ctx, req)
+	if err != nil {
+		return err
+	}
+	if err := toError(resp); err != nil {
+		return err
+	}
+	if _, ok := resp.(*proto.Rclunk); !ok {
+		return fmt.Errorf("client: expected Rclunk, got %v", resp.Type())
+	}
+	putCachedRMsg(resp)
+	return nil
+}
+
+// Flush asks the server to abort the request identified by oldTag. Per the
+// 9P spec the server responds with Rflush regardless of whether oldTag
+// matches an outstanding request. As such, a nil return does NOT confirm
+// the original request was cancelled — the request may have completed
+// before Flush was received.
+//
+// Phase 19 does not auto-invoke Flush on ctx cancellation; that wiring
+// lives in Phase 22 (CLIENT-04). This method is the raw wire-level
+// primitive for callers that need it directly.
+func (c *Conn) Flush(ctx context.Context, oldTag proto.Tag) error {
+	req := &proto.Tflush{OldTag: oldTag}
+	resp, err := c.roundTrip(ctx, req)
+	if err != nil {
+		return err
+	}
+	if err := toError(resp); err != nil {
+		return err
+	}
+	if _, ok := resp.(*proto.Rflush); !ok {
+		return fmt.Errorf("client: expected Rflush, got %v", resp.Type())
+	}
+	return nil
+}
+
+// Read reads up to count bytes from fid starting at offset. Returns the
+// bytes actually read, which may be fewer than count (EOF or short read).
+//
+// The returned slice is caller-owned — it is copied out of the pooled
+// Rread struct (whose Data field aliases a bucket buffer from bufpool)
+// before the struct is returned to the cache. Callers may retain the
+// slice indefinitely.
+//
+// Read does NOT clamp count to the negotiated msize or the file's iounit.
+// Callers that need throughput-optimal chunking should consult the iounit
+// returned by Lopen/Open and size their reads accordingly; passing an
+// over-large count results in whatever the server chooses to return (many
+// servers clamp silently).
+func (c *Conn) Read(ctx context.Context, fid proto.Fid, offset uint64, count uint32) ([]byte, error) {
+	req := &proto.Tread{Fid: fid, Offset: offset, Count: count}
+	resp, err := c.roundTrip(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if err := toError(resp); err != nil {
+		return nil, err
+	}
+	r, ok := resp.(*proto.Rread)
+	if !ok {
+		return nil, fmt.Errorf("client: expected Rread, got %v", resp.Type())
+	}
+	// Copy Data out of the pooled Rread. putCachedRMsg nil's Data before
+	// returning to the cache (aliasing invariant), so the backing buffer is
+	// reusable by the next Rread borrower immediately.
+	data := make([]byte, len(r.Data))
+	copy(data, r.Data)
+	putCachedRMsg(resp)
+	return data, nil
+}
+
+// Write writes data to fid starting at offset. Returns the number of bytes
+// the server reports as written (may be fewer than len(data)).
+func (c *Conn) Write(ctx context.Context, fid proto.Fid, offset uint64, data []byte) (uint32, error) {
+	req := &proto.Twrite{Fid: fid, Offset: offset, Data: data}
+	resp, err := c.roundTrip(ctx, req)
+	if err != nil {
+		return 0, err
+	}
+	if err := toError(resp); err != nil {
+		return 0, err
+	}
+	r, ok := resp.(*proto.Rwrite)
+	if !ok {
+		return 0, fmt.Errorf("client: expected Rwrite, got %v", resp.Type())
+	}
+	count := r.Count
+	putCachedRMsg(resp)
+	return count, nil
+}
