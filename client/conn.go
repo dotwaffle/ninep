@@ -116,3 +116,17 @@ func (c *Conn) Close() error {
 	c.readerWG.Wait()
 	return nil
 }
+
+// isClosed returns true once signalShutdown has fired. Non-blocking
+// (closeCh is the single source of truth; see signalShutdown in
+// read_loop.go). Used by writeT's pre-flight check and by Plan 19-04's
+// op methods to short-circuit a closed-Conn return before paying the
+// tagAllocator.acquire round-trip.
+func (c *Conn) isClosed() bool {
+	select {
+	case <-c.closeCh:
+		return true
+	default:
+		return false
+	}
+}

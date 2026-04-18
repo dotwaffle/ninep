@@ -76,11 +76,13 @@ func TestWriteT_SingleRequest(t *testing.T) {
 		NewFid: proto.Fid(2),
 		Names:  []string{"dir", "file"},
 	}
-	if err := cli.writeT(proto.Tag(7), tw); err != nil {
-		t.Fatalf("writeT: %v", err)
-	}
+	writeErr := make(chan error, 1)
+	go func() { writeErr <- cli.writeT(proto.Tag(7), tw) }()
 
 	frame := readOneFrame(t, srvNC)
+	if err := <-writeErr; err != nil {
+		t.Fatalf("writeT: %v", err)
+	}
 	if len(frame) < 7 {
 		t.Fatalf("frame too small: %d", len(frame))
 	}
