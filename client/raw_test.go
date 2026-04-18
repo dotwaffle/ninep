@@ -208,3 +208,71 @@ func TestRaw_Flush(t *testing.T) {
 		t.Fatalf("Raw.Flush: %v", err)
 	}
 }
+
+// TestConn_FidsFieldInitialized: a freshly-Dialed Conn exposes a non-nil
+// allocator via Raw.AcquireFid / Raw.ReleaseFid. We exercise the
+// round-trip path rather than touching the unexported field directly so
+// this external_test file does not need build tags.
+func TestConn_FidsFieldInitialized(t *testing.T) {
+	t.Parallel()
+	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
+	defer cleanup()
+
+	r := cli.Raw()
+	fid, err := r.AcquireFid()
+	if err != nil {
+		t.Fatalf("Raw.AcquireFid on fresh Conn: %v", err)
+	}
+	if fid == 0 {
+		t.Fatalf("Raw.AcquireFid returned fid=0 (fidStart is 1); allocator not initialized?")
+	}
+	r.ReleaseFid(fid)
+}
+
+// TestRaw_AcquireFid_HandsOutUnique: two consecutive AcquireFid calls on
+// the same Conn return distinct fid values (monotonic counter path; the
+// reuse cache is empty on a fresh Conn).
+func TestRaw_AcquireFid_HandsOutUnique(t *testing.T) {
+	t.Parallel()
+	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
+	defer cleanup()
+
+	r := cli.Raw()
+	a, err := r.AcquireFid()
+	if err != nil {
+		t.Fatalf("AcquireFid 1: %v", err)
+	}
+	b, err := r.AcquireFid()
+	if err != nil {
+		t.Fatalf("AcquireFid 2: %v", err)
+	}
+	if a == b {
+		t.Errorf("AcquireFid returned duplicate fid %d on consecutive calls", a)
+	}
+	r.ReleaseFid(a)
+	r.ReleaseFid(b)
+}
+
+// TestRaw_AcquireReleaseCycle: after ReleaseFid(f), the next AcquireFid
+// returns f (LIFO reuse — fidAllocator pops from the back of the reuse
+// slice per 20-01 design).
+func TestRaw_AcquireReleaseCycle(t *testing.T) {
+	t.Parallel()
+	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
+	defer cleanup()
+
+	r := cli.Raw()
+	first, err := r.AcquireFid()
+	if err != nil {
+		t.Fatalf("AcquireFid 1: %v", err)
+	}
+	r.ReleaseFid(first)
+	reused, err := r.AcquireFid()
+	if err != nil {
+		t.Fatalf("AcquireFid 2 (after release): %v", err)
+	}
+	if reused != first {
+		t.Errorf("LIFO reuse broken: released fid %d, next acquire = %d", first, reused)
+	}
+	r.ReleaseFid(reused)
+}
