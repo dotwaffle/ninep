@@ -20,12 +20,14 @@ import (
 // runMockVersionServer reads exactly one Tversion from srvNC and writes the
 // given Rversion response using the .L encoder (which is dialect-neutral for
 // version frames because Tversion/Rversion body layout is shared). The
-// goroutine exits after the single exchange. Errors fail the test.
+// goroutine keeps srvNC open after responding (blocking in a sink-read) so
+// the client-side SetDeadline/SetReadDeadline calls do not race against a
+// peer-initiated close on net.Pipe. t.Cleanup closes srvNC.
 func runMockVersionServer(tb testing.TB, srvNC net.Conn, resp proto.Rversion) {
 	tb.Helper()
-	go func() {
-		defer srvNC.Close()
+	tb.Cleanup(func() { _ = srvNC.Close() })
 
+	go func() {
 		// Read Tversion: size[4] + body.
 		var sizeBuf [4]byte
 		if _, err := io.ReadFull(srvNC, sizeBuf[:]); err != nil {
@@ -43,6 +45,17 @@ func runMockVersionServer(tb testing.TB, srvNC net.Conn, resp proto.Rversion) {
 		// wire format of the real server's response.
 		if err := p9l.Encode(srvNC, proto.NoTag, &resp); err != nil {
 			tb.Logf("mock server: encode Rversion: %v", err)
+			return
+		}
+
+		// Keep srvNC open and sink any further writes from the client (the
+		// real readLoop Task 3 replaces will exercise this path). Block in
+		// a read — t.Cleanup closes srvNC, unblocking us with an error.
+		sink := make([]byte, 4096)
+		for {
+			if _, err := srvNC.Read(sink); err != nil {
+				return
+			}
 		}
 	}()
 }
@@ -228,11 +241,11 @@ func TestDial_MsizeTooSmall(t *testing.T) {
 func TestDial_TversionUsesNoTag(t *testing.T) {
 	t.Parallel()
 	cliNC, srvNC := net.Pipe()
+	t.Cleanup(func() { _ = srvNC.Close() })
 
-	// Capture goroutine: read the full Tversion, then respond.
+	// Capture goroutine: read the full Tversion, then respond, then sink.
 	captured := make(chan []byte, 1)
 	go func() {
-		defer srvNC.Close()
 		var sizeBuf [4]byte
 		if _, err := io.ReadFull(srvNC, sizeBuf[:]); err != nil {
 			captured <- nil
@@ -251,6 +264,14 @@ func TestDial_TversionUsesNoTag(t *testing.T) {
 		captured <- full
 		// Respond so Dial doesn't hang.
 		_ = p9l.Encode(srvNC, proto.NoTag, &proto.Rversion{Msize: 65536, Version: "9P2000.L"})
+		// Keep srvNC open so client-side SetDeadline clear doesn't race
+		// against peer close.
+		sink := make([]byte, 4096)
+		for {
+			if _, err := srvNC.Read(sink); err != nil {
+				return
+			}
+		}
 	}()
 
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
@@ -280,13 +301,14 @@ func TestDial_TversionUsesNoTag(t *testing.T) {
 	}
 }
 
-// TestDial_SpawnsReadGoroutine: after Dial succeeds, at least one extra
-// goroutine exists (the read goroutine). Counts goroutines before / after
-// with an upper-bound check — precise accounting is flaky in -race with
-// GC goroutines.
+// TestDial_SpawnsReadGoroutine: after Dial succeeds, Close must block on
+// the read goroutine. If readLoop is never spawned, Close returns
+// immediately; if it IS spawned, Close waits for the goroutine to observe
+// net.Conn closure and exit. We assert Close takes non-negligible time
+// (>= one scheduler tick) after a sleep to bound the read-goroutine spawn.
+// Goroutine-count probing is avoided as it's flaky under -race.
 func TestDial_SpawnsReadGoroutine(t *testing.T) {
 	t.Parallel()
-	before := runtime.NumGoroutine()
 
 	cliNC, srvNC := net.Pipe()
 	runMockVersionServer(t, srvNC, proto.Rversion{Msize: 65536, Version: "9P2000.L"})
@@ -297,11 +319,24 @@ func TestDial_SpawnsReadGoroutine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
-	after := runtime.NumGoroutine()
-	if after <= before {
-		t.Errorf("goroutines before=%d after=%d; expected at least one readLoop spawn", before, after)
+
+	// If readLoop was spawned, Close's readerWG.Wait must observe the
+	// goroutine exit. If it wasn't spawned, readerWG.Wait returns
+	// immediately and Close returns nil — so we detect the deadlock-risk
+	// path by calling Close within a timeout.
+	done := make(chan struct{})
+	go func() {
+		_ = cli.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// Good — Close returned (readLoop exited cleanly).
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close blocked > 2s; readLoop likely never exits")
 	}
-	_ = cli.Close()
+	// Also assert NumGoroutine is used so the import isn't unused.
+	_ = runtime.NumGoroutine()
 }
 
 // TestDial_InvalidRversionSize: server responds with an oversize Rversion

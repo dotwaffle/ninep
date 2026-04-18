@@ -1,8 +1,6 @@
 package client
 
 import (
-	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -106,28 +104,15 @@ type Conn struct {
 	logger *slog.Logger
 }
 
-// errConnNotImplemented is returned by the Task 1 Dial/Close placeholders
-// while Tasks 2-4 land. Task 2 replaces Dial with the full negotiation
-// path; Plan 19-05 replaces Close with the drain sequence. The stub
-// is minimal on purpose — it only keeps client_test/pair_test.go
-// compiling across the task boundary within Plan 19-03.
-var errConnNotImplemented = errors.New("client: Conn implementation not yet landed in this plan step")
-
-// Dial is a placeholder until Task 2 lands. Having a real func-level
-// Dial symbol (rather than a second stub file) keeps the Task 2 GREEN
-// commit a single-file overwrite.
+// Close is a placeholder for Plan 19-05's drain sequence. Task 3 wires it
+// to signalShutdown via the real readLoop so TestDial_SpawnsReadGoroutine
+// and the pair helper cleanup path can tear down the read goroutine cleanly
+// without the full drain-with-timeout logic that Plan 19-05 ships.
 //
-// TODO(plan-19-03-task-2): replace with full Tversion round-trip.
-func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
-	_ = ctx
-	_ = nc
-	_ = opts
-	return nil, errConnNotImplemented
+// TODO(plan-19-05): replace with drain/shutdown sequence honoring
+// WithCloseTimeout and returning any drain error.
+func (c *Conn) Close() error {
+	c.signalShutdown()
+	c.readerWG.Wait()
+	return nil
 }
-
-// Close is a placeholder until Plan 19-05 lands. Conn is never non-nil
-// during Plan 19-03 Task 1 (Dial always errors), so this method is not
-// reachable — but the symbol must exist for pair_test.go to compile.
-//
-// TODO(plan-19-05): replace with drain/shutdown sequence.
-func (c *Conn) Close() error { return nil }
