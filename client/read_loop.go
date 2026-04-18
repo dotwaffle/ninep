@@ -11,6 +11,7 @@ import (
 	"github.com/dotwaffle/ninep/internal/bufpool"
 	"github.com/dotwaffle/ninep/internal/wire"
 	"github.com/dotwaffle/ninep/proto"
+	"github.com/dotwaffle/ninep/proto/p9l"
 	"github.com/dotwaffle/ninep/proto/p9u"
 )
 
@@ -195,6 +196,12 @@ func (c *Conn) newRMessage(t proto.MessageType) (proto.Message, error) {
 		// .u-only on the wire, but we accept defensively; mis-dialect
 		// traffic is a misbehaving server.
 		return &p9u.Rerror{}, nil
+	case proto.TypeRreaddir:
+		// .L-only directory-enumeration response. Cold path relative
+		// to Rread/Rwrite -- not cached per client/msgcache.go.
+		if c.dialect == protocolL {
+			return &p9l.Rreaddir{}, nil
+		}
 	}
 	return nil, errors.New("client: unknown R-message type")
 }

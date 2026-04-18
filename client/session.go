@@ -177,6 +177,22 @@ func (c *Conn) Create(ctx context.Context, p string, flags int, mode os.FileMode
 	return newFile(c, dirFid, qid, iounit), nil
 }
 
+// OpenDir walks from the Attach'd root to p and opens it as a
+// directory. Convenience wrapper over [Conn.OpenFile] with flags=0,
+// mode=0; returns an opened *File suitable for [File.ReadDir].
+//
+// The returned *File must be Closed by the caller. On .L, flags=0
+// (== O_RDONLY) opens the directory fid for Tread/Treaddir. On .u,
+// [posixToNinepMode] maps 0 to OREAD which likewise opens for
+// read-only directory enumeration (though Phase 20's [File.ReadDir]
+// is .L-only -- .u directory enumeration is deferred; see Q4).
+//
+// Empty path, "/", and "." all open the root directory (equivalent to
+// a zero-step Twalk followed by Tlopen/Topen).
+func (c *Conn) OpenDir(ctx context.Context, p string) (*File, error) {
+	return c.OpenFile(ctx, p, 0, 0)
+}
+
 // posixToNinepMode maps POSIX O_RDONLY/O_WRONLY/O_RDWR to 9P2000.u's
 // mode byte (0/1/2). Higher POSIX flags (O_CREAT, O_TRUNC, O_APPEND,
 // O_EXCL) are dropped here -- .u's semantics for those are sparse and

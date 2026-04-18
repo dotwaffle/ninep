@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 
 	"github.com/dotwaffle/ninep/proto"
@@ -64,11 +65,17 @@ type File struct {
 	// File.Read/Write clamp to min(iounit, msize - frame overhead).
 	iounit uint32
 
-	mu     sync.Mutex // serializes Read/Write/ReadAt/WriteAt; guards offset + cachedSize
+	mu     sync.Mutex // serializes Read/Write/ReadAt/WriteAt; guards offset + cachedSize + readdirOffset
 	offset int64      // local seek offset per D-09
 	// cachedSize is consulted by Seek(SeekEnd); populated by File.Sync
 	// once Phase 21 ships Tgetattr/Tstat. Zero until then.
 	cachedSize int64
+	// readdirOffset is the Treaddir Offset field for the NEXT
+	// directory-enumeration round-trip. Populated from the final
+	// proto.Dirent.Offset of each Rreaddir's packed data. Separate from
+	// f.offset because directory enumeration uses server-provided
+	// per-entry offsets rather than byte positions. Guarded by f.mu.
+	readdirOffset uint64
 
 	closeOnce sync.Once // idempotent Close per D-06
 	closeErr  error     // captured by the first Close; NOT returned on subsequent calls
@@ -392,6 +399,36 @@ func (f *File) ReadAt(p []byte, off int64) (int, error) {
 		total += n
 	}
 	return total, nil
+}
+
+// ReadDir reads directory entries from this File, which must have been
+// opened on a directory fid (see [Conn.OpenDir]).
+//
+// If n > 0, returns at most n entries; a subsequent call resumes at
+// the next entry. If n <= 0, ReadDir loops issuing Treaddir round-
+// trips until the server reports the directory is exhausted, and
+// returns the full entry slice.
+//
+// When the directory is exhausted, ReadDir returns (nil-or-empty
+// slice, nil). Callers emulating the [os.File.ReadDir] n>0 contract
+// (which returns io.EOF on exhaustion) should check len(entries) == 0
+// on nil err.
+//
+// Only supported on 9P2000.L Conns. On a .u Conn returns
+// (nil, [ErrNotSupported]) -- .u directory enumeration uses a
+// different wire op (Tread on a directory fid returning packed .u
+// Stat entries) and is deferred to a future phase.
+//
+// The returned entries' [os.DirEntry.Info] method returns
+// [ErrNotSupported] in v1.3.0 Phase 20. Phase 21 wires Tgetattr so
+// Info() returns a populated [fs.FileInfo].
+//
+// Thread safety: takes f.mu and mutates the internal
+// readdirOffset cursor. Concurrent ReadDir on the same *File
+// serializes. Use [File.Clone] for parallel enumeration if that is
+// ever needed (rare -- directory enumeration is typically sequential).
+func (f *File) ReadDir(n int) ([]os.DirEntry, error) {
+	return f.readDir(context.Background(), n)
 }
 
 // WriteAt writes len(p) bytes to the File starting at off. Satisfies
