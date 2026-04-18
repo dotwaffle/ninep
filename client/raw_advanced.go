@@ -513,4 +513,3 @@ func (r *Raw) Tstat(ctx context.Context, fid proto.Fid) (p9u.Stat, error) {
 	putCachedRMsg(resp)
 	return stat, nil
 }
-
