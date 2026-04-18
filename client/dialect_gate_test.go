@@ -13,6 +13,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/dotwaffle/ninep/proto"
 )
 
 // newGateConn returns a *Conn with the requested dialect and a closed
@@ -94,5 +96,74 @@ func TestClient_Create_NotSupportedOnL(t *testing.T) {
 	_, _, err := c.CreateFid(ctx, 0, "new.txt", 0o644, 0, "")
 	if !errors.Is(err, ErrNotSupported) {
 		t.Fatalf("Create err = %v, want ErrNotSupported", err)
+	}
+}
+
+// TestClient_Phase21_DialectGates is the belt-and-braces check that every
+// Phase 21 dialect-gated method returns ErrNotSupported on the wrong
+// dialect without touching the wire. Per-method gate tests elsewhere
+// (advanced_xattr_test.go etc.) cover the same ground; this table
+// exists to catch any new .L-only / .u-only op added in a future phase
+// that forgets the requireDialect check.
+//
+// Method selection (per 21-06-PLAN.md Task 2):
+//
+//   - .L-only ops exercised on a protocolU Conn: Symlink, Readlink,
+//     XattrGet/Set/List/Remove, Lock/Unlock/TryLock/GetLock, Statfs,
+//     Getattr, Setattr, Link, Mknod (15 rows).
+//   - .u-only op exercised on a protocolL Conn: Raw.Tstat (the sole
+//     public .u-only primitive; File.Stat dispatches internally).
+//
+// Conn.Attach / Conn.Rename / Conn.Remove are NOT in this table.
+// Attach is dialect-neutral. Rename and Remove are gated to .L in
+// Phase 21 execution, but their per-method tests
+// (advanced_rename_test.go, advanced_remove_test.go) cover the gate;
+// omitting them here keeps the "belt-and-braces" scope aligned with
+// the plan's enumeration.
+func TestClient_Phase21_DialectGates(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	// .L-only ops exercised on a protocolU Conn. The gate fires at
+	// method entry via requireDialect(protocolL, ...); f.fid is never
+	// dereferenced on the wrong-dialect path, so a bare &File{conn, fid}
+	// is sufficient — no tree, no open, no wire I/O.
+	cU := newGateConn(t, protocolU)
+	fU := &File{conn: cU, fid: 1}
+
+	lOnlyCases := []struct {
+		name string
+		call func() error
+	}{
+		{"Conn.Symlink", func() error { _, err := cU.Symlink(ctx, "/x", "target"); return err }},
+		{"File.Readlink", func() error { _, err := fU.Readlink(ctx); return err }},
+		{"File.XattrGet", func() error { _, err := fU.XattrGet(ctx, "n"); return err }},
+		{"File.XattrSet", func() error { return fU.XattrSet(ctx, "n", nil, 0) }},
+		{"File.XattrList", func() error { _, err := fU.XattrList(ctx); return err }},
+		{"File.XattrRemove", func() error { return fU.XattrRemove(ctx, "n") }},
+		{"File.Lock", func() error { return fU.Lock(ctx, LockWrite) }},
+		{"File.Unlock", func() error { return fU.Unlock(ctx) }},
+		{"File.TryLock", func() error { _, err := fU.TryLock(ctx, LockWrite); return err }},
+		{"File.GetLock", func() error { _, err := fU.GetLock(ctx, LockWrite); return err }},
+		{"File.Statfs", func() error { _, err := fU.Statfs(ctx); return err }},
+		{"File.Getattr", func() error { _, err := fU.Getattr(ctx, proto.AttrBasic); return err }},
+		{"File.Setattr", func() error { return fU.Setattr(ctx, proto.SetAttr{}) }},
+		{"Conn.Link", func() error { return cU.Link(ctx, "/a", "/b") }},
+		{"Conn.Mknod", func() error { _, err := cU.Mknod(ctx, "/", "fifo", 0o644, 0, 0, 0); return err }},
+	}
+	for _, tc := range lOnlyCases {
+		if err := tc.call(); !errors.Is(err, ErrNotSupported) {
+			t.Errorf("%s on .u Conn: err = %v, want ErrNotSupported", tc.name, err)
+		}
+	}
+
+	// .u-only op exercised on a protocolL Conn. Raw.Tstat is the sole
+	// public .u-only primitive; File.Stat dispatches internally so it
+	// is never directly dialect-gated.
+	cL := newGateConn(t, protocolL)
+	if _, err := cL.Raw().Tstat(ctx, 1); !errors.Is(err, ErrNotSupported) {
+		t.Errorf("Raw.Tstat on .L Conn: err = %v, want ErrNotSupported", err)
 	}
 }
