@@ -157,15 +157,16 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
 
 	// 8. Construct the Conn + spawn the read goroutine.
 	c := &Conn{
-		nc:       nc,
-		dialect:  dialect,
-		msize:    negotiated,
-		codec:    cc,
-		tags:     newTagAllocator(cfg.maxInflight),
-		inflight: newInflightMap(),
-		fids:     newFidAllocator(),
-		closeCh:  make(chan struct{}),
-		logger:   cfg.logger,
+		nc:               nc,
+		dialect:          dialect,
+		msize:            negotiated,
+		codec:            cc,
+		tags:             newTagAllocator(cfg.maxInflight),
+		inflight:         newInflightMap(),
+		fids:             newFidAllocator(),
+		closeCh:          make(chan struct{}),
+		logger:           cfg.logger,
+		lockPollSchedule: cfg.lockPollSchedule,
 	}
 	c.readerWG.Add(1)
 	go c.readLoop()

@@ -6,6 +6,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
@@ -115,6 +116,11 @@ type Conn struct {
 	readerWG sync.WaitGroup
 
 	logger *slog.Logger
+
+	// lockPollSchedule overrides the default exponential backoff curve
+	// used by [File.Lock]. Populated via [WithLockPollSchedule]; nil
+	// means "use [defaultLockBackoff]". Immutable after Dial.
+	lockPollSchedule []time.Duration
 }
 
 // isClosed returns true once signalShutdown has fired. Non-blocking

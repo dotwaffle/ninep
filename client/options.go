@@ -2,6 +2,7 @@ package client
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/dotwaffle/ninep/proto"
 )
@@ -13,9 +14,10 @@ type Option func(*config)
 // config holds the resolved Conn configuration. It is unexported: callers
 // mutate it only through Option values.
 type config struct {
-	msize       uint32
-	maxInflight int
-	logger      *slog.Logger
+	msize            uint32
+	maxInflight      int
+	logger           *slog.Logger
+	lockPollSchedule []time.Duration
 }
 
 // Defaults for Conn configuration.
@@ -91,5 +93,28 @@ func WithLogger(logger *slog.Logger) Option {
 		if logger != nil {
 			c.logger = logger
 		}
+	}
+}
+
+// WithLockPollSchedule overrides the default exponential backoff curve
+// used by [File.Lock] when the server returns LockStatusBlocked or
+// LockStatusGrace. Values are the sleep durations for iterations 0..N;
+// iterations past N use the last entry as a cap.
+//
+// Passing an empty slice is a programming error and silently falls back
+// to the default schedule ([DefaultLockBackoff]).
+//
+// Primarily used by tests to bound timing with a sub-millisecond cadence
+// (deterministic timing for contention tests without a minute-long wall
+// clock). Production callers should leave the default
+// (10/20/40/80/160/320/500ms cap) in place.
+func WithLockPollSchedule(schedule []time.Duration) Option {
+	return func(c *config) {
+		if len(schedule) == 0 {
+			return
+		}
+		// Defensive copy: callers mutating their slice after Dial
+		// should not affect the resolved Conn config.
+		c.lockPollSchedule = append([]time.Duration(nil), schedule...)
 	}
 }
