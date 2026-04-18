@@ -82,6 +82,49 @@ func TestFile_CloseIdempotent(t *testing.T) {
 	}
 }
 
+// TestFile_CloseIdempotent_FirstErrorThenNil: when the first Close
+// surfaces a Tclunk error (e.g. the Conn shut down before the Rclunk
+// arrived), the first caller receives that error and any subsequent
+// caller receives nil per D-06. Regression guard for WR-01: previously
+// f.closeErr was returned on every call, so a failing first Close
+// caused every defer'd Close to repeat the same error indefinitely.
+func TestFile_CloseIdempotent_FirstErrorThenNil(t *testing.T) {
+	t.Parallel()
+	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
+	defer cleanup()
+	ctx, cancel := fileTestCtx(t)
+	defer cancel()
+
+	root, err := cli.Attach(ctx, "me", "")
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+
+	// Force the first Close to surface an error: shut the Conn down so
+	// the Tclunk issued by File.Close fails with ErrClosed.
+	if err := cli.Close(); err != nil {
+		t.Fatalf("cli.Close: %v", err)
+	}
+
+	firstErr := root.Close()
+	if firstErr == nil {
+		t.Fatal("first Close on closed Conn: got nil, want error (Tclunk cannot land on dead transport)")
+	}
+	if !errors.Is(firstErr, client.ErrClosed) {
+		t.Errorf("first Close: got %v, want ErrClosed", firstErr)
+	}
+	// D-06: the second Close must return nil even though the first
+	// captured an error. sync.Once short-circuits the wire path; the
+	// return-gate distinguishes first vs. subsequent callers.
+	if err := root.Close(); err != nil {
+		t.Errorf("second Close after failing first: got %v, want nil (D-06 idempotent)", err)
+	}
+	// Third Close for good measure -- also nil.
+	if err := root.Close(); err != nil {
+		t.Errorf("third Close: got %v, want nil (D-06 idempotent)", err)
+	}
+}
+
 // TestFile_CloseReleasesFid: after Close, the fid is returned to the
 // allocator's reuse cache and a subsequent Attach receives the same
 // fid (LIFO reuse verified via Raw.AcquireFid probe).

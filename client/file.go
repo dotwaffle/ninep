@@ -112,13 +112,16 @@ func (f *File) Fid() proto.Fid {
 // allocator's reuse cache, and marks the File as closed. Subsequent
 // Close calls return nil without touching the wire (D-06).
 //
-// The error from the first Close (if Tclunk returned one) is captured
-// into f.closeErr for diagnostics and returned; subsequent calls
-// return nil. Close does not take f.mu -- a concurrent in-flight
+// The error from the first Close (if Tclunk returned one) is returned
+// to THAT caller and captured into f.closeErr for diagnostics;
+// subsequent callers receive nil regardless of what the first call
+// observed. Close does not take f.mu -- a concurrent in-flight
 // Read/Write on this File unblocks via the Conn's shutdown path
 // (Conn.Close / Conn.Shutdown), not via the handle mutex.
 func (f *File) Close() error {
+	first := false
 	f.closeOnce.Do(func() {
+		first = true
 		// Close uses a bounded ctx so a wedged Tclunk does not hang
 		// the caller indefinitely. The Conn's drain deadline (5s per
 		// Phase 19 D-22) is the correct ceiling -- longer than any
@@ -132,6 +135,13 @@ func (f *File) Close() error {
 		f.conn.fids.release(f.fid)
 		f.closeErr = err
 	})
+	if !first {
+		// Idempotent per D-06: only the first Close returns the Tclunk
+		// result. Subsequent callers see nil even if the first call
+		// surfaced an error (which stays captured in f.closeErr for
+		// diagnostic inspection via a hypothetical future accessor).
+		return nil
+	}
 	return f.closeErr
 }
 
