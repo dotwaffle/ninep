@@ -176,8 +176,11 @@ func TestFidAllocator_Concurrent(t *testing.T) {
 // TestFidAllocator_LeakStress_1000Cycles verifies 1000 acquire→release pairs
 // leave len() bounded at <= reuseCacheSize. Steady-state reuse means the
 // counter does not grow past a small bound either.
+//
+// NOT t.Parallel(): testing.AllocsPerRun panics if invoked under a parallel
+// test (see src/testing/allocs.go). The alloc probe is load-bearing here
+// so we sacrifice parallelism rather than coverage.
 func TestFidAllocator_LeakStress_1000Cycles(t *testing.T) {
-	t.Parallel()
 	fa := newFidAllocator()
 
 	for i := 0; i < 1000; i++ {

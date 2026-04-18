@@ -35,6 +35,12 @@ var (
 	// negotiated msize (min of client proposal and server cap) is below
 	// the minimum required to carry a useful payload.
 	ErrMsizeTooSmall = errors.New("client: msize too small")
+
+	// ErrFidExhausted is returned when the per-Conn fid counter has run
+	// past proto.NoFid (2^32 - 2 allocations). Unreachable under any
+	// practical workload; documented for completeness. Callers that
+	// encounter it should Dial a new Conn.
+	ErrFidExhausted = errors.New("client: fid space exhausted")
 )
 
 // Error represents a 9P error response from the server. Rlerror (9P2000.L)
