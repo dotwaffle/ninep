@@ -25,7 +25,7 @@ func discardLogger() *slog.Logger {
 // own server.Node to newClientServerPair.
 //
 // API note: server.QIDGenerator is instantiated via struct-literal
-// (&server.QIDGenerator{}); there is NO server.NewQIDGenerator constructor.
+// (&server.QIDGenerator{}); there is NO factory constructor for it.
 // Verified at server/memfs/memfs_test.go:11 and server/memfs/builder.go:24.
 // The zero-value QIDGenerator begins allocation at path=1 on first Next()
 // call (see server/qid.go).
