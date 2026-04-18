@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net"
@@ -121,6 +122,13 @@ type Conn struct {
 	// used by [File.Lock]. Populated via [WithLockPollSchedule]; nil
 	// means "use [defaultLockBackoff]". Immutable after Dial.
 	lockPollSchedule []time.Duration
+
+	// requestTimeout is the default ctx timeout applied by the non-ctx
+	// io.* methods on *File ([File.Read], [File.Write], [File.ReadAt],
+	// [File.WriteAt]) via [Conn.opCtx]. Zero means "no timeout / use
+	// parent ctx as-is" — matches Linux v9fs parity per Pitfall 9.
+	// Set at Dial time via [WithRequestTimeout]; immutable after Dial.
+	requestTimeout time.Duration
 }
 
 // isClosed returns true once signalShutdown has fired. Non-blocking
@@ -135,4 +143,23 @@ func (c *Conn) isClosed() bool {
 	default:
 		return false
 	}
+}
+
+// opCtx builds a per-operation context from parent. When the Conn's
+// requestTimeout is zero (the default), returns (parent, no-op cancel)
+// — the parent is passed through verbatim with no allocation and no
+// timer. When requestTimeout > 0, returns [context.WithTimeout] applied
+// to parent; callers MUST invoke cancel via defer to free the timer.
+//
+// Used by [File.Read], [File.Write], [File.ReadAt], [File.WriteAt] to
+// honor the Conn-wide default timeout (set via [WithRequestTimeout])
+// without forcing callers of io.Reader etc. to plumb a ctx. The
+// per-op *Ctx variants on *File bypass opCtx and use the caller's ctx
+// verbatim — that's how the "caller ctx overrides WithRequestTimeout"
+// contract is enforced.
+func (c *Conn) opCtx(parent context.Context) (context.Context, context.CancelFunc) {
+	if c.requestTimeout == 0 {
+		return parent, func() {}
+	}
+	return context.WithTimeout(parent, c.requestTimeout)
 }

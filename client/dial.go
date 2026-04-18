@@ -167,6 +167,7 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
 		closeCh:          make(chan struct{}),
 		logger:           cfg.logger,
 		lockPollSchedule: cfg.lockPollSchedule,
+		requestTimeout:   cfg.requestTimeout,
 	}
 	c.readerWG.Add(1)
 	go c.readLoop()

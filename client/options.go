@@ -18,6 +18,14 @@ type config struct {
 	maxInflight      int
 	logger           *slog.Logger
 	lockPollSchedule []time.Duration
+	// requestTimeout is the default ctx timeout applied by File.Read,
+	// File.Write, File.ReadAt, File.WriteAt (the non-ctx io.* methods).
+	// Zero (the default) means infinite wait — matches the Linux v9fs
+	// kernel client for trans=tcp mounts (Pitfall 9 / D-22). Values
+	// < 0 are coerced to 0 by WithRequestTimeout. Mutates behaviour
+	// only of the non-ctx io.* methods; the *Ctx variants honor the
+	// caller-supplied ctx verbatim.
+	requestTimeout time.Duration
 }
 
 // Defaults for Conn configuration.
@@ -116,5 +124,36 @@ func WithLockPollSchedule(schedule []time.Duration) Option {
 		// Defensive copy: callers mutating their slice after Dial
 		// should not affect the resolved Conn config.
 		c.lockPollSchedule = append([]time.Duration(nil), schedule...)
+	}
+}
+
+// WithRequestTimeout sets a per-request timeout applied to the non-ctx
+// [File.Read], [File.Write], [File.ReadAt], and [File.WriteAt] methods.
+// When set to a positive duration d, each call builds a context via
+// [context.WithTimeout] with that duration; timeout expiry triggers
+// Tflush via the standard roundTrip cancellation pipeline (Plan 22-02)
+// and returns an error chain where [errors.Is] matches
+// [context.DeadlineExceeded].
+//
+// The default (zero) means infinite wait — matches the Linux kernel
+// v9fs client for trans=tcp mounts (Pitfall 9 / D-22). Callers that need
+// per-op deadlines without a Conn-wide default use [File.ReadCtx],
+// [File.WriteCtx], [File.ReadAtCtx], [File.WriteAtCtx] with a
+// caller-supplied ctx instead of this option.
+//
+// Values <= 0 (zero or negative) are treated as "no timeout"; this keeps
+// the surface Linux-v9fs-parallel and prevents accidental pathological
+// short timeouts from callers passing a time.Duration literal with a
+// zero-value or a subtraction overflow.
+//
+// Per-op precedence: if a caller passes a ctx WITH a deadline to a *Ctx
+// variant (e.g. [File.ReadCtx]), that ctx is used verbatim —
+// WithRequestTimeout is ignored on the *Ctx methods.
+func WithRequestTimeout(d time.Duration) Option {
+	return func(c *config) {
+		if d < 0 {
+			d = 0
+		}
+		c.requestTimeout = d
 	}
 }
