@@ -64,3 +64,11 @@ func SetCachedSize(f *File, size int64) {
 func MaxChunk(f *File) uint32 {
 	return f.maxChunk()
 }
+
+// NewFileForTest constructs a *File wrapping c with a synthetic fid.
+// Used by dialect-gate tests that need a *File handle but do not want to
+// drive a full Attach -- the requireDialect gate fires at the ops entry
+// before any wire op. Not part of the public API surface.
+func NewFileForTest(c *Conn) *File {
+	return newFile(c, proto.Fid(0), proto.QID{}, 0)
+}
