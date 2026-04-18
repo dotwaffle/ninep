@@ -56,6 +56,14 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 		// release.
 		c.inflight.unregister(tag)
 		c.tags.release(tag)
+		// If the Conn is shutting down (signalShutdown has fired), a
+		// writeT failure is almost certainly the result of the shutdown
+		// racing the write — surface as ErrClosed so callers see a
+		// consistent shutdown signal rather than the transport-specific
+		// io.ErrClosedPipe / net.ErrClosed wrapper.
+		if c.isClosed() {
+			return nil, ErrClosed
+		}
 		return nil, err
 	}
 

@@ -104,25 +104,6 @@ type Conn struct {
 	logger *slog.Logger
 }
 
-// Close is a placeholder for Plan 19-05's drain sequence. Task 3 wires it
-// to signalShutdown via the real readLoop so TestDial_SpawnsReadGoroutine
-// and the pair helper cleanup path can tear down the read goroutine cleanly
-// without the full drain-with-timeout logic that Plan 19-05 ships.
-//
-// TODO(plan-19-05): replace with drain/shutdown sequence honoring
-// WithCloseTimeout and returning any drain error.
-func (c *Conn) Close() error {
-	c.signalShutdown()
-	// callerWG tracks Plan 19-04's op-method goroutines; Plan 19-03 never
-	// bumps it, so Wait returns immediately. Referencing the field here
-	// keeps the Plan 19-05 drain-order signature stable: shut down first,
-	// then wait for callers to observe the closed chan and return
-	// ErrClosed, then wait for the read goroutine to exit.
-	c.callerWG.Wait()
-	c.readerWG.Wait()
-	return nil
-}
-
 // isClosed returns true once signalShutdown has fired. Non-blocking
 // (closeCh is the single source of truth; see signalShutdown in
 // read_loop.go). Used by writeT's pre-flight check and by Plan 19-04's
