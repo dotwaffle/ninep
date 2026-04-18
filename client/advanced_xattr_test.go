@@ -71,7 +71,7 @@ func TestClient_XattrGet_Happy(t *testing.T) {
 	defer cleanup()
 
 	f := walkToXattrFile(t, cli, "x")
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := xattrCtx(t)
 	defer cancel()
@@ -93,7 +93,7 @@ func TestClient_XattrGet_EmptyValue(t *testing.T) {
 	defer cleanup()
 
 	f := walkToXattrFile(t, cli, "x")
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := xattrCtx(t)
 	defer cancel()
@@ -116,7 +116,7 @@ func TestClient_XattrGet_NotFound(t *testing.T) {
 	defer cleanup()
 
 	f := walkToXattrFile(t, cli, "x")
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := xattrCtx(t)
 	defer cancel()
@@ -148,7 +148,7 @@ func TestClient_XattrGet_Large(t *testing.T) {
 	defer cleanup()
 
 	f := walkToXattrFile(t, cli, "x")
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := xattrCtx(t)
 	defer cancel()
@@ -185,7 +185,7 @@ func TestClient_XattrSet_Happy(t *testing.T) {
 	defer cleanup()
 
 	f := walkToXattrFile(t, cli, "x")
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := xattrCtx(t)
 	defer cancel()
@@ -220,7 +220,7 @@ func TestClient_XattrSet_CloneIsolation(t *testing.T) {
 	defer cleanup()
 
 	f := walkToXattrFile(t, cli, "x")
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := xattrCtx(t)
 	defer cancel()
@@ -246,7 +246,7 @@ func TestClient_XattrSet_LargeValue(t *testing.T) {
 	defer cleanup()
 
 	f := walkToXattrFile(t, cli, "x")
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Server clamps Txattrcreate.AttrSize to msize (server/bridge.go:897),
 	// so pick slightly under the negotiated 65536-byte msize to exercise
@@ -294,7 +294,7 @@ func TestClient_XattrList_Happy(t *testing.T) {
 	defer cleanup()
 
 	f := walkToXattrFile(t, cli, "x")
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := xattrCtx(t)
 	defer cancel()
@@ -315,7 +315,7 @@ func TestClient_XattrList_Empty(t *testing.T) {
 	defer cleanup()
 
 	f := walkToXattrFile(t, cli, "x")
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := xattrCtx(t)
 	defer cancel()
@@ -344,7 +344,7 @@ func TestClient_XattrList_TrailingNul(t *testing.T) {
 	defer cleanup()
 
 	f := walkToXattrFile(t, cli, "x")
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := xattrCtx(t)
 	defer cancel()
@@ -380,7 +380,7 @@ func TestClient_XattrRemove_Happy(t *testing.T) {
 	defer cleanup()
 
 	f := walkToXattrFile(t, cli, "x")
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := xattrCtx(t)
 	defer cancel()
@@ -427,7 +427,7 @@ func TestClient_Xattr_NoFidLeak(t *testing.T) {
 	defer cleanup()
 
 	f := walkToXattrFile(t, cli, "x")
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := xattrCtx(t)
 	defer cancel()

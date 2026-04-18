@@ -85,7 +85,7 @@ func TestClient_WithLockPollSchedule_Override(t *testing.T) {
 	defer cleanup()
 
 	f := openLockerFile(t, cli)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -113,7 +113,7 @@ func TestClient_Lock_Uncontended(t *testing.T) {
 	defer cleanup()
 
 	f := openLockerFile(t, cli)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -140,7 +140,7 @@ func TestClient_Lock_Contended_Backoff(t *testing.T) {
 	defer cleanup()
 
 	f := openLockerFile(t, cli)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -186,7 +186,7 @@ func TestClient_Lock_CtxCancel_SendsUnlock(t *testing.T) {
 	defer cleanup()
 
 	f := openLockerFile(t, cli)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
@@ -230,7 +230,7 @@ func TestClient_Lock_RequiresOpenedFid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
-	defer walked.Close()
+	defer func() { _ = walked.Close() }()
 
 	err = walked.Lock(ctx, client.LockWrite)
 	if err == nil {
@@ -252,7 +252,7 @@ func TestClient_TryLock(t *testing.T) {
 		cli, cleanup := newClientServerPair(t, root)
 		defer cleanup()
 		f := openLockerFile(t, cli)
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 		ok, err := f.TryLock(ctx, client.LockWrite)
@@ -270,7 +270,7 @@ func TestClient_TryLock(t *testing.T) {
 		cli, cleanup := newClientServerPair(t, root)
 		defer cleanup()
 		f := openLockerFile(t, cli)
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 		ok, err := f.TryLock(ctx, client.LockWrite)
@@ -291,7 +291,7 @@ func TestClient_Unlock_Releases(t *testing.T) {
 	cli, cleanup := newClientServerPair(t, root)
 	defer cleanup()
 	f := openLockerFile(t, cli)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	if err := f.Lock(ctx, client.LockWrite); err != nil {
@@ -326,7 +326,7 @@ func TestClient_GetLock_Conflict(t *testing.T) {
 	cli, cleanup := newClientServerPair(t, root)
 	defer cleanup()
 	f := openLockerFile(t, cli)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	if err := f.Lock(ctx, client.LockWrite); err != nil {
@@ -350,7 +350,7 @@ func TestClient_GetLock_Free(t *testing.T) {
 	cli, cleanup := newClientServerPair(t, root)
 	defer cleanup()
 	f := openLockerFile(t, cli)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	got, err := f.GetLock(ctx, client.LockWrite)
@@ -384,7 +384,7 @@ func TestClient_Lock_NotSupportedOnU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach cli: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := f.Lock(ctx, client.LockWrite); !errors.Is(err, client.ErrNotSupported) {
 		t.Fatalf("Lock on .u = %v, want ErrNotSupported", err)
 	}
@@ -400,7 +400,7 @@ func TestClient_TryLock_NotSupportedOnU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.TryLock(ctx, client.LockWrite); !errors.Is(err, client.ErrNotSupported) {
 		t.Fatalf("TryLock on .u = %v, want ErrNotSupported", err)
 	}
@@ -416,7 +416,7 @@ func TestClient_Unlock_NotSupportedOnU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := f.Unlock(ctx); !errors.Is(err, client.ErrNotSupported) {
 		t.Fatalf("Unlock on .u = %v, want ErrNotSupported", err)
 	}
@@ -432,7 +432,7 @@ func TestClient_GetLock_NotSupportedOnU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.GetLock(ctx, client.LockWrite); !errors.Is(err, client.ErrNotSupported) {
 		t.Fatalf("GetLock on .u = %v, want ErrNotSupported", err)
 	}
@@ -456,7 +456,7 @@ func TestClient_Lock_NoFidLeak(t *testing.T) {
 	)
 	defer cleanup()
 	f := openLockerFile(t, cli)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Stabilise goroutine baseline after pair boot.
 	time.Sleep(10 * time.Millisecond)
