@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
@@ -75,6 +76,18 @@ type Conn struct {
 
 	tags     *tagAllocator
 	inflight *inflightMap
+
+	// fids allocates proto.Fid values for session-level methods (Attach,
+	// OpenFile, Create) and File.Clone. Set exactly once in Dial before
+	// the read goroutine spawns. Per-Conn; fids are not shared across
+	// Conns because the 9P protocol scopes fid validity to a single
+	// connection.
+	fids *fidAllocator
+
+	// root is the *File from the most recent successful Attach, stored
+	// via atomic.Value.Store so Conn.Root() is a lockless read on the
+	// session hot path. Nil until the first Attach succeeds.
+	root atomic.Value // *File
 
 	// writeMu serializes all net.Conn.Write calls (T-message sends +
 	// ctor-time Tversion send). Mirrors server/conn.go's writeMu.

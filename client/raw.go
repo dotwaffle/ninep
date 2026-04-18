@@ -99,3 +99,25 @@ func (r *Raw) Open(ctx context.Context, fid proto.Fid, mode uint8) (proto.QID, u
 func (r *Raw) Create(ctx context.Context, fid proto.Fid, name string, perm proto.FileMode, mode uint8, extension string) (proto.QID, uint32, error) {
 	return r.c.Create(ctx, fid, name, perm, mode, extension)
 }
+
+// AcquireFid hands out a fresh fid from the Conn's allocator. Callers
+// that use Raw for explicit fid lifecycle pair each AcquireFid with
+// either a successful [Raw.Clunk] + [Raw.ReleaseFid] sequence, or a
+// [Raw.ReleaseFid] alone if the fid never became server-bound (e.g.
+// Walk/Open failed before the server registered the new fid).
+//
+// Returns [ErrFidExhausted] if the per-Conn counter has run past
+// proto.NoFid.
+func (r *Raw) AcquireFid() (proto.Fid, error) {
+	return r.c.fids.acquire()
+}
+
+// ReleaseFid returns fid to the Conn's allocator reuse cache. Does not
+// touch the wire; pair with [Raw.Clunk] when the fid is server-bound.
+//
+// Ordering: when fid IS server-bound, callers MUST wait for the
+// corresponding Rclunk to be received BEFORE calling ReleaseFid. See
+// 20-RESEARCH.md §9 Pitfall 6.
+func (r *Raw) ReleaseFid(fid proto.Fid) {
+	r.c.fids.release(fid)
+}

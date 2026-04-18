@@ -163,6 +163,7 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
 		codec:    cc,
 		tags:     newTagAllocator(cfg.maxInflight),
 		inflight: newInflightMap(),
+		fids:     newFidAllocator(),
 		closeCh:  make(chan struct{}),
 		logger:   cfg.logger,
 	}
