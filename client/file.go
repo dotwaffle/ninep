@@ -118,6 +118,13 @@ func (f *File) Fid() proto.Fid {
 // observed. Close does not take f.mu -- a concurrent in-flight
 // Read/Write on this File unblocks via the Conn's shutdown path
 // (Conn.Close / Conn.Shutdown), not via the handle mutex.
+//
+// Context: Close does NOT use [Conn.opCtx] / [WithRequestTimeout]
+// (D-24). Clunk is a cleanup op whose ceiling is governed by the
+// Conn-wide drain deadline (5s per Phase 19 D-22), not a per-request
+// user-configurable timeout. Using [WithRequestTimeout] here would let
+// a caller with a pathological sub-millisecond value strand fids on
+// the server; the fixed cleanupDeadline is the safer invariant.
 func (f *File) Close() error {
 	first := false
 	f.closeOnce.Do(func() {
@@ -126,6 +133,7 @@ func (f *File) Close() error {
 		// the caller indefinitely. The Conn's drain deadline (5s per
 		// Phase 19 D-22) is the correct ceiling -- longer than any
 		// reasonable server response, shorter than a test timeout.
+		// Per D-24, we do NOT use opCtx here — see godoc above.
 		ctx, cancel := context.WithTimeout(context.Background(), cleanupDeadline)
 		defer cancel()
 		err := f.conn.Clunk(ctx, f.fid)
@@ -228,23 +236,21 @@ func (f *File) maxChunk() uint32 {
 	return msizeLimit
 }
 
-// Read reads up to len(p) bytes from the File starting at the current
-// local offset (see [File.Seek]). Returns io.EOF when the server
-// responds with zero bytes on a non-empty p.
+// ReadCtx is the ctx-taking variant of [File.Read]. Satisfies the same
+// byte-slice semantics as [File.Read] (advances the local offset,
+// clamps count to min(iounit, msize-overhead), returns [io.EOF] on a
+// zero-byte server response) but honors the caller-supplied ctx
+// verbatim — [WithRequestTimeout] (if set on the Conn) is IGNORED in
+// favor of the caller's ctx (D-23).
 //
-// Short reads are permitted by [io.Reader] -- each call issues at most
-// one Tread, and the server may return fewer bytes than requested.
-// Callers wanting "fill or error" semantics should use [File.ReadAt]
-// or wrap with [bufio.Reader] / [io.ReadFull].
+// Serializes against other I/O methods on the same *File via f.mu.
+// For parallel I/O, use [File.Clone] (which issues its own fid).
 //
-// Context: Read does NOT take a ctx -- the [io.Reader] contract has no
-// ctx slot. Read uses a background context with no timeout. For
-// cancellable I/O, shut down the Conn ([Conn.Close] / [Conn.Shutdown])
-// which unblocks all in-flight reads with [ErrClosed].
-//
-// Thread safety: serialized by f.mu with [File.Write], [File.ReadAt],
-// and [File.WriteAt]. Use [File.Clone] for parallel I/O.
-func (f *File) Read(p []byte) (int, error) {
+// On ctx cancellation or deadline expiry, a Tflush(oldtag) is sent via
+// the shared roundTrip pipeline (Plan 22-02); the returned error
+// satisfies [errors.Is] against ctx.Err() (Canceled or DeadlineExceeded)
+// and, on the Rflush-first path, also against [ErrFlushed].
+func (f *File) ReadCtx(ctx context.Context, p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -257,7 +263,7 @@ func (f *File) Read(p []byte) (int, error) {
 	if m := f.maxChunk(); count > m {
 		count = m
 	}
-	data, err := f.conn.Read(context.Background(), f.fid, uint64(f.offset), count)
+	data, err := f.conn.Read(ctx, f.fid, uint64(f.offset), count)
 	if err != nil {
 		return 0, err
 	}
@@ -269,18 +275,41 @@ func (f *File) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// Write writes len(p) bytes to the File starting at the current local
-// offset, advancing the offset by bytes-written. Chunks the payload
-// over multiple Twrites when len(p) exceeds min(iounit, msize -
-// ioFrameOverhead).
+// Read reads up to len(p) bytes from the File starting at the current
+// local offset (see [File.Seek]). Returns [io.EOF] when the server
+// responds with zero bytes on a non-empty p.
+//
+// Short reads are permitted by [io.Reader] -- each call issues at most
+// one Tread, and the server may return fewer bytes than requested.
+// Callers wanting "fill or error" semantics should use [File.ReadAt]
+// or wrap with [bufio.Reader] / [io.ReadFull].
+//
+// Context: Read does NOT take a ctx — the [io.Reader] contract has no
+// ctx slot. Read derives its ctx from the Conn's [WithRequestTimeout]
+// setting (default: infinite wait, matching Linux v9fs kernel parity
+// per D-22 / Pitfall 9). Callers that need per-op cancellation use
+// [File.ReadCtx] with a caller-supplied ctx.
+//
+// Thread safety: serialized by f.mu with [File.Write], [File.ReadAt],
+// and [File.WriteAt]. Use [File.Clone] for parallel I/O.
+func (f *File) Read(p []byte) (int, error) {
+	ctx, cancel := f.conn.opCtx(context.Background())
+	defer cancel()
+	return f.ReadCtx(ctx, p)
+}
+
+// WriteCtx is the ctx-taking variant of [File.Write]. Chunks p over
+// multiple Twrites when len(p) exceeds the per-op clamp; the caller's
+// ctx is used on every chunk, so a cancel mid-write returns a partial
+// count with the ctx error per the [io.Writer] contract.
 //
 // Returns [io.ErrShortWrite] if the server reports a Twrite count less
-// than the chunk size sent -- per the [io.Writer] contract, a non-nil
-// error must accompany any n < len(p) result.
+// than the chunk size sent.
 //
-// Thread safety: serialized with other I/O methods on the same *File
-// via f.mu.
-func (f *File) Write(p []byte) (int, error) {
+// Serializes against other I/O methods on the same *File via f.mu.
+// For parallel I/O, use [File.Clone]. On ctx cancellation or deadline
+// expiry, a Tflush(oldtag) is sent for the in-flight Twrite.
+func (f *File) WriteCtx(ctx context.Context, p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -295,7 +324,7 @@ func (f *File) Write(p []byte) (int, error) {
 		if m := f.maxChunk(); uint32(len(chunk)) > m {
 			chunk = chunk[:m]
 		}
-		n, err := f.conn.Write(context.Background(), f.fid, uint64(f.offset), chunk)
+		n, err := f.conn.Write(ctx, f.fid, uint64(f.offset), chunk)
 		if err != nil {
 			if total > 0 {
 				return total, err
@@ -312,6 +341,27 @@ func (f *File) Write(p []byte) (int, error) {
 		}
 	}
 	return total, nil
+}
+
+// Write writes len(p) bytes to the File starting at the current local
+// offset, advancing the offset by bytes-written. Chunks the payload
+// over multiple Twrites when len(p) exceeds min(iounit, msize -
+// ioFrameOverhead).
+//
+// Returns [io.ErrShortWrite] if the server reports a Twrite count less
+// than the chunk size sent -- per the [io.Writer] contract, a non-nil
+// error must accompany any n < len(p) result.
+//
+// Context: Write derives its ctx from the Conn's [WithRequestTimeout]
+// setting (default: infinite wait per D-22). The same ctx is used for
+// every chunk. Callers needing per-op cancellation use [File.WriteCtx].
+//
+// Thread safety: serialized with other I/O methods on the same *File
+// via f.mu.
+func (f *File) Write(p []byte) (int, error) {
+	ctx, cancel := f.conn.opCtx(context.Background())
+	defer cancel()
+	return f.WriteCtx(ctx, p)
 }
 
 // Seek sets the local offset for the next [File.Read] or [File.Write]
@@ -363,6 +413,46 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 	return abs, nil
 }
 
+// ReadAtCtx is the ctx-taking variant of [File.ReadAt]. Loops issuing
+// Treads at off, off+n1, off+n1+n2, ... until p is filled or the
+// server returns zero bytes ([io.EOF]). Each Tread uses the caller's
+// ctx verbatim, so a cancel mid-chunk returns a partial count with
+// the ctx error.
+//
+// Does NOT advance the local offset — the [io.ReaderAt] contract is
+// preserved regardless of what the caller's ctx does. Serializes
+// against other I/O methods on the same *File via f.mu per D-12.
+func (f *File) ReadAtCtx(ctx context.Context, p []byte, off int64) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if off < 0 {
+		return 0, fmt.Errorf("client: ReadAt negative offset %d", off)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	total := 0
+	for total < len(p) {
+		count := uint32(len(p) - total)
+		if m := f.maxChunk(); count > m {
+			count = m
+		}
+		data, err := f.conn.Read(ctx, f.fid, uint64(off)+uint64(total), count)
+		if err != nil {
+			if total > 0 {
+				return total, err
+			}
+			return 0, err
+		}
+		if len(data) == 0 {
+			return total, io.EOF
+		}
+		n := copy(p[total:], data)
+		total += n
+	}
+	return total, nil
+}
+
 // ReadAt reads len(p) bytes from the File starting at off. Satisfies
 // the [io.ReaderAt] contract: returns a non-nil error whenever
 // n < len(p), specifically [io.EOF] when the short return is at the
@@ -378,37 +468,14 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 // is filled or the server returns zero bytes (EOF). Each Tread is
 // clamped to min(iounit, msize - ioFrameOverhead).
 //
-// Context: like [File.Read], ReadAt uses a background context; shut
-// down the Conn to unblock a stuck ReadAt.
+// Context: ReadAt derives its ctx from the Conn's [WithRequestTimeout]
+// setting (default: infinite wait per D-22). The same ctx is used for
+// every chunk of the loop. Callers needing per-op cancellation use
+// [File.ReadAtCtx].
 func (f *File) ReadAt(p []byte, off int64) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-	if off < 0 {
-		return 0, fmt.Errorf("client: ReadAt negative offset %d", off)
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	total := 0
-	for total < len(p) {
-		count := uint32(len(p) - total)
-		if m := f.maxChunk(); count > m {
-			count = m
-		}
-		data, err := f.conn.Read(context.Background(), f.fid, uint64(off)+uint64(total), count)
-		if err != nil {
-			if total > 0 {
-				return total, err
-			}
-			return 0, err
-		}
-		if len(data) == 0 {
-			return total, io.EOF
-		}
-		n := copy(p[total:], data)
-		total += n
-	}
-	return total, nil
+	ctx, cancel := f.conn.opCtx(context.Background())
+	defer cancel()
+	return f.ReadAtCtx(ctx, p, off)
 }
 
 // Sync refreshes this File's cached size from the server by issuing
@@ -469,21 +536,11 @@ func (f *File) ReadDir(n int) ([]os.DirEntry, error) {
 	return f.readDir(context.Background(), n)
 }
 
-// WriteAt writes len(p) bytes to the File starting at off. Satisfies
-// the [io.WriterAt] contract: returns a non-nil error whenever
-// n < len(p).
-//
-// WriteAt does NOT advance the local offset -- it is independent of
-// [File.Write] and [File.Seek] state. Concurrent callers on the same
-// *File serialize via f.mu per D-12; use [File.Clone] for parallel
-// writes.
-//
-// Chunks the payload over multiple Twrites when len(p) exceeds
-// min(iounit, msize - ioFrameOverhead). Returns [io.ErrShortWrite] if
-// the server reports a Twrite count less than the chunk size sent.
-//
-// Context: like [File.Write], WriteAt uses a background context.
-func (f *File) WriteAt(p []byte, off int64) (int, error) {
+// WriteAtCtx is the ctx-taking variant of [File.WriteAt]. Chunks p
+// over multiple Twrites at off, off+n1, off+n1+n2, ...; each chunk
+// uses the caller's ctx verbatim. Does NOT advance the local offset.
+// Serializes against other I/O methods on the same *File via f.mu.
+func (f *File) WriteAtCtx(ctx context.Context, p []byte, off int64) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -498,7 +555,7 @@ func (f *File) WriteAt(p []byte, off int64) (int, error) {
 		if m := f.maxChunk(); uint32(len(chunk)) > m {
 			chunk = chunk[:m]
 		}
-		n, err := f.conn.Write(context.Background(), f.fid, uint64(off)+uint64(total), chunk)
+		n, err := f.conn.Write(ctx, f.fid, uint64(off)+uint64(total), chunk)
 		if err != nil {
 			if total > 0 {
 				return total, err
@@ -511,4 +568,26 @@ func (f *File) WriteAt(p []byte, off int64) (int, error) {
 		}
 	}
 	return total, nil
+}
+
+// WriteAt writes len(p) bytes to the File starting at off. Satisfies
+// the [io.WriterAt] contract: returns a non-nil error whenever
+// n < len(p).
+//
+// WriteAt does NOT advance the local offset -- it is independent of
+// [File.Write] and [File.Seek] state. Concurrent callers on the same
+// *File serialize via f.mu per D-12; use [File.Clone] for parallel
+// writes.
+//
+// Chunks the payload over multiple Twrites when len(p) exceeds
+// min(iounit, msize - ioFrameOverhead). Returns [io.ErrShortWrite] if
+// the server reports a Twrite count less than the chunk size sent.
+//
+// Context: WriteAt derives its ctx from the Conn's [WithRequestTimeout]
+// setting (default: infinite wait per D-22). Callers needing per-op
+// cancellation use [File.WriteAtCtx].
+func (f *File) WriteAt(p []byte, off int64) (int, error) {
+	ctx, cancel := f.conn.opCtx(context.Background())
+	defer cancel()
+	return f.WriteAtCtx(ctx, p, off)
 }

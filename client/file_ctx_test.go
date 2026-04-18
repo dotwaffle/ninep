@@ -265,24 +265,15 @@ func TestFile_Read_TimeoutTriggersTflush(t *testing.T) {
 	)
 	defer cleanup()
 
-	// Open a *File handle via the high-level API so File.Read is
-	// exercised, not the Raw.Read/Conn.Read wire-level APIs tested in
-	// flush_test.go.
-	fid := attachAndOpen(t, cli)
-	_ = fid // handled by attachAndOpen; the mock server does not care
-	f := client.NewFileForTest(cli)
-	// NewFileForTest synthesises a File with fid 0 (root); we need fid 1
-	// from attachAndOpen. Construct via the exported path instead.
-	// The mock server responds to any Tread on any fid, so the fid that
-	// NewFileForTest returns won't do because the client won't have
-	// opened it. Instead, use a Walk+OpenFile-style approach against the
-	// mock — but the mock doesn't have OpenFile path semantics. Simplest:
-	// use cli.Walk and cli.Lopen (already done by attachAndOpen), then
-	// construct a File wrapping the live fid via an exported helper.
-	_ = f
+	// Configure the mock to send Rflush immediately on receiving Tflush
+	// — otherwise flushAndWait parks indefinitely on the rflushGate
+	// (which is the default state).
+	srv.rflushSendImmediately.Store(true)
 
-	// Go directly via File on the live fid from attachAndOpen. We have
-	// cli's internals to construct one.
+	fid := attachAndOpen(t, cli)
+	// Build a *File around the live fid opened above. The mock server's
+	// Tread handler parks on rreadGate (default: never released until
+	// Cleanup), so File.Read will block until ctx deadline fires.
 	ff := client.NewFileWrappingFidForTest(cli, fid, 4096)
 
 	start := time.Now()
@@ -300,9 +291,8 @@ func TestFile_Read_TimeoutTriggersTflush(t *testing.T) {
 	if elapsed > 500*time.Millisecond {
 		t.Errorf("Read took %v; want < 500ms", elapsed)
 	}
-	// Let the late Rread arrive + be dropped by inflight.deliver.
+	// Drain the late Rread so the server goroutine exits cleanly.
 	srv.releaseRread()
-	srv.releaseRflush()
 	time.Sleep(50 * time.Millisecond)
 
 	if got := srv.tflushCount.Load(); got != 1 {
@@ -317,6 +307,10 @@ func TestFile_ReadCtx_ExplicitTimeout(t *testing.T) {
 	t.Parallel()
 	cli, srv, cleanup := newFlushTestPair(t) // no WithRequestTimeout
 	defer cleanup()
+
+	// Rflush fires immediately on Tflush receipt so flushAndWait can
+	// unblock. Rread stays parked on rreadGate.
+	srv.rflushSendImmediately.Store(true)
 
 	fid := attachAndOpen(t, cli)
 	ff := client.NewFileWrappingFidForTest(cli, fid, 4096)
@@ -337,7 +331,6 @@ func TestFile_ReadCtx_ExplicitTimeout(t *testing.T) {
 	}
 
 	srv.releaseRread()
-	srv.releaseRflush()
 	time.Sleep(50 * time.Millisecond)
 
 	if got := srv.tflushCount.Load(); got != 1 {
