@@ -90,11 +90,12 @@
 // [File.Seek] is a pure client-side arithmetic operation. 9P's
 // Tread/Twrite carry the offset on every request, so there is no
 // server-side seek state. SeekStart and SeekCurrent never touch the
-// wire. SeekEnd uses a cached size field populated by [File.Sync];
-// Phase 20 ships Sync as a stub, with the real Tgetattr-backed
-// implementation arriving in Phase 21. Until then, SeekEnd on a file
-// whose size has not been cached returns 0 for SeekEnd(0) and an
-// error guiding the caller to Sync for any negative offset.
+// wire. SeekEnd uses a cached size field populated by [File.Sync],
+// which issues Tgetattr on .L (or Tstat on .u) to refresh. Callers
+// that need SeekEnd relative to fresh size after concurrent writes
+// invoke Sync first; SeekEnd on a file whose size has not been cached
+// returns 0 for SeekEnd(0) and an error guiding the caller to Sync
+// for any negative offset.
 //
 // # Concurrency and parallelism
 //
@@ -104,6 +105,81 @@
 // each clone has its own fid, its own offset, and its own mutex. The
 // underlying Conn is goroutine-safe per database/sql.DB semantics, so
 // N clones can issue N in-flight requests that overlap on the server.
+//
+// # Advanced Operations
+//
+// Phase 21 adds the 9P operations beyond read/write/walk/open/clunk:
+// symbolic links, extended attributes, POSIX locks, filesystem
+// statistics, and path manipulation (rename / remove / link / mknod /
+// setattr).
+//
+// ## Symbolic Links
+//
+//   - [Conn.Symlink] — create a symlink at a path. (.L-only)
+//   - [File.Readlink] — read a symlink's target. (.L-only)
+//
+// ## Extended Attributes (.L-only)
+//
+//   - [File.XattrGet] / [File.XattrSet] / [File.XattrList] /
+//     [File.XattrRemove]
+//   - All four hide the 9P two-phase protocol (Txattrwalk → Tread-loop
+//     → Tclunk for get; Clone + Txattrcreate + Twrite + Tclunk for
+//     set).
+//   - Callers needing streaming access use [Raw.Txattrwalk] directly.
+//
+// ## POSIX Locks (.L-only)
+//
+//   - [File.Lock] / [File.Unlock] / [File.TryLock] / [File.GetLock]
+//   - Blocking Lock uses exponential backoff (10ms → 500ms cap); tests
+//     can override via [WithLockPollSchedule].
+//   - Ctx cancellation unconditionally releases any granted lock via a
+//     background-ctx Tlock(UNLCK) — belt-and-braces against the
+//     cancel-during-grant race.
+//
+// ## Filesystem Statistics
+//
+//   - [File.Stat] — dialect-neutral metadata (p9u.Stat on both .L and
+//     .u). On .L, internally uses Tgetattr; on .u, uses Tstat.
+//   - [File.Getattr] — rich .L-specific [proto.Attr] (includes NLink,
+//     Blocks, BTime, Gen, DataVersion dropped by Stat). (.L-only)
+//   - [File.Setattr] — write metadata (chmod/chown/truncate via
+//     [proto.SetAttr].Valid bitmask). (.L-only)
+//   - [File.Statfs] — filesystem-level stats (by value, not pointer).
+//     (.L-only)
+//   - [File.Sync] — refresh the File's cachedSize from the server
+//     (Tgetattr on .L, Tstat on .u); backs Seek(SeekEnd) after
+//     concurrent writes.
+//
+// ## Path Manipulation
+//
+//   - [Conn.Rename] — rename across directories. (.L uses Trenameat;
+//     .u returns [ErrNotSupported].)
+//   - [Conn.Remove] — remove file or directory (auto-detects QTDIR for
+//     Tunlinkat's AT_REMOVEDIR flag on .L). (.L-only)
+//   - [Conn.Link] — create a hard link. (.L-only)
+//   - [Conn.Mknod] — create a device / fifo / socket node. (.L-only)
+//
+// ## Dialect Compatibility
+//
+// Methods marked .L-only return a wrapped [ErrNotSupported] on a
+// 9P2000.u-negotiated Conn. Use [errors.Is] to discriminate. The
+// single .u-only Raw primitive is [Raw.Tstat] — [File.Stat]
+// dispatches on dialect so callers never see this asymmetry.
+//
+// ## Not Supported
+//
+// The Tauth afid handshake is not implemented. [Conn.Attach] always
+// passes NoFid; authentication must be handled at the transport layer
+// (TLS, SSH). See the "Authentication Scope" section above.
+//
+// Chmod / Chown / Truncate convenience helpers are deferred — callers
+// invoke [File.Setattr] with the appropriate [proto.SetAttr].Valid
+// bitmask. A future ergonomic pass may add wrappers if consumer demand
+// surfaces.
+//
+// Twstat is intentionally unexposed on the high-level surface. .u
+// callers that need path-rename or metadata-write semantics compose
+// [Raw] primitives directly.
 //
 // # Raw Sub-Surface
 //
