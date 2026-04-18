@@ -116,6 +116,20 @@ type Lock struct {
 // Lock on a walked-but-unopened fid returns a *Error with the server's
 // errno (typically EBADF — server bridge enforces fidOpened state).
 //
+// Concurrency constraint: Lock and [File.Close] are NOT safe to call
+// concurrently on the same *File. Close deliberately bypasses f.mu to
+// keep the shutdown path wait-free (Phase 20 D-12), which means a Close
+// racing against a blocked Lock (parked in the backoff select) can
+// release f.fid to the allocator before unlockCleanup fires. The
+// allocator may then re-issue that numeric fid to an unrelated *File,
+// and the cleanup Tlock(UNLCK) will land on the wrong fid — at best
+// EBADF, at worst releasing a lock held by another caller. The same
+// race exists on the in-flight-Tlock ctx-cancel branch. Callers who
+// need to cancel a blocked Lock MUST cancel ctx and wait for Lock to
+// return before invoking Close. If the caller's lifecycle cannot
+// guarantee this, serialise Lock/Close externally with a handle-level
+// mutex.
+//
 // Requires 9P2000.L; returns a wrapped [ErrNotSupported] on a .u Conn.
 func (f *File) Lock(ctx context.Context, lt LockType) error {
 	if err := f.conn.requireDialect(protocolL, "Lock"); err != nil {
