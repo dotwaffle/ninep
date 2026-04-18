@@ -101,12 +101,23 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 // toError before type-asserting, so the two dialects' error shapes are
 // unified at the ops boundary and user code uses a single errors.Is pattern
 // against proto.Errno constants regardless of negotiated dialect.
+//
+// Ownership: when toError returns a non-nil error, it has already returned
+// msg to its R-message cache via putCachedRMsg. The caller MUST NOT touch
+// msg after observing a non-nil return — the fields have been reset and the
+// pointer may already have been handed to another borrower. When toError
+// returns nil, msg is left intact for the caller to type-assert and later
+// return to the cache.
 func toError(msg proto.Message) error {
 	switch r := msg.(type) {
 	case *p9l.Rlerror:
-		return &Error{Errno: r.Ecode}
+		e := &Error{Errno: r.Ecode}
+		putCachedRMsg(msg)
+		return e
 	case *p9u.Rerror:
-		return &Error{Errno: r.Errno, Msg: r.Ename}
+		e := &Error{Errno: r.Errno, Msg: r.Ename}
+		putCachedRMsg(msg)
+		return e
 	}
 	return nil
 }
