@@ -282,3 +282,124 @@ func (c *Conn) Write(ctx context.Context, fid proto.Fid, offset uint64, data []b
 	putCachedRMsg(resp)
 	return count, nil
 }
+
+// Lopen opens an existing file referenced by fid with the given POSIX open
+// flags (O_RDONLY, O_RDWR, etc.). Requires a 9P2000.L-negotiated Conn (D-19,
+// D-20); on a .u Conn returns ErrNotSupported without touching the wire.
+//
+// Returns the file's QID and the server's suggested iounit (the maximum
+// bytes the server is willing to return in a single Rread or accept in a
+// single Twrite; a value of 0 means "unknown, use msize").
+func (c *Conn) Lopen(ctx context.Context, fid proto.Fid, flags uint32) (proto.QID, uint32, error) {
+	if err := c.requireDialect(protocolL, "Lopen"); err != nil {
+		return proto.QID{}, 0, err
+	}
+	req := &p9l.Tlopen{Fid: fid, Flags: flags}
+	resp, err := c.roundTrip(ctx, req)
+	if err != nil {
+		return proto.QID{}, 0, err
+	}
+	if err := toError(resp); err != nil {
+		return proto.QID{}, 0, err
+	}
+	r, ok := resp.(*p9l.Rlopen)
+	if !ok {
+		return proto.QID{}, 0, fmt.Errorf("client: expected Rlopen, got %v", resp.Type())
+	}
+	qid, iou := r.QID, r.IOUnit
+	putCachedRMsg(resp)
+	return qid, iou, nil
+}
+
+// Lcreate creates and opens a new file named name in the directory
+// referenced by fid. After a successful Lcreate, fid is mutated server-side
+// to refer to the newly-created file (not the parent directory); this
+// matches Plan 9 and the Linux v9fs kernel client. Requires a .L-negotiated
+// Conn.
+//
+// flags is the POSIX open flag set (O_RDWR, O_CREAT already implied, etc.).
+// mode is the POSIX permission bits + file-type. gid is the group to assign
+// to the new file (zero for "use the server default").
+func (c *Conn) Lcreate(ctx context.Context, fid proto.Fid, name string, flags uint32, mode proto.FileMode, gid uint32) (proto.QID, uint32, error) {
+	if err := c.requireDialect(protocolL, "Lcreate"); err != nil {
+		return proto.QID{}, 0, err
+	}
+	req := &p9l.Tlcreate{
+		Fid:   fid,
+		Name:  name,
+		Flags: flags,
+		Mode:  mode,
+		GID:   gid,
+	}
+	resp, err := c.roundTrip(ctx, req)
+	if err != nil {
+		return proto.QID{}, 0, err
+	}
+	if err := toError(resp); err != nil {
+		return proto.QID{}, 0, err
+	}
+	r, ok := resp.(*p9l.Rlcreate)
+	if !ok {
+		return proto.QID{}, 0, fmt.Errorf("client: expected Rlcreate, got %v", resp.Type())
+	}
+	qid, iou := r.QID, r.IOUnit
+	putCachedRMsg(resp)
+	return qid, iou, nil
+}
+
+// Open is the 9P2000.u file-open operation. Requires a .u-negotiated Conn
+// (D-19, D-20); on a .L Conn returns ErrNotSupported.
+//
+// mode is a 9P2000.u open mode (OREAD=0, OWRITE=1, ORDWR=2, OEXEC=3 with
+// optional flag bits in the upper bits). Returns QID + iounit.
+func (c *Conn) Open(ctx context.Context, fid proto.Fid, mode uint8) (proto.QID, uint32, error) {
+	if err := c.requireDialect(protocolU, "Open"); err != nil {
+		return proto.QID{}, 0, err
+	}
+	req := &p9u.Topen{Fid: fid, Mode: mode}
+	resp, err := c.roundTrip(ctx, req)
+	if err != nil {
+		return proto.QID{}, 0, err
+	}
+	if err := toError(resp); err != nil {
+		return proto.QID{}, 0, err
+	}
+	r, ok := resp.(*p9u.Ropen)
+	if !ok {
+		return proto.QID{}, 0, fmt.Errorf("client: expected Ropen, got %v", resp.Type())
+	}
+	// p9u.Ropen is not cached (cold compared to Rread/Rwrite); passing through
+	// putCachedRMsg is a no-op for unknown types per msgcache.go.
+	return r.QID, r.IOUnit, nil
+}
+
+// Create is the 9P2000.u create-and-open operation. Requires a .u-negotiated
+// Conn.
+//
+// perm is the file-mode + type bits; mode is the 9P2000.u open mode;
+// extension is the .u Extension field (symlink target, device spec, etc. —
+// empty for regular files).
+func (c *Conn) Create(ctx context.Context, fid proto.Fid, name string, perm proto.FileMode, mode uint8, extension string) (proto.QID, uint32, error) {
+	if err := c.requireDialect(protocolU, "Create"); err != nil {
+		return proto.QID{}, 0, err
+	}
+	req := &p9u.Tcreate{
+		Fid:       fid,
+		Name:      name,
+		Perm:      perm,
+		Mode:      mode,
+		Extension: extension,
+	}
+	resp, err := c.roundTrip(ctx, req)
+	if err != nil {
+		return proto.QID{}, 0, err
+	}
+	if err := toError(resp); err != nil {
+		return proto.QID{}, 0, err
+	}
+	r, ok := resp.(*p9u.Rcreate)
+	if !ok {
+		return proto.QID{}, 0, fmt.Errorf("client: expected Rcreate, got %v", resp.Type())
+	}
+	return r.QID, r.IOUnit, nil
+}
