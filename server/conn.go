@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dotwaffle/ninep/internal/bufpool"
+	"github.com/dotwaffle/ninep/internal/wire"
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
 	"github.com/dotwaffle/ninep/proto/p9u"
@@ -416,8 +417,9 @@ func (c *conn) handleRequest(ctx context.Context) {
 
 	for {
 		// Per-iteration scratch. Must be locals (not on conn) because
-		// multiple goroutines now run this loop.
-		var hdrBuf [4]byte
+		// multiple goroutines now run this loop. bodyReader is reused
+		// across iterations via Reset below; the 4-byte size header is
+		// now owned by wire.ReadSize's own stack-local.
 		var bodyReader bytes.Reader
 
 		// recvIdle++ BEFORE Lock; recvIdle-- AFTER Lock. This makes
@@ -445,8 +447,11 @@ func (c *conn) handleRequest(ctx context.Context) {
 			}
 		}
 
-		// Read 4-byte size header.
-		if _, err := io.ReadFull(c.nc, hdrBuf[:]); err != nil {
+		// Read 4-byte size header. wire.ReadSize returns a descriptive
+		// error when size < proto.HeaderSize; the shutdown path is
+		// identical to any other read error.
+		size, err := wire.ReadSize(c.nc)
+		if err != nil {
 			if !isExpectedCloseError(err) {
 				c.logger.Debug("read error", slog.Any("error", err))
 			}
@@ -455,14 +460,10 @@ func (c *conn) handleRequest(ctx context.Context) {
 			c.signalRecvShutdown()
 			return
 		}
-		size := binary.LittleEndian.Uint32(hdrBuf[:])
-		if size < uint32(proto.HeaderSize) {
-			c.logger.Warn("message too small", slog.Uint64("size", uint64(size)))
-			c.recvShutdown = true
-			c.recvMu.Unlock()
-			c.signalRecvShutdown()
-			return
-		}
+		// msize validation is server policy and lives HERE — between the
+		// size-prefix read and the body allocation — so a 4 GiB attacker
+		// size never causes a body buffer to be requested. Do not move
+		// this into internal/wire (Phase 18 D-06, research §Pitfall 4).
 		if size > c.msize {
 			c.logger.Warn("message exceeds msize",
 				slog.Uint64("size", uint64(size)),
@@ -474,10 +475,13 @@ func (c *conn) handleRequest(ctx context.Context) {
 			return
 		}
 
-		// Read body: type[1] + tag[2] + payload.
+		// Read body: type[1] + tag[2] + payload. bufpool.GetMsgBuf
+		// returns a bucket-sized slice; we slice to the exact body length
+		// so PutMsgBuf's bucket-cap match succeeds on release. wire.ReadBody
+		// fills exactly len(b) bytes and MUST NOT resize b.
 		bufPtr := bufpool.GetMsgBuf(int(size - 4))
 		b := (*bufPtr)[:size-4]
-		if _, err := io.ReadFull(c.nc, b); err != nil {
+		if err := wire.ReadBody(c.nc, b); err != nil {
 			bufpool.PutMsgBuf(bufPtr)
 			if !isExpectedCloseError(err) {
 				c.logger.Debug("read body error", slog.Any("error", err))
@@ -873,8 +877,15 @@ func (c *conn) sendResponseInline(tag proto.Tag, msg proto.Message, rel releaser
 		c.encBufsArr[2] = payload
 		n = 3
 	}
+	// Re-slice from the conn-resident backing array on every call:
+	// wire.WriteFramesLocked (via net.Buffers.WriteTo's v.consume)
+	// zeroes both length and capacity of bufs on full consumption, so
+	// a hoisted field-level net.Buffers would silently drop subsequent
+	// frames. See internal/wire.WriteFramesLocked godoc + CLAUDE.md
+	// §Performance. writeMu is held above; WriteFramesLocked itself
+	// takes no lock (the *Locked suffix advertises the caller contract).
 	bufs := net.Buffers(c.encBufsArr[:n])
-	_, err := bufs.WriteTo(c.nc)
+	err := wire.WriteFramesLocked(c.nc, &bufs)
 	c.writeMu.Unlock()
 
 	bufpool.PutBuf(body)
