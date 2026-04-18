@@ -297,11 +297,53 @@ func (f *File) Write(p []byte) (int, error) {
 	return total, nil
 }
 
-// Seek is implemented in Plan 20-04.
+// Seek sets the local offset for the next [File.Read] or [File.Write]
+// on this File per D-09. Does NOT issue a wire op -- 9P is
+// offset-addressed on every Tread/Twrite, so there is no server-side
+// seek state to synchronize.
 //
-// TODO(20-04): replace with the real Seek implementation.
+// Whence:
+//   - [io.SeekStart]:   offset is the absolute position.
+//   - [io.SeekCurrent]: offset is relative to the current position.
+//   - [io.SeekEnd]:     offset is relative to the file's size, read
+//     from f.cachedSize. cachedSize defaults to 0 and is populated by
+//     [File.Sync] once Phase 21 ships Tgetattr/Tstat; until then
+//     SeekEnd(0) returns 0 (correct for an empty file) and
+//     SeekEnd(-n) for n > 0 returns a "negative position" error with
+//     guidance to call File.Sync first.
+//
+// Returns an error when the computed absolute position is negative.
+// Seeking past the end of the file is allowed and does not error --
+// subsequent Reads return [io.EOF], and subsequent Writes may extend
+// the file (server-permitting).
+//
+// Seek on a directory fid succeeds (pure arithmetic). A subsequent
+// [File.Read] on a directory fid surfaces the server's EISDIR (or
+// equivalent) error; this matches [os.File] behavior per D-11.
+//
+// Thread safety: serialized with I/O methods via f.mu.
 func (f *File) Seek(offset int64, whence int) (int64, error) {
-	return 0, ErrNotSupported
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var abs int64
+	switch whence {
+	case io.SeekStart:
+		abs = offset
+	case io.SeekCurrent:
+		abs = f.offset + offset
+	case io.SeekEnd:
+		abs = f.cachedSize + offset
+	default:
+		return f.offset, fmt.Errorf("client: invalid whence %d", whence)
+	}
+	if abs < 0 {
+		if whence == io.SeekEnd && f.cachedSize == 0 {
+			return f.offset, fmt.Errorf("client: negative position %d; SeekEnd requires File.Sync to populate size (Phase 21)", abs)
+		}
+		return f.offset, fmt.Errorf("client: negative position %d", abs)
+	}
+	f.offset = abs
+	return abs, nil
 }
 
 // ReadAt is implemented in Plan 20-04.
