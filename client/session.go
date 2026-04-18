@@ -104,7 +104,10 @@ func (c *Conn) OpenFile(ctx context.Context, p string, flags int, mode os.FileMo
 	case protocolU:
 		qid, iounit, err = c.Open(ctx, fileFid, posixToNinepMode(flags))
 	default:
-		err = fmt.Errorf("client: unknown dialect %v", c.dialect)
+		// Dialect is set once at Dial and never mutated. This branch is
+		// statically unreachable; wrap ErrDialectInvariant so callers
+		// hitting it in production logs have an errors.Is handle.
+		err = fmt.Errorf("%w: %v", ErrDialectInvariant, c.dialect)
 	}
 	if err != nil {
 		// Walk succeeded -> fileFid is server-bound. Clunk before
@@ -176,7 +179,9 @@ func (c *Conn) Create(ctx context.Context, p string, flags int, mode os.FileMode
 	case protocolU:
 		qid, iounit, err = c.CreateFid(ctx, dirFid, name, perm, posixToNinepMode(flags), "")
 	default:
-		err = fmt.Errorf("client: unknown dialect %v", c.dialect)
+		// See OpenFile default-arm comment; mirrored here so Conn.Create
+		// callers get the same errors.Is handle on the unreachable path.
+		err = fmt.Errorf("%w: %v", ErrDialectInvariant, c.dialect)
 	}
 	if err != nil {
 		// Walk succeeded -> dirFid is server-bound (to the parent dir,

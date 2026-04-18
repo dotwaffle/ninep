@@ -41,6 +41,16 @@ var (
 	// practical workload; documented for completeness. Callers that
 	// encounter it should Dial a new Conn.
 	ErrFidExhausted = errors.New("client: fid space exhausted")
+
+	// ErrDialectInvariant signals that Conn.dialect holds a value outside
+	// the {protocolL, protocolU} set expected after Dial. Dialect is set
+	// once at negotiation time and never mutated afterwards, so reaching
+	// this sentinel means either (1) a future refactor forgot to update a
+	// dialect switch, or (2) memory corruption. It is wrapped into the
+	// default arm of dialect switches in session helpers so callers can
+	// errors.Is against a stable sentinel rather than string-matching the
+	// wrapping fmt.Errorf.
+	ErrDialectInvariant = errors.New("client: dialect invariant violated (programmer error)")
 )
 
 // Error represents a 9P error response from the server. Rlerror (9P2000.L)
