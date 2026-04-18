@@ -11,6 +11,7 @@ import (
 
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
+	"github.com/dotwaffle/ninep/proto/p9u"
 )
 
 // TestReadLoop_DispatchesRlerrorToRegisteredTag exercises the full
@@ -193,5 +194,200 @@ func TestReadLoop_UsesBytesReaderReset(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatalf("channels[%d] not received within 5s", i)
 		}
+	}
+}
+
+// TestNewRMessage_Phase21_DialectL_All asserts that every new .L R-type
+// introduced by Phase 21 decodes to the correct *p9l.R<x> pointer on a
+// protocolL-negotiated Conn. The newGateConn helper assembles a *Conn
+// without a live wire; newRMessage only consults c.dialect.
+func TestNewRMessage_Phase21_DialectL_All(t *testing.T) {
+	t.Parallel()
+	c := newGateConn(t, protocolL)
+
+	cases := []struct {
+		name    string
+		msgType proto.MessageType
+		assert  func(t *testing.T, msg proto.Message)
+	}{
+		{"Rgetattr", proto.TypeRgetattr, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9l.Rgetattr); !ok {
+				t.Fatalf("got %T, want *p9l.Rgetattr", msg)
+			}
+		}},
+		{"Rsetattr", proto.TypeRsetattr, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9l.Rsetattr); !ok {
+				t.Fatalf("got %T, want *p9l.Rsetattr", msg)
+			}
+		}},
+		{"Rstatfs", proto.TypeRstatfs, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9l.Rstatfs); !ok {
+				t.Fatalf("got %T, want *p9l.Rstatfs", msg)
+			}
+		}},
+		{"Rsymlink", proto.TypeRsymlink, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9l.Rsymlink); !ok {
+				t.Fatalf("got %T, want *p9l.Rsymlink", msg)
+			}
+		}},
+		{"Rreadlink", proto.TypeRreadlink, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9l.Rreadlink); !ok {
+				t.Fatalf("got %T, want *p9l.Rreadlink", msg)
+			}
+		}},
+		{"Rlock", proto.TypeRlock, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9l.Rlock); !ok {
+				t.Fatalf("got %T, want *p9l.Rlock", msg)
+			}
+		}},
+		{"Rgetlock", proto.TypeRgetlock, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9l.Rgetlock); !ok {
+				t.Fatalf("got %T, want *p9l.Rgetlock", msg)
+			}
+		}},
+		{"Rxattrwalk", proto.TypeRxattrwalk, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9l.Rxattrwalk); !ok {
+				t.Fatalf("got %T, want *p9l.Rxattrwalk", msg)
+			}
+		}},
+		{"Rxattrcreate", proto.TypeRxattrcreate, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9l.Rxattrcreate); !ok {
+				t.Fatalf("got %T, want *p9l.Rxattrcreate", msg)
+			}
+		}},
+		{"Rlink", proto.TypeRlink, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9l.Rlink); !ok {
+				t.Fatalf("got %T, want *p9l.Rlink", msg)
+			}
+		}},
+		{"Rmknod", proto.TypeRmknod, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9l.Rmknod); !ok {
+				t.Fatalf("got %T, want *p9l.Rmknod", msg)
+			}
+		}},
+		{"Rrename", proto.TypeRrename, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9l.Rrename); !ok {
+				t.Fatalf("got %T, want *p9l.Rrename", msg)
+			}
+		}},
+		{"Rrenameat", proto.TypeRrenameat, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9l.Rrenameat); !ok {
+				t.Fatalf("got %T, want *p9l.Rrenameat", msg)
+			}
+		}},
+		{"Runlinkat", proto.TypeRunlinkat, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9l.Runlinkat); !ok {
+				t.Fatalf("got %T, want *p9l.Runlinkat", msg)
+			}
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			msg, err := c.newRMessage(tc.msgType)
+			if err != nil {
+				t.Fatalf("newRMessage(%v) err = %v", tc.msgType, err)
+			}
+			if msg == nil {
+				t.Fatalf("newRMessage(%v) returned nil", tc.msgType)
+			}
+			tc.assert(t, msg)
+		})
+	}
+}
+
+// TestNewRMessage_Phase21_DialectU_All asserts .u-only R-types decode to
+// their *p9u.R<x> concrete pointers on a protocolU-negotiated Conn.
+func TestNewRMessage_Phase21_DialectU_All(t *testing.T) {
+	t.Parallel()
+	c := newGateConn(t, protocolU)
+
+	cases := []struct {
+		name    string
+		msgType proto.MessageType
+		assert  func(t *testing.T, msg proto.Message)
+	}{
+		{"Rstat", proto.TypeRstat, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9u.Rstat); !ok {
+				t.Fatalf("got %T, want *p9u.Rstat", msg)
+			}
+		}},
+		{"Rwstat", proto.TypeRwstat, func(t *testing.T, msg proto.Message) {
+			if _, ok := msg.(*p9u.Rwstat); !ok {
+				t.Fatalf("got %T, want *p9u.Rwstat", msg)
+			}
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			msg, err := c.newRMessage(tc.msgType)
+			if err != nil {
+				t.Fatalf("newRMessage(%v) err = %v", tc.msgType, err)
+			}
+			if msg == nil {
+				t.Fatalf("newRMessage(%v) returned nil", tc.msgType)
+			}
+			tc.assert(t, msg)
+		})
+	}
+}
+
+// TestNewRMessage_Phase21_CrossDialect_Rejects confirms defense-in-depth:
+// on a protocolL Conn, a .u-only R-type returns error (dropped into the
+// default arm). Same for protocolU + a .L-only R-type. A malicious peer
+// emitting cross-dialect traffic triggers signalShutdown in readLoop, not
+// a decode-misalignment crash.
+func TestNewRMessage_Phase21_CrossDialect_Rejects(t *testing.T) {
+	t.Parallel()
+
+	cL := newGateConn(t, protocolL)
+	// Rstat and Rwstat are .u-only — must error on .L.
+	for _, mt := range []proto.MessageType{proto.TypeRstat, proto.TypeRwstat} {
+		if msg, err := cL.newRMessage(mt); err == nil {
+			t.Errorf("newRMessage(%v) on .L: got %T + nil err, want error", mt, msg)
+		}
+	}
+
+	cU := newGateConn(t, protocolU)
+	// All .L-only R-types — must error on .u.
+	lOnly := []proto.MessageType{
+		proto.TypeRgetattr,
+		proto.TypeRsetattr,
+		proto.TypeRstatfs,
+		proto.TypeRsymlink,
+		proto.TypeRreadlink,
+		proto.TypeRlock,
+		proto.TypeRgetlock,
+		proto.TypeRxattrwalk,
+		proto.TypeRxattrcreate,
+		proto.TypeRlink,
+		proto.TypeRmknod,
+		proto.TypeRrename,
+		proto.TypeRrenameat,
+		proto.TypeRunlinkat,
+	}
+	for _, mt := range lOnly {
+		if msg, err := cU.newRMessage(mt); err == nil {
+			t.Errorf("newRMessage(%v) on .u: got %T + nil err, want error", mt, msg)
+		}
+	}
+}
+
+// TestNewRMessage_Phase21_Rstat_On_L_ReturnsError is the explicit,
+// single-case assertion that a .u stat type on a .L Conn never decodes —
+// a duplicate of the cross-dialect table but called out independently
+// because the read-loop misalignment risk for Rstat/Rwstat is the
+// specific hazard the dialect gate protects against.
+func TestNewRMessage_Phase21_Rstat_On_L_ReturnsError(t *testing.T) {
+	t.Parallel()
+	c := newGateConn(t, protocolL)
+	if _, err := c.newRMessage(proto.TypeRstat); err == nil {
+		t.Fatal("newRMessage(TypeRstat) on .L: want error, got nil")
+	}
+	if _, err := c.newRMessage(proto.TypeRwstat); err == nil {
+		t.Fatal("newRMessage(TypeRwstat) on .L: want error, got nil")
 	}
 }
