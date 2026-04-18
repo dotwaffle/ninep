@@ -183,7 +183,7 @@ func TestClient_Stat_PropagatesRlerror(t *testing.T) {
 	root := memfs.NewDir(gen)
 	node := &testGetattrENOENT{qid: gen.Next(proto.QTFILE)}
 	node.Init(node.qid, node)
-	root.AddChild("broken.txt", node)
+	root.AddChild("broken.txt", &node.Inode)
 
 	cli, cleanup := newClientServerPair(t, root)
 	defer cleanup()
