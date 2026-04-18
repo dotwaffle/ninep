@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -133,5 +134,73 @@ func TestError_SentinelsAreFourDistinctValues(t *testing.T) {
 				t.Fatalf("sentinel %d and %d collapse under errors.Is", i, j)
 			}
 		}
+	}
+}
+
+// TestErrorChain_FlushAndCtx_Canceled verifies RESEARCH Assumption A1: a
+// fmt.Errorf("...: %w", errors.Join(a, b)) chain satisfies errors.Is for BOTH
+// joined children. Plan 22-02's flushAndWait depends on this semantic to
+// compose the Rflush-first error chain per D-05/D-08.
+func TestErrorChain_FlushAndCtx_Canceled(t *testing.T) {
+	t.Parallel()
+	err := fmt.Errorf("9p: flushed tag 1: %w",
+		errors.Join(context.Canceled, ErrFlushed))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("errors.Is(err, context.Canceled) = false, want true (A1 broken)")
+	}
+	if !errors.Is(err, ErrFlushed) {
+		t.Fatalf("errors.Is(err, ErrFlushed) = false, want true (A1 broken)")
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("errors.Is(err, context.DeadlineExceeded) = true, want false")
+	}
+}
+
+// TestErrorChain_FlushAndCtx_DeadlineExceeded is the deadline variant of the
+// composite-chain check — same semantics, with context.DeadlineExceeded in
+// place of context.Canceled.
+func TestErrorChain_FlushAndCtx_DeadlineExceeded(t *testing.T) {
+	t.Parallel()
+	err := fmt.Errorf("9p: flushed tag 1: %w",
+		errors.Join(context.DeadlineExceeded, ErrFlushed))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("errors.Is(err, context.DeadlineExceeded) = false, want true (A1 broken)")
+	}
+	if !errors.Is(err, ErrFlushed) {
+		t.Fatalf("errors.Is(err, ErrFlushed) = false, want true (A1 broken)")
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Fatalf("errors.Is(err, context.Canceled) = true, want false")
+	}
+}
+
+// TestErrorChain_FlushOnly_NoCtx covers the R-first path analog per D-05:
+// if the original R arrives before Rflush, ErrFlushed is NOT in the chain —
+// only ctx.Err() is wrapped. Callers discriminate on ErrFlushed to detect
+// "server acked my Tflush" vs "I cancelled but the response beat the flush".
+func TestErrorChain_FlushOnly_NoCtx(t *testing.T) {
+	t.Parallel()
+	err := fmt.Errorf("9p: flushed tag 1: %w", context.Canceled)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("errors.Is(err, context.Canceled) = false, want true")
+	}
+	if errors.Is(err, ErrFlushed) {
+		t.Fatalf("errors.Is(err, ErrFlushed) = true, want false (R-first path must not match ErrFlushed)")
+	}
+}
+
+// TestErrFlushed_Distinct_From_ErrClosed pins D-11: ErrFlushed and ErrClosed
+// are operationally meaningful as distinct states ("server acked my flush"
+// vs "connection is gone"). Callers must be able to discriminate.
+func TestErrFlushed_Distinct_From_ErrClosed(t *testing.T) {
+	t.Parallel()
+	if errors.Is(ErrFlushed, ErrClosed) {
+		t.Fatalf("errors.Is(ErrFlushed, ErrClosed) = true, want false (sentinels collapsed)")
+	}
+	if errors.Is(ErrClosed, ErrFlushed) {
+		t.Fatalf("errors.Is(ErrClosed, ErrFlushed) = true, want false (sentinels collapsed)")
+	}
+	if ErrFlushed.Error() == ErrClosed.Error() {
+		t.Fatalf("ErrFlushed and ErrClosed share text %q", ErrFlushed.Error())
 	}
 }
