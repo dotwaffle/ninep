@@ -202,6 +202,81 @@ func (c *Conn) newRMessage(t proto.MessageType) (proto.Message, error) {
 		if c.dialect == protocolL {
 			return &p9l.Rreaddir{}, nil
 		}
+	// Phase 21 (.L-only advanced ops): getattr/setattr/statfs, symlink/
+	// readlink, locks, xattr two-phase, link/mknod/rename/renameat/
+	// unlinkat. Dialect gating is defense-in-depth — per-op
+	// requireDialect at the ops layer is the primary enforcement point.
+	// A misbehaving peer that emits a .L-only R-type on a .u Conn falls
+	// through to the default arm and triggers signalShutdown, the
+	// correct behaviour for corrupted framing.
+	//
+	// None cached per client/msgcache.go — these are cold paths per the
+	// server-side Phase 13-05 profile audit.
+	case proto.TypeRgetattr:
+		if c.dialect == protocolL {
+			return &p9l.Rgetattr{}, nil
+		}
+	case proto.TypeRsetattr:
+		if c.dialect == protocolL {
+			return &p9l.Rsetattr{}, nil
+		}
+	case proto.TypeRstatfs:
+		if c.dialect == protocolL {
+			return &p9l.Rstatfs{}, nil
+		}
+	case proto.TypeRsymlink:
+		if c.dialect == protocolL {
+			return &p9l.Rsymlink{}, nil
+		}
+	case proto.TypeRreadlink:
+		if c.dialect == protocolL {
+			return &p9l.Rreadlink{}, nil
+		}
+	case proto.TypeRlock:
+		if c.dialect == protocolL {
+			return &p9l.Rlock{}, nil
+		}
+	case proto.TypeRgetlock:
+		if c.dialect == protocolL {
+			return &p9l.Rgetlock{}, nil
+		}
+	case proto.TypeRxattrwalk:
+		if c.dialect == protocolL {
+			return &p9l.Rxattrwalk{}, nil
+		}
+	case proto.TypeRxattrcreate:
+		if c.dialect == protocolL {
+			return &p9l.Rxattrcreate{}, nil
+		}
+	case proto.TypeRlink:
+		if c.dialect == protocolL {
+			return &p9l.Rlink{}, nil
+		}
+	case proto.TypeRmknod:
+		if c.dialect == protocolL {
+			return &p9l.Rmknod{}, nil
+		}
+	case proto.TypeRrename:
+		if c.dialect == protocolL {
+			return &p9l.Rrename{}, nil
+		}
+	case proto.TypeRrenameat:
+		if c.dialect == protocolL {
+			return &p9l.Rrenameat{}, nil
+		}
+	case proto.TypeRunlinkat:
+		if c.dialect == protocolL {
+			return &p9l.Runlinkat{}, nil
+		}
+	// Phase 21 (.u-only stat ops).
+	case proto.TypeRstat:
+		if c.dialect == protocolU {
+			return &p9u.Rstat{}, nil
+		}
+	case proto.TypeRwstat:
+		if c.dialect == protocolU {
+			return &p9u.Rwstat{}, nil
+		}
 	}
 	return nil, errors.New("client: unknown R-message type")
 }
