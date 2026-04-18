@@ -239,7 +239,11 @@ func (r *memReader) Read(p []byte) (int, error) {
 // net.Pipe and returns both the client and the server handle. Cleanup
 // closes the client; the mock server's cleanup is registered by
 // newFlushMockServer.
-func newFlushTestPair(tb testing.TB) (*client.Conn, *flushMockServer, func()) {
+//
+// Optional client.Option values append to the default set (msize=65536,
+// discardLogger). Used by Plan 22-03's timeout tests to inject
+// WithRequestTimeout without duplicating the harness.
+func newFlushTestPair(tb testing.TB, extraOpts ...client.Option) (*client.Conn, *flushMockServer, func()) {
 	tb.Helper()
 	cliNC, srvNC := net.Pipe()
 	srv := newFlushMockServer(tb, srvNC)
@@ -247,10 +251,13 @@ func newFlushTestPair(tb testing.TB) (*client.Conn, *flushMockServer, func()) {
 	dialCtx, dialCancel := context.WithTimeout(tb.Context(), 3*time.Second)
 	defer dialCancel()
 
-	cli, err := client.Dial(dialCtx, cliNC,
+	defaultOpts := []client.Option{
 		client.WithMsize(65536),
 		client.WithLogger(discardLogger()),
-	)
+	}
+	opts := append(defaultOpts, extraOpts...)
+
+	cli, err := client.Dial(dialCtx, cliNC, opts...)
 	if err != nil {
 		_ = cliNC.Close()
 		tb.Fatalf("Dial: %v", err)

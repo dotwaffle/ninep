@@ -91,3 +91,13 @@ func MaxChunk(f *File) uint32 {
 func NewFileForTest(c *Conn) *File {
 	return newFile(c, proto.Fid(0), proto.QID{}, 0)
 }
+
+// NewFileWrappingFidForTest constructs a *File bound to an explicit,
+// caller-supplied live fid (i.e. one already bound server-side via
+// Attach/Walk/Lopen). Used by Plan 22-03 timeout tests to exercise
+// File.Read / File.ReadCtx against the flushMockServer harness from
+// Plan 22-02, which doesn't have OpenFile path semantics. Not part of
+// the public API surface.
+func NewFileWrappingFidForTest(c *Conn, fid proto.Fid, iounit uint32) *File {
+	return newFile(c, fid, proto.QID{}, iounit)
+}
