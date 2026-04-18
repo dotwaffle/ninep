@@ -28,10 +28,14 @@ import (
 // failure, the tag is released after unregistering so the caller observes
 // the real write error (not a tag-leak consequence).
 //
-// Phase 19 does not send Tflush on ctx cancellation. Phase 22 (CLIENT-04)
-// wires ctx→Tflush. For now, ctx cancel returns ctx.Err() immediately; a
-// subsequent server response with the cancelled tag is silently dropped by
-// inflight.deliver (pitfall 10-A).
+// Phase 22 (CLIENT-04, D-01..D-07): ctx cancellation enters
+// [Conn.flushAndWait], which sends Tflush(tag) and blocks for the
+// first frame among (original R, Rflush, closeCh). flushAndWait owns
+// the cleanup of both the original tag AND the flushTag it allocates.
+// The returned error wraps ctx.Err() via %w so errors.Is chains work;
+// on the Rflush-first path, [ErrFlushed] is also in the chain (D-05).
+// Late-arriving second frames are dropped by inflight.deliver's
+// unregistered-tag path (Pitfall 7).
 //
 // Returns the decoded R-message as a proto.Message value. The caller is
 // responsible for calling toError first (to translate Rlerror/Rerror) and
@@ -82,9 +86,13 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 		c.tags.release(tag)
 		return r, nil
 	case <-ctx.Done():
-		c.inflight.unregister(tag)
-		c.tags.release(tag)
-		return nil, ctx.Err()
+		// Phase 22 (CLIENT-04, D-01): delegate to flushAndWait, which
+		// sends Tflush(tag) and owns the unregister + release of both
+		// `tag` (the original) and the flushTag it acquires. The
+		// returned error wraps ctx.Err() so errors.Is(err,
+		// context.Canceled) / context.DeadlineExceeded work; on the
+		// Rflush-first path, ErrFlushed is also in the chain (D-05).
+		return c.flushAndWait(ctx, tag, respCh)
 	case <-c.closeCh:
 		c.inflight.unregister(tag)
 		c.tags.release(tag)

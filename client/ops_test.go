@@ -182,7 +182,12 @@ func TestRoundTrip_RerrorTranslatedByCaller(t *testing.T) {
 }
 
 // TestRoundTrip_CtxCancelDuringWait: ctx cancel while caller is blocked on
-// respCh causes roundTrip to return ctx.Err() and leaves no tag/inflight leak.
+// respCh causes roundTrip to route through flushAndWait, send Tflush, and
+// return a ctx.Err()-wrapped error once the first frame (Rflush here) lands.
+// Phase 22 (CLIENT-04) change: the test must now drain TWO T-messages from
+// the wire (the original Tclunk + the Tflush) and deliver an Rflush so
+// flushAndWait unblocks; the Phase 19 single-drain path would hang waiting
+// for the flush response.
 func TestRoundTrip_CtxCancelDuringWait(t *testing.T) {
 	t.Parallel()
 	c, srvNC := newTestConn(t)
@@ -194,21 +199,35 @@ func TestRoundTrip_CtxCancelDuringWait(t *testing.T) {
 		resultCh <- err
 	}()
 
-	_ = srvDrainOne(t, srvNC) // drain the wire so writeT completes
+	origTag := srvDrainOne(t, srvNC) // drain the original Tclunk
+	_ = origTag
 	// Give the goroutine a moment to block on respCh before cancelling.
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 
+	// Drain the Tflush that flushAndWait emits and deliver an Rflush
+	// back via the inflight map (mirrors how the real readLoop would
+	// route the server's Rflush response).
+	flushTag := srvDrainOne(t, srvNC)
+	c.inflight.deliver(flushTag, &proto.Rflush{})
+
 	select {
 	case err := <-resultCh:
 		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("roundTrip err = %v, want context.Canceled", err)
+			t.Fatalf("roundTrip err = %v, want context.Canceled in chain", err)
+		}
+		// Rflush arrived first (the only frame we delivered), so
+		// ErrFlushed must also be in the chain per D-05.
+		if !errors.Is(err, ErrFlushed) {
+			t.Errorf("roundTrip err = %v, want ErrFlushed in chain (Rflush-first)", err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("roundTrip did not return after cancel")
 	}
 
-	// No leak: inflight empty, tag released (free-list fully populated).
+	// No leak: both the original tag AND the flushTag are released,
+	// inflight map empty. newTagAllocator(8) seeds 8 tags; both were
+	// acquired and released, so free-list is back to 8.
 	if n := c.inflight.len(); n != 0 {
 		t.Errorf("inflight.len = %d, want 0", n)
 	}
