@@ -110,9 +110,12 @@ func TestClient_Close_IdempotentFromMultipleGoroutines(t *testing.T) {
 // TestClient_Close_GoroutineLeak verifies no goroutines leak after Close.
 // Per D-24, readerWG.Wait() and callerWG.Wait() must run unconditionally
 // before Close returns.
+//
+// This test does NOT call t.Parallel() because runtime.NumGoroutine() is a
+// process-global count — parallel subtests spawn/drain goroutines on the
+// same clock, introducing noise that has nothing to do with Conn leaks.
+// Serial execution isolates the delta to just this test's Conn lifecycle.
 func TestClient_Close_GoroutineLeak(t *testing.T) {
-	t.Parallel()
-
 	// Baseline: capture goroutine count before the pair boots. Run a brief
 	// GC + sleep so any straggler goroutines from earlier tests settle.
 	runtime.GC()
@@ -147,17 +150,18 @@ func TestClient_Close_GoroutineLeak(t *testing.T) {
 
 	// Allow a grace window for goroutines to actually exit scheduler-side.
 	// runtime.Gosched + GC keeps this deterministic under -race.
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 20; i++ {
 		runtime.GC()
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(25 * time.Millisecond)
 		if runtime.NumGoroutine() <= baseline+1 {
 			break
 		}
 	}
 
 	got := runtime.NumGoroutine()
-	// Allow +1 for scheduler jitter; strict equality is too flaky under
-	// -race on parallel subtests.
+	// Allow +2 for scheduler jitter; strict equality is too flaky. Without
+	// t.Parallel(), any excess over baseline+2 reflects a real Conn or
+	// server-side leak introduced by this test's Conn lifecycle.
 	if got > baseline+2 {
 		t.Errorf("goroutine leak: baseline=%d, after Close=%d (delta=%d)",
 			baseline, got, got-baseline)
