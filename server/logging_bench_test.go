@@ -16,14 +16,14 @@ import (
 // middleware emits. Two configurations are compared:
 //
 //   - cfg=no_middleware  -- server with no logging middleware attached
-//                           (the WithLogger discardLogger() default in
-//                           the test harness is unrelated to the
-//                           middleware chain).
+//     (the WithLogger discardLogger() default in
+//     the test harness is unrelated to the
+//     middleware chain).
 //   - cfg=debug_disabled -- server with NewLoggingMiddleware attached
-//                           via WithMiddleware, fed a logger whose
-//                           handler is set to slog.LevelInfo and writes
-//                           to io.Discard so any record that escaped
-//                           the level filter is also a no-op syscall.
+//     via WithMiddleware, fed a logger whose
+//     handler is set to slog.LevelInfo and writes
+//     to io.Discard so any record that escaped
+//     the level filter is also a no-op syscall.
 //
 // The middleware always constructs its three slog.Attr values
 // (op/duration/error) before calling logger.LogAttrs, regardless of

@@ -19,8 +19,8 @@ const msgCacheCap = 3
 // stealing across Ps under the goroutine-per-request model. Bounded channels
 // side-step that entirely. This pattern matches hugelgupf/p9's registry:
 //
-//   Get: non-blocking receive (cached struct if available, else fresh alloc)
-//   Put: non-blocking send      (cache if slot free, else drop to GC)
+//	Get: non-blocking receive (cached struct if available, else fresh alloc)
+//	Put: non-blocking send      (cache if slot free, else drop to GC)
 //
 // Package-global is safe because the recv-mutex worker model accesses these
 // caches with simple atomic semantics: Get from conn.handleRequest under

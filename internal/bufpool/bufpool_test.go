@@ -106,15 +106,15 @@ func TestGetMsgBuf_BucketSizing(t *testing.T) {
 		n       int
 		wantCap int
 	}{
-		{0, 1 << 10},        // empty req → smallest bucket
-		{7, 1 << 10},        // Tclunk-ish → 1 KiB
-		{1024, 1 << 10},     // exactly 1 KiB
-		{1025, 1 << 12},     // just over → 4 KiB
-		{4096, 1 << 12},     // exactly 4 KiB
-		{8192, 1 << 16},     // small-ish → 64 KiB
-		{65536, 1 << 16},    // exactly 64 KiB
-		{100000, 1 << 20},   // medium → 1 MiB
-		{1 << 20, 1 << 20},  // exactly max
+		{0, 1 << 10},       // empty req → smallest bucket
+		{7, 1 << 10},       // Tclunk-ish → 1 KiB
+		{1024, 1 << 10},    // exactly 1 KiB
+		{1025, 1 << 12},    // just over → 4 KiB
+		{4096, 1 << 12},    // exactly 4 KiB
+		{8192, 1 << 16},    // small-ish → 64 KiB
+		{65536, 1 << 16},   // exactly 64 KiB
+		{100000, 1 << 20},  // medium → 1 MiB
+		{1 << 20, 1 << 20}, // exactly max
 	}
 	for _, tc := range cases {
 		b := GetMsgBuf(tc.n)

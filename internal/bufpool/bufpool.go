@@ -105,7 +105,7 @@ func PutBuf(b *bytes.Buffer) {
 // Chosen to cover typical 9P message sizes without wasting memory on the
 // common case:
 //   - 1 KiB:  control messages (Tclunk=7B, Twalk=30B, Tgetattr=15B, etc.)
-//             — ~99% of non-data messages fit here
+//     — ~99% of non-data messages fit here
 //   - 4 KiB:  small data reads (matches kernel page size, common FUSE unit)
 //   - 64 KiB: medium data reads / readdir fragments
 //   - 1 MiB:  msize-scale reads (matches PoolMaxBufSize and kernel cap)

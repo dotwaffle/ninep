@@ -20,8 +20,8 @@ import (
 //     sequential writes)
 
 const (
-	benchHeaderSize = 7                  // size[4] + type[1] + tag[2]
-	benchBodySize   = 4096 + 4           // Rread: count[4] + data[4096]
+	benchHeaderSize = 7        // size[4] + type[1] + tag[2]
+	benchBodySize   = 4096 + 4 // Rread: count[4] + data[4096]
 	benchTotalSize  = benchHeaderSize + benchBodySize
 )
 

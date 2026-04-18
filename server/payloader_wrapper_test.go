@@ -17,9 +17,9 @@ func TestNonPayloaderRread_DoesNotSatisfyPayloader(t *testing.T) {
 
 	var w any = &nonPayloaderRread{}
 	if _, ok := w.(proto.Payloader); ok {
-		t.Fatalf("*nonPayloaderRread unexpectedly satisfies proto.Payloader; "+
-			"this breaks the encode=copy bench arm (sendResponseInline would take "+
-			"the Payloader branch and measure the production path instead of the "+
+		t.Fatalf("*nonPayloaderRread unexpectedly satisfies proto.Payloader; " +
+			"this breaks the encode=copy bench arm (sendResponseInline would take " +
+			"the Payloader branch and measure the production path instead of the " +
 			"EncodeTo fallback)")
 	}
 	if _, ok := w.(proto.Message); !ok {
