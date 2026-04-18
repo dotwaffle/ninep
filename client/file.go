@@ -411,24 +411,32 @@ func (f *File) ReadAt(p []byte, off int64) (int, error) {
 	return total, nil
 }
 
-// Sync refreshes the File's cached metadata (currently only
-// cachedSize, used by [File.Seek] with [io.SeekEnd]). In Phase 20 this
-// is a stub returning nil without issuing a wire op; Phase 21 replaces
-// the body with a Tgetattr (.L) / Tstat (.u) round-trip that populates
-// f.cachedSize.
+// Sync refreshes this File's cached size from the server by issuing
+// Tgetattr (.L) or Tstat (.u). Callers that use [File.Seek] with
+// [io.SeekEnd] on a file whose size may have changed server-side (e.g.
+// concurrent writers, or a truncate via another fid) call Sync first
+// so the subsequent SeekEnd returns a current value.
 //
-// Callers whose code path depends on SeekEnd before Phase 21 ships
-// should treat Sync as "no effect" and use [File.ReadAt] with an
-// explicit offset, OR wait for Phase 21. Tests that need
-// cachedSize populated can use the internal SetCachedSize hook via
-// export_test.go.
+// Sync uses a bounded background context; for caller-controlled
+// cancellation use [File.Stat] directly (which takes a ctx and
+// returns the size via the returned [p9u.Stat] without mutating
+// f.cachedSize).
 //
-// Rationale for keeping Sync in Phase 20 as a stub: freezing the
-// public API surface now lets downstream consumers (Q in particular)
-// compile against the final shape while Phase 21 fills in the body
-// without an API churn.
+// Sync is not a cache refresh in the "only do it if stale" sense:
+// every call issues a fresh wire op. Callers that want a cheap
+// SeekEnd after a known-static file was attached should cache the
+// post-Sync size themselves.
+//
+// On error, f.cachedSize is NOT modified — the previous successful
+// value (or the zero-value initial state) is preserved. This keeps
+// a file whose first Sync succeeded but whose second Sync fails
+// transiently usable for SeekEnd against the earlier size.
+//
+// Satisfies the common [io.Syncer]-like shape (no ctx) matching
+// [os.File.Sync]. The internal syncImpl lives in client/sync.go; the
+// body here is the one-line dispatch.
 func (f *File) Sync() error {
-	return f.syncStub()
+	return f.syncImpl()
 }
 
 // ReadDir reads directory entries from this File, which must have been

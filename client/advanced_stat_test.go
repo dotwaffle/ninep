@@ -225,18 +225,18 @@ func TestAttrToStat(t *testing.T) {
 	t.Parallel()
 	qid := proto.QID{Type: 0x80, Version: 1, Path: 42}
 	attr := proto.Attr{
-		QID:       qid,
-		Mode:      0o755,
-		UID:       1000,
-		GID:       2000,
-		Size:      4096,
-		ATimeSec:  100,
-		MTimeSec:  200,
-		NLink:     17, // dropped by attrToStat
-		Blocks:    8,  // dropped
-		BTimeSec:  300, // dropped
-		Gen:       42, // dropped
-		DataVersion: 99, // dropped
+		QID:         qid,
+		Mode:        0o755,
+		UID:         1000,
+		GID:         2000,
+		Size:        4096,
+		ATimeSec:    100,
+		MTimeSec:    200,
+		NLink:       17,  // dropped by attrToStat
+		Blocks:      8,   // dropped
+		BTimeSec:    300, // dropped
+		Gen:         42,  // dropped
+		DataVersion: 99,  // dropped
 	}
 	got := client.AttrToStatForTest(attr)
 	if got.Length != 4096 {
