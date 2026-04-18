@@ -47,3 +47,20 @@ func FreeTagCount(c *Conn) int {
 func FidReuseLen(c *Conn) int {
 	return c.fids.len()
 }
+
+// SetCachedSize is a test-only helper that pokes the cachedSize field
+// on a *File. Used by file_seek_test.go to exercise the SeekEnd code
+// path before Phase 21's File.Sync ships. Takes f.mu to match the
+// locking discipline of the I/O methods that read cachedSize.
+func SetCachedSize(f *File, size int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cachedSize = size
+}
+
+// MaxChunk returns the effective maxChunk() clamp on *File. Test-only
+// hook used to assert the chunked Read/Write/ReadAt/WriteAt paths
+// actually loop (len(buf) > maxChunk() precondition).
+func MaxChunk(f *File) uint32 {
+	return f.maxChunk()
+}
