@@ -747,27 +747,27 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 	case proto.TypeTattach:
 		return &proto.Tattach{}, nil
 	case proto.TypeTwalk:
-		return getCachedTwalk(), nil
+		return twalkCache.Get(), nil
 	case proto.TypeTclunk:
-		return getCachedTclunk(), nil
+		return tclunkCache.Get(), nil
 	case proto.TypeTflush:
 		return &proto.Tflush{}, nil
 	case proto.TypeTauth:
 		return &proto.Tauth{}, nil
 	case proto.TypeTread:
-		return getCachedTread(), nil
+		return treadCache.Get(), nil
 	case proto.TypeTwrite:
-		return getCachedTwrite(), nil
+		return twriteCache.Get(), nil
 	case proto.TypeTremove:
 		return &proto.Tremove{}, nil
 
 	// 9P2000.L-specific message types for capability bridge.
 	case proto.TypeTlopen:
-		return getCachedTlopen(), nil
+		return tlopenCache.Get(), nil
 	case proto.TypeTlcreate:
-		return getCachedTlcreate(), nil
+		return tlcreateCache.Get(), nil
 	case proto.TypeTgetattr:
-		return getCachedTgetattr(), nil
+		return tgetattrCache.Get(), nil
 	case proto.TypeTsetattr:
 		return &p9l.Tsetattr{}, nil
 	case proto.TypeTreaddir:
