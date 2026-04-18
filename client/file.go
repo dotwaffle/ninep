@@ -346,11 +346,52 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 	return abs, nil
 }
 
-// ReadAt is implemented in Plan 20-04.
+// ReadAt reads len(p) bytes from the File starting at off. Satisfies
+// the [io.ReaderAt] contract: returns a non-nil error whenever
+// n < len(p), specifically [io.EOF] when the short return is at the
+// end of file.
 //
-// TODO(20-04): replace with the real ReadAt implementation.
+// ReadAt does NOT advance the local offset -- it is independent of
+// [File.Read] and [File.Seek] state. Concurrent callers on the same
+// *File serialize via f.mu per D-12; callers wanting actual parallel
+// I/O on the same server-side file should use [File.Clone] to obtain
+// independent handles.
+//
+// Internally loops issuing Treads against the offset until either p
+// is filled or the server returns zero bytes (EOF). Each Tread is
+// clamped to min(iounit, msize - ioFrameOverhead).
+//
+// Context: like [File.Read], ReadAt uses a background context; shut
+// down the Conn to unblock a stuck ReadAt.
 func (f *File) ReadAt(p []byte, off int64) (int, error) {
-	return 0, ErrNotSupported
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if off < 0 {
+		return 0, fmt.Errorf("client: ReadAt negative offset %d", off)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	total := 0
+	for total < len(p) {
+		count := uint32(len(p) - total)
+		if m := f.maxChunk(); count > m {
+			count = m
+		}
+		data, err := f.conn.Read(context.Background(), f.fid, uint64(off)+uint64(total), count)
+		if err != nil {
+			if total > 0 {
+				return total, err
+			}
+			return 0, err
+		}
+		if len(data) == 0 {
+			return total, io.EOF
+		}
+		n := copy(p[total:], data)
+		total += n
+	}
+	return total, nil
 }
 
 // WriteAt is implemented in Plan 20-04.
