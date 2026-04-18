@@ -40,3 +40,10 @@ func InflightLen(c *Conn) int {
 func FreeTagCount(c *Conn) int {
 	return len(c.tags.free)
 }
+
+// FidReuseLen returns the depth of the Conn's fid-allocator reuse
+// cache. Test-only hook for leak assertions (e.g. "did a failed Walk
+// release its reserved fid?"). Not part of the public API.
+func FidReuseLen(c *Conn) int {
+	return c.fids.len()
+}
