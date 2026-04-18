@@ -113,6 +113,12 @@ type Conn struct {
 // WithCloseTimeout and returning any drain error.
 func (c *Conn) Close() error {
 	c.signalShutdown()
+	// callerWG tracks Plan 19-04's op-method goroutines; Plan 19-03 never
+	// bumps it, so Wait returns immediately. Referencing the field here
+	// keeps the Plan 19-05 drain-order signature stable: shut down first,
+	// then wait for callers to observe the closed chan and return
+	// ErrClosed, then wait for the read goroutine to exit.
+	c.callerWG.Wait()
 	c.readerWG.Wait()
 	return nil
 }

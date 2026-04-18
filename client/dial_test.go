@@ -65,7 +65,7 @@ func runMockVersionServer(tb testing.TB, srvNC net.Conn, resp proto.Rversion) {
 func runMockSilentServer(tb testing.TB, srvNC net.Conn) {
 	tb.Helper()
 	go func() {
-		defer srvNC.Close()
+		defer func() { _ = srvNC.Close() }()
 		var sizeBuf [4]byte
 		if _, err := io.ReadFull(srvNC, sizeBuf[:]); err != nil {
 			return
@@ -182,7 +182,7 @@ func TestDial_VersionMismatch_Garbage(t *testing.T) {
 func TestDial_CtxCancelledBeforeSend(t *testing.T) {
 	t.Parallel()
 	cliNC, srvNC := net.Pipe()
-	defer srvNC.Close()
+	defer func() { _ = srvNC.Close() }()
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // pre-cancel
@@ -280,7 +280,7 @@ func TestDial_TversionUsesNoTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	frame := <-captured
 	if frame == nil {
@@ -346,7 +346,7 @@ func TestDial_InvalidRversionSize(t *testing.T) {
 	cliNC, srvNC := net.Pipe()
 
 	go func() {
-		defer srvNC.Close()
+		defer func() { _ = srvNC.Close() }()
 		// Read Tversion
 		var sizeBuf [4]byte
 		if _, err := io.ReadFull(srvNC, sizeBuf[:]); err != nil {
