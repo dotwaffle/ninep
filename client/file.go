@@ -64,10 +64,10 @@ type File struct {
 	// File.Read/Write clamp to min(iounit, msize - frame overhead).
 	iounit uint32
 
-	mu sync.Mutex // serializes Read/Write/ReadAt/WriteAt; guards offset + cachedSize
-	//nolint:unused // populated by Read/Write/Seek in Plan 20-04; shipped now so the field order is stable.
-	offset int64 // local seek offset per D-09
-	//nolint:unused // populated by File.Sync in Plan 20-04 (SeekEnd gate); see D-10.
+	mu     sync.Mutex // serializes Read/Write/ReadAt/WriteAt; guards offset + cachedSize
+	offset int64      // local seek offset per D-09
+	// cachedSize is consulted by Seek(SeekEnd); populated by File.Sync
+	// once Phase 21 ships Tgetattr/Tstat. Zero until then.
 	cachedSize int64
 
 	closeOnce sync.Once // idempotent Close per D-06
@@ -188,21 +188,113 @@ func (f *File) Clone(ctx context.Context) (*File, error) {
 	return clone, nil
 }
 
-// Read is implemented in Plan 20-04. This stub returns
-// [ErrNotSupported] so the *File still satisfies [io.Reader] at build
-// time.
-//
-// TODO(20-04): replace with the real Read implementation per
-// 20-RESEARCH.md §io.Reader.
-func (f *File) Read(p []byte) (int, error) {
-	return 0, ErrNotSupported
+// ioFrameOverhead is the per-Tread/Twrite wire overhead beyond the
+// 7-byte message header. For Twrite it is fid[4] + offset[8] +
+// count[4] = 16 bytes; for Rread it is count[4] = 4 bytes. Using 24
+// as a single clamp constant covers both directions with a small
+// safety margin and matches the Q5 resolution ("iounit=0 clamps to
+// msize - 24").
+const ioFrameOverhead uint32 = 24
+
+// maxChunk returns the largest count the File should request in a
+// single Tread or pass in a single Twrite. Clamps by min(iounit,
+// msize - ioFrameOverhead). iounit==0 (server says "use msize")
+// collapses to the msize-only clamp (Pitfall 9).
+func (f *File) maxChunk() uint32 {
+	msizeLimit := f.conn.Msize() - ioFrameOverhead
+	if f.iounit == 0 {
+		return msizeLimit
+	}
+	if f.iounit < msizeLimit {
+		return f.iounit
+	}
+	return msizeLimit
 }
 
-// Write is implemented in Plan 20-04.
+// Read reads up to len(p) bytes from the File starting at the current
+// local offset (see [File.Seek]). Returns io.EOF when the server
+// responds with zero bytes on a non-empty p.
 //
-// TODO(20-04): replace with the real Write implementation.
+// Short reads are permitted by [io.Reader] -- each call issues at most
+// one Tread, and the server may return fewer bytes than requested.
+// Callers wanting "fill or error" semantics should use [File.ReadAt]
+// or wrap with [bufio.Reader] / [io.ReadFull].
+//
+// Context: Read does NOT take a ctx -- the [io.Reader] contract has no
+// ctx slot. Read uses a background context with no timeout. For
+// cancellable I/O, shut down the Conn ([Conn.Close] / [Conn.Shutdown])
+// which unblocks all in-flight reads with [ErrClosed].
+//
+// Thread safety: serialized by f.mu with [File.Write], [File.ReadAt],
+// and [File.WriteAt]. Use [File.Clone] for parallel I/O.
+func (f *File) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.offset < 0 {
+		return 0, fmt.Errorf("client: negative offset %d", f.offset)
+	}
+	count := uint32(len(p))
+	if m := f.maxChunk(); count > m {
+		count = m
+	}
+	data, err := f.conn.Read(context.Background(), f.fid, uint64(f.offset), count)
+	if err != nil {
+		return 0, err
+	}
+	n := copy(p, data)
+	f.offset += int64(n)
+	if n == 0 {
+		return 0, io.EOF
+	}
+	return n, nil
+}
+
+// Write writes len(p) bytes to the File starting at the current local
+// offset, advancing the offset by bytes-written. Chunks the payload
+// over multiple Twrites when len(p) exceeds min(iounit, msize -
+// ioFrameOverhead).
+//
+// Returns [io.ErrShortWrite] if the server reports a Twrite count less
+// than the chunk size sent -- per the [io.Writer] contract, a non-nil
+// error must accompany any n < len(p) result.
+//
+// Thread safety: serialized with other I/O methods on the same *File
+// via f.mu.
 func (f *File) Write(p []byte) (int, error) {
-	return 0, ErrNotSupported
+	if len(p) == 0 {
+		return 0, nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.offset < 0 {
+		return 0, fmt.Errorf("client: negative offset %d", f.offset)
+	}
+	total := 0
+	for total < len(p) {
+		chunk := p[total:]
+		if m := f.maxChunk(); uint32(len(chunk)) > m {
+			chunk = chunk[:m]
+		}
+		n, err := f.conn.Write(context.Background(), f.fid, uint64(f.offset), chunk)
+		if err != nil {
+			if total > 0 {
+				return total, err
+			}
+			return 0, err
+		}
+		total += int(n)
+		f.offset += int64(n)
+		if int(n) < len(chunk) {
+			// Server reported short write. io.Writer contract requires a
+			// non-nil error alongside n < len(p); surface as
+			// io.ErrShortWrite so callers can errors.Is against it.
+			return total, io.ErrShortWrite
+		}
+	}
+	return total, nil
 }
 
 // Seek is implemented in Plan 20-04.
