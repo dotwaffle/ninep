@@ -79,7 +79,7 @@ func TestClient_Msize_TwriteOversized(t *testing.T) {
 	defer cancel()
 
 	rootFid := proto.Fid(0)
-	if _, err := cli.Attach(ctx, rootFid, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, rootFid, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if _, err := cli.Walk(ctx, rootFid, proto.Fid(1), []string{"rw.bin"}); err != nil {
@@ -125,7 +125,7 @@ func TestClient_Msize_ConnectionStillHealthyAfterLocalReject(t *testing.T) {
 	defer cancel()
 
 	rootFid := proto.Fid(0)
-	if _, err := cli.Attach(ctx, rootFid, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, rootFid, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if _, err := cli.Walk(ctx, rootFid, proto.Fid(1), []string{"hello.txt"}); err != nil {
@@ -237,7 +237,7 @@ func TestClient_Msize_RreadOversized(t *testing.T) {
 	// surface as ErrClosed.
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	_, firstErr := cli.Attach(ctx, proto.Fid(0), "me", "")
+	_, firstErr := cli.Raw().Attach(ctx, proto.Fid(0), "me", "")
 
 	// The first op's outcome depends on racing: the server may shut
 	// down before our op's respCh is read (ErrClosed directly) OR the
@@ -251,7 +251,7 @@ func TestClient_Msize_RreadOversized(t *testing.T) {
 	var secondErr error
 	for i := 0; i < 20; i++ {
 		time.Sleep(10 * time.Millisecond)
-		_, secondErr = cli.Attach(ctx, proto.Fid(1), "me", "")
+		_, secondErr = cli.Raw().Attach(ctx, proto.Fid(1), "me", "")
 		if secondErr != nil && errors.Is(secondErr, client.ErrClosed) {
 			break
 		}
@@ -282,7 +282,7 @@ func TestClient_Msize_RreadExactMsize(t *testing.T) {
 	defer cancel()
 
 	rootFid := proto.Fid(0)
-	if _, err := cli.Attach(ctx, rootFid, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, rootFid, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if _, err := cli.Walk(ctx, rootFid, proto.Fid(1), []string{"hello.txt"}); err != nil {

@@ -31,7 +31,7 @@ func TestClient_Concurrent(t *testing.T) {
 	defer cancel()
 
 	rootFid := proto.Fid(0)
-	if _, err := cli.Attach(ctx, rootFid, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, rootFid, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -106,7 +106,7 @@ func TestClient_TagReuse_Stress(t *testing.T) {
 	defer cancel()
 
 	rootFid := proto.Fid(0)
-	if _, err := cli.Attach(ctx, rootFid, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, rootFid, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -182,7 +182,7 @@ func TestClient_Concurrent_Close(t *testing.T) {
 	defer cancel()
 
 	rootFid := proto.Fid(0)
-	if _, err := cli.Attach(ctx, rootFid, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, rootFid, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 

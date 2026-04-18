@@ -28,7 +28,7 @@ func TestClient_Attach_RoundTrip(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	qid, err := cli.Attach(ctx, 0, "me", "")
+	qid, err := cli.Raw().Attach(ctx, 0, "me", "")
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestClient_Walk_EmptyNames(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	qids, err := cli.Walk(ctx, 0, 1, nil)
@@ -67,7 +67,7 @@ func TestClient_Walk_NNames(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	qids, err := cli.Walk(ctx, 0, 1, []string{"hello.txt"})
@@ -92,7 +92,7 @@ func TestClient_Walk_NonexistentPath(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	_, err := cli.Walk(ctx, 0, 1, []string{"does-not-exist"})
@@ -117,7 +117,7 @@ func TestClient_Read_StaticFile(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if _, err := cli.Walk(ctx, 0, 1, []string{"hello.txt"}); err != nil {
@@ -144,7 +144,7 @@ func TestClient_Write_RwFile(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if _, err := cli.Walk(ctx, 0, 1, []string{"rw.bin"}); err != nil {
@@ -173,7 +173,7 @@ func TestClient_Clunk_Success(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if err := cli.Clunk(ctx, 0); err != nil {
@@ -211,7 +211,7 @@ func TestClient_Read_EmptyFile(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if _, err := cli.Walk(ctx, 0, 1, []string{"empty.txt"}); err != nil {
@@ -239,7 +239,7 @@ func TestClient_Lopen_L(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if _, err := cli.Walk(ctx, 0, 1, []string{"hello.txt"}); err != nil {
@@ -265,7 +265,7 @@ func TestClient_Lcreate_L(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	// Clone root into fid 1 — Lcreate mutates the supplied fid into the

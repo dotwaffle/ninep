@@ -49,7 +49,7 @@ func TestFile_QidAccessor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 
 	qid := root.Qid()
 	if qid.Type&proto.QTDIR == 0 {
@@ -166,7 +166,7 @@ func TestFile_Walk_ReturnsNewFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 
 	helloFile, err := root.Walk(ctx, []string{"hello.txt"})
 	if err != nil {
@@ -198,7 +198,7 @@ func TestFile_Walk_ErrorReleasesFid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 
 	before := client.FidReuseLen(cli)
 
@@ -227,7 +227,7 @@ func TestFile_Clone_IndependentOffset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 
 	clone, err := root.Clone(ctx)
 	if err != nil {

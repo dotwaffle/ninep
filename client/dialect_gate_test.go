@@ -91,7 +91,7 @@ func TestClient_Create_NotSupportedOnL(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	_, _, err := c.Create(ctx, 0, "new.txt", 0o644, 0, "")
+	_, _, err := c.CreateFid(ctx, 0, "new.txt", 0o644, 0, "")
 	if !errors.Is(err, ErrNotSupported) {
 		t.Fatalf("Create err = %v, want ErrNotSupported", err)
 	}

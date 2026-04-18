@@ -25,7 +25,7 @@ func TestClient_Close_UnblocksCallers(t *testing.T) {
 	defer cancel()
 
 	// Attach root so the connection is healthy.
-	if _, err := cli.Attach(ctx, proto.Fid(0), "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, proto.Fid(0), "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -127,7 +127,7 @@ func TestClient_Close_GoroutineLeak(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, proto.Fid(0), "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, proto.Fid(0), "me", ""); err != nil {
 		cleanup()
 		t.Fatalf("Attach: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestClient_Shutdown_CtxDeadline(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	if _, err := cli.Attach(ctx, proto.Fid(0), "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, proto.Fid(0), "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -237,7 +237,7 @@ func TestClient_Ops_AfterClose(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 1*time.Second)
 	defer cancel()
 
-	_, err := cli.Attach(ctx, proto.Fid(0), "me", "")
+	_, err := cli.Raw().Attach(ctx, proto.Fid(0), "me", "")
 	if !errors.Is(err, client.ErrClosed) {
 		t.Errorf("Attach after Close: got %v, want ErrClosed", err)
 	}

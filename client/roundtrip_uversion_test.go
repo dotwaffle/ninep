@@ -104,7 +104,7 @@ func TestClient_Open_U(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if _, err := cli.Walk(ctx, 0, 1, nil); err != nil {
@@ -132,13 +132,13 @@ func TestClient_Create_U(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if _, err := cli.Walk(ctx, 0, 1, nil); err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
-	qid, iou, err := cli.Create(ctx, 1, "new.txt", proto.FileMode(0o644), 2 /*ORDWR*/, "")
+	qid, iou, err := cli.Raw().Create(ctx, 1, "new.txt", proto.FileMode(0o644), 2 /*ORDWR*/, "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

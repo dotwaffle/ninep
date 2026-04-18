@@ -42,9 +42,12 @@ func (c *Conn) Raw() *Raw {
 	return &Raw{c: c}
 }
 
-// Attach mirrors [Conn.Attach]. Caller supplies fid.
+// Attach mirrors the low-level [Conn.AttachFid]. Caller supplies fid.
+// Kept at the "Attach" name on Raw because Raw's contract is explicit
+// fid lifecycle; the high-level *File-returning Attach lives on *Conn
+// as of Phase 20.
 func (r *Raw) Attach(ctx context.Context, fid proto.Fid, uname, aname string) (proto.QID, error) {
-	return r.c.Attach(ctx, fid, uname, aname)
+	return r.c.AttachFid(ctx, fid, uname, aname)
 }
 
 // Walk mirrors [Conn.Walk]. An empty names slice clones fid into newFid
@@ -95,9 +98,11 @@ func (r *Raw) Open(ctx context.Context, fid proto.Fid, mode uint8) (proto.QID, u
 	return r.c.Open(ctx, fid, mode)
 }
 
-// Create mirrors [Conn.Create]. Requires a 9P2000.u-negotiated Conn.
+// Create mirrors the low-level [Conn.CreateFid] (9P2000.u create-and-
+// open wire op). Requires a .u-negotiated Conn. The high-level
+// path-taking Create lives on *Conn as of Phase 20.
 func (r *Raw) Create(ctx context.Context, fid proto.Fid, name string, perm proto.FileMode, mode uint8, extension string) (proto.QID, uint32, error) {
-	return r.c.Create(ctx, fid, name, perm, mode, extension)
+	return r.c.CreateFid(ctx, fid, name, perm, mode, extension)
 }
 
 // AcquireFid hands out a fresh fid from the Conn's allocator. Callers

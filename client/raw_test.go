@@ -35,14 +35,17 @@ func TestRaw_ReturnsNonNil(t *testing.T) {
 func TestRaw_Parity_Attach(t *testing.T) {
 	t.Parallel()
 
-	// High-level Conn.Attach baseline.
+	// Wire-level AttachFid baseline (reached via Raw.Attach as of
+	// Plan 20-03; the former Conn.Attach signature migrated to
+	// Raw.Attach when the high-level *File-returning Conn.Attach was
+	// introduced).
 	cliA, cleanupA := newClientServerPair(t, buildTestRoot(t))
 	defer cleanupA()
 	ctxA, cancelA := rawTestCtx(t)
 	defer cancelA()
-	wantQID, err := cliA.Attach(ctxA, 1, "me", "")
+	wantQID, err := cliA.Raw().Attach(ctxA, 1, "me", "")
 	if err != nil {
-		t.Fatalf("Conn.Attach: %v", err)
+		t.Fatalf("Raw.Attach (baseline): %v", err)
 	}
 
 	// Raw.Attach against a fresh pair.

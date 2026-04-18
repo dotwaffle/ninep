@@ -142,15 +142,19 @@ func expectRType(msg proto.Message, wantTypes ...proto.MessageType) error {
 	return fmt.Errorf("client: unexpected response type %v", got)
 }
 
-// Attach associates fid with the root of the file tree named by aname and
-// establishes the session for user uname. Per D-17/D-18 Phase 19 supports
-// only afid=NoFid (no authentication); Tauth is not implemented. aname
-// selects the mount point, server-defined; the empty string is the
-// conventional "default" root.
+// AttachFid associates fid with the root of the file tree named by aname and
+// establishes the session for user uname. This is the low-level wire op;
+// Phase 20's [Conn.Attach] wraps it to return a *File with an allocator-
+// owned fid. Per D-17/D-18 Phase 19 supports only afid=NoFid (no
+// authentication); Tauth is not implemented. aname selects the mount
+// point, server-defined; the empty string is the conventional "default"
+// root.
 //
 // Returns the root QID on success, or a *Error translated from Rlerror/Rerror
 // on server-side failure.
-func (c *Conn) Attach(ctx context.Context, fid proto.Fid, uname, aname string) (proto.QID, error) {
+//
+// Reachable via [Raw.Attach] for callers that manage fids themselves.
+func (c *Conn) AttachFid(ctx context.Context, fid proto.Fid, uname, aname string) (proto.QID, error) {
 	req := &proto.Tattach{
 		Fid:   fid,
 		Afid:  proto.NoFid,
@@ -410,13 +414,15 @@ func (c *Conn) Open(ctx context.Context, fid proto.Fid, mode uint8) (proto.QID, 
 	return r.QID, r.IOUnit, nil
 }
 
-// Create is the 9P2000.u create-and-open operation. Requires a .u-negotiated
-// Conn.
+// CreateFid is the 9P2000.u create-and-open wire operation. Requires a
+// .u-negotiated Conn. Phase 20's [Conn.Create] wraps this and the
+// .L-only [Conn.Lcreate] behind a dialect-neutral session method; use
+// CreateFid (or [Raw.Create]) only when explicit fid control is needed.
 //
 // perm is the file-mode + type bits; mode is the 9P2000.u open mode;
 // extension is the .u Extension field (symlink target, device spec, etc. —
 // empty for regular files).
-func (c *Conn) Create(ctx context.Context, fid proto.Fid, name string, perm proto.FileMode, mode uint8, extension string) (proto.QID, uint32, error) {
+func (c *Conn) CreateFid(ctx context.Context, fid proto.Fid, name string, perm proto.FileMode, mode uint8, extension string) (proto.QID, uint32, error) {
 	if err := c.requireDialect(protocolU, "Create"); err != nil {
 		return proto.QID{}, 0, err
 	}

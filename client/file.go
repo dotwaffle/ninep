@@ -64,9 +64,11 @@ type File struct {
 	// File.Read/Write clamp to min(iounit, msize - frame overhead).
 	iounit uint32
 
-	mu         sync.Mutex // serializes Read/Write/ReadAt/WriteAt; guards offset + cachedSize
-	offset     int64      // local seek offset per D-09
-	cachedSize int64      // populated by File.Sync(); 0 = unknown (SeekEnd gate)
+	mu sync.Mutex // serializes Read/Write/ReadAt/WriteAt; guards offset + cachedSize
+	//nolint:unused // populated by Read/Write/Seek in Plan 20-04; shipped now so the field order is stable.
+	offset int64 // local seek offset per D-09
+	//nolint:unused // populated by File.Sync in Plan 20-04 (SeekEnd gate); see D-10.
+	cachedSize int64
 
 	closeOnce sync.Once // idempotent Close per D-06
 	closeErr  error     // captured by the first Close; NOT returned on subsequent calls
