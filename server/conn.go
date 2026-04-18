@@ -296,12 +296,12 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 	}
 
 	// Read the raw message header: size[4] + type[1] + tag[2].
-	size, err := proto.ReadUint32(c.nc)
+	// wire.ReadSize also validates size >= proto.HeaderSize internally,
+	// keeping this cold path consistent with handleRequest's hot-path
+	// framing (conn.go:453).
+	size, err := wire.ReadSize(c.nc)
 	if err != nil {
 		return fmt.Errorf("read version size: %w", err)
-	}
-	if size < uint32(proto.HeaderSize) {
-		return fmt.Errorf("version message too small: %d < %d", size, proto.HeaderSize)
 	}
 
 	msgType, err := proto.ReadUint8(c.nc)
