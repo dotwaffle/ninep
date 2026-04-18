@@ -2,7 +2,14 @@ package client
 
 import (
 	"github.com/dotwaffle/ninep/proto"
+	"github.com/dotwaffle/ninep/proto/p9u"
 )
+
+// AttrToStatForTest exposes the attrToStat conversion helper to the
+// external client_test package so TestAttrToStat and the
+// Stat_Consistency test can exercise the .L Attr → .u Stat mapping
+// directly without a round-trip.
+func AttrToStatForTest(a proto.Attr) p9u.Stat { return attrToStat(a) }
 
 // RegisterStuckCaller is a test-only hook. It bumps callerWG and registers
 // a dummy high-numbered tag in inflightMap, simulating a caller goroutine
