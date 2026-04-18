@@ -46,9 +46,10 @@ func (im *inflightMap) register(tag proto.Tag) chan proto.Message {
 
 // deliver posts msg to the chan registered under tag. Non-blocking per the
 // cap-1 + tag-serialization invariant (research §4 invariant 2). If the tag
-// was not registered (Pitfall 10-A: late response after cancel, or a
-// misbehaving server), the msg is silently dropped — caller logs upstream
-// if desired.
+// was not registered (Pitfall 10-A: late response after caller ctx cancel
+// or shutdown race, or a misbehaving server), msg is returned to its
+// R-message cache via putCachedRMsg and then dropped — caller logs
+// upstream if desired.
 //
 // The send happens under RLock to serialize against cancelAll's close(ch)
 // call. Without this, the -race detector flags (correctly) that chansend
@@ -56,11 +57,23 @@ func (im *inflightMap) register(tag proto.Tag) chan proto.Message {
 // delivers a message while Close is tearing down. The RLock is released
 // immediately after the non-blocking select so deliver never parks while
 // holding the lock.
+//
+// Cache reclamation on the drop paths (WR-03): without this, every
+// cancellation / shutdown race where the server's reply beat the caller's
+// unregister leaked a cached Rread/Rwalk/Rlerror/etc. to GC and slowly
+// drained the bounded per-type caches. The cross-package dependency
+// inflight → msgcache is accepted here rather than plumbed as a callback,
+// because the cache is a package-private implementation detail of the
+// same package.
 func (im *inflightMap) deliver(tag proto.Tag, msg proto.Message) {
 	im.mu.RLock()
 	defer im.mu.RUnlock()
 	ch := im.entries[tag]
 	if ch == nil {
+		// Late delivery after unregister (ctx cancel / shutdown race) or
+		// an unregistered tag from a misbehaving server. Reclaim the
+		// cache slot before dropping.
+		putCachedRMsg(msg)
 		return
 	}
 	select {
@@ -69,6 +82,7 @@ func (im *inflightMap) deliver(tag proto.Tag, msg proto.Message) {
 		// Unreachable under correct Phase 19 usage — cap-1 chan +
 		// tag-serialization (free-list handoff) means the slot is free.
 		// Defense-in-depth for Phase 22 Tflush late-delivery scenarios.
+		putCachedRMsg(msg)
 	}
 }
 
