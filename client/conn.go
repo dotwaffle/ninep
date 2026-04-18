@@ -86,8 +86,8 @@ type Conn struct {
 	// encBufsArr is the backing array for the net.Buffers slice used in
 	// writeT. Two entries suffice: hdr + body. Re-sliced on every call
 	// because net.Buffers.WriteTo mutates both len AND cap of its
-	// receiver on full consumption (see internal/wire.WriteFramesLocked
-	// godoc + ninep CLAUDE.md §Performance). Guarded by writeMu.
+	// receiver on full consumption (see the framing helper godoc and
+	// ninep CLAUDE.md §Performance). Guarded by writeMu.
 	encBufsArr [2][]byte
 
 	// closeCh is closed exactly once by closeOnce to signal shutdown to the
