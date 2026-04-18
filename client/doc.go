@@ -61,4 +61,75 @@
 //
 // Use proto.Errno constants rather than syscall.Errno for portability — the
 // proto↔syscall bridge is platform-specific (see [Error.Is] godoc).
+//
+// # File Handle
+//
+// The [File] type is the primary high-level API for 9P file operations.
+// It implements [io.Reader], [io.Writer], [io.Closer], [io.Seeker],
+// [io.ReaderAt], and [io.WriterAt] — so any Go package that consumes
+// those interfaces (io.Copy, bufio, encoding/json, compress/gzip,
+// net/http Body) can read from and write to 9P files directly without
+// adapter code.
+//
+// Obtain a *File via [Conn.Attach] (root of the filesystem),
+// [Conn.OpenFile] (open by path), [Conn.Create] (create and open),
+// [Conn.OpenDir] (open directory for enumeration via [File.ReadDir]),
+// [File.Walk] (navigate to a child without opening), or [File.Clone]
+// (duplicate at the same server-side node for parallel I/O). Every
+// *File must be closed via [File.Close]; second calls to Close are a
+// no-op returning nil (the intentional deviation from os.File
+// semantics is documented on File.Close).
+//
+// Fid lifecycle is managed implicitly. Callers never see proto.Fid
+// values on the high-level path — [Conn.Attach] allocates the root
+// fid, [Conn.OpenFile] allocates per-open fids, [File.Clone]
+// allocates clone fids, and [File.Close] releases them on clunk.
+//
+// # Seek semantics
+//
+// [File.Seek] is a pure client-side arithmetic operation. 9P's
+// Tread/Twrite carry the offset on every request, so there is no
+// server-side seek state. SeekStart and SeekCurrent never touch the
+// wire. SeekEnd uses a cached size field populated by [File.Sync];
+// Phase 20 ships Sync as a stub, with the real Tgetattr-backed
+// implementation arriving in Phase 21. Until then, SeekEnd on a file
+// whose size has not been cached returns 0 for SeekEnd(0) and an
+// error guiding the caller to Sync for any negative offset.
+//
+// # Concurrency and parallelism
+//
+// Each *File has a private mutex that serializes Read, Write, ReadAt,
+// and WriteAt calls on the same handle. Callers wanting parallel I/O
+// on the same server-side file spawn a [File.Clone] per goroutine;
+// each clone has its own fid, its own offset, and its own mutex. The
+// underlying Conn is goroutine-safe per database/sql.DB semantics, so
+// N clones can issue N in-flight requests that overlap on the server.
+//
+// # Raw Sub-Surface
+//
+// The [Raw] type returned by [Conn.Raw] exposes direct 9P wire
+// operations with explicit fid arguments — [Raw.Read], [Raw.Write],
+// [Raw.Walk], [Raw.Clunk], [Raw.Flush], [Raw.Lopen], [Raw.Lcreate],
+// [Raw.Open], [Raw.Create], [Raw.Attach]. Plus [Raw.AcquireFid] and
+// [Raw.ReleaseFid] integrate with the Conn's fid allocator for
+// callers doing fully-explicit lifecycle management.
+//
+// Raw is the escape hatch for callers that need to pipeline
+// T-messages manually, track fids in a parallel data structure, or
+// port an existing 9P client that expects wire-level primitives. The
+// high-level [File] surface handles offset tracking, fid lifecycle,
+// and io.* interface conformance — use it for typical read/write
+// workloads and fall through to Raw only when the high-level shape
+// does not fit.
+//
+// # SEED-001 Resolution
+//
+// The v1.3.0 client API design resolved SEED-001 (see
+// .planning/seeds/) as a sync-primary + async-escape shape. [File] is
+// a synchronous, io.*-composable handle; [Raw] is the async/pipeline-
+// friendly escape hatch. This departs from hugelgupf/p9 (ReadAt /
+// WriteAt only, no io.Reader) and docker/go-p9p (raw T/R only, no
+// File) — the motivation is composition with the Go standard I/O
+// ecosystem. Callers that need pipelined writes (e.g. 128 KiB chunks
+// issued in parallel) use [Raw] over the goroutine-safe Conn.
 package client
