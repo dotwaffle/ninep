@@ -394,9 +394,46 @@ func (f *File) ReadAt(p []byte, off int64) (int, error) {
 	return total, nil
 }
 
-// WriteAt is implemented in Plan 20-04.
+// WriteAt writes len(p) bytes to the File starting at off. Satisfies
+// the [io.WriterAt] contract: returns a non-nil error whenever
+// n < len(p).
 //
-// TODO(20-04): replace with the real WriteAt implementation.
+// WriteAt does NOT advance the local offset -- it is independent of
+// [File.Write] and [File.Seek] state. Concurrent callers on the same
+// *File serialize via f.mu per D-12; use [File.Clone] for parallel
+// writes.
+//
+// Chunks the payload over multiple Twrites when len(p) exceeds
+// min(iounit, msize - ioFrameOverhead). Returns [io.ErrShortWrite] if
+// the server reports a Twrite count less than the chunk size sent.
+//
+// Context: like [File.Write], WriteAt uses a background context.
 func (f *File) WriteAt(p []byte, off int64) (int, error) {
-	return 0, ErrNotSupported
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if off < 0 {
+		return 0, fmt.Errorf("client: WriteAt negative offset %d", off)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	total := 0
+	for total < len(p) {
+		chunk := p[total:]
+		if m := f.maxChunk(); uint32(len(chunk)) > m {
+			chunk = chunk[:m]
+		}
+		n, err := f.conn.Write(context.Background(), f.fid, uint64(off)+uint64(total), chunk)
+		if err != nil {
+			if total > 0 {
+				return total, err
+			}
+			return 0, err
+		}
+		total += int(n)
+		if int(n) < len(chunk) {
+			return total, io.ErrShortWrite
+		}
+	}
+	return total, nil
 }
