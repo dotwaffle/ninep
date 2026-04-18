@@ -56,13 +56,25 @@ func FidReuseLen(c *Conn) int {
 }
 
 // SetCachedSize is a test-only helper that pokes the cachedSize field
-// on a *File. Used by file_seek_test.go to exercise the SeekEnd code
-// path before Phase 21's File.Sync ships. Takes f.mu to match the
-// locking discipline of the I/O methods that read cachedSize.
+// on a *File. Originally used by file_seek_test.go to exercise the
+// SeekEnd code path before Phase 21's File.Sync shipped; still useful
+// for tests that want to assert Sync's error path does NOT overwrite a
+// pre-existing cachedSize. Takes f.mu to match the locking discipline
+// of the I/O methods that read cachedSize.
 func SetCachedSize(f *File, size int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.cachedSize = size
+}
+
+// CachedSizeOf exposes f.cachedSize for Phase 21 Sync tests that assert
+// the real wire-backed Sync populates cachedSize (vs the Phase 20 stub
+// that left it untouched). Takes f.mu to match the locking discipline
+// of SetCachedSize above.
+func CachedSizeOf(f *File) int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.cachedSize
 }
 
 // MaxChunk returns the effective maxChunk() clamp on *File. Test-only
