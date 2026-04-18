@@ -401,6 +401,26 @@ func (f *File) ReadAt(p []byte, off int64) (int, error) {
 	return total, nil
 }
 
+// Sync refreshes the File's cached metadata (currently only
+// cachedSize, used by [File.Seek] with [io.SeekEnd]). In Phase 20 this
+// is a stub returning nil without issuing a wire op; Phase 21 replaces
+// the body with a Tgetattr (.L) / Tstat (.u) round-trip that populates
+// f.cachedSize.
+//
+// Callers whose code path depends on SeekEnd before Phase 21 ships
+// should treat Sync as "no effect" and use [File.ReadAt] with an
+// explicit offset, OR wait for Phase 21. Tests that need
+// cachedSize populated can use the internal SetCachedSize hook via
+// export_test.go.
+//
+// Rationale for keeping Sync in Phase 20 as a stub: freezing the
+// public API surface now lets downstream consumers (Q in particular)
+// compile against the final shape while Phase 21 fills in the body
+// without an API churn.
+func (f *File) Sync() error {
+	return f.syncStub()
+}
+
 // ReadDir reads directory entries from this File, which must have been
 // opened on a directory fid (see [Conn.OpenDir]).
 //
