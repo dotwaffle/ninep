@@ -2,8 +2,10 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/dotwaffle/ninep/proto"
 )
@@ -105,5 +107,91 @@ func TestWithLogger_NilIsNoOp(t *testing.T) {
 	WithLogger(nil)(c)
 	if c.logger != orig {
 		t.Fatalf("WithLogger(nil) changed the logger; expected no-op")
+	}
+}
+
+// TestWithRequestTimeout_Default verifies the default config carries a zero
+// requestTimeout value — "infinite wait / Linux v9fs parity" per D-22 /
+// Pitfall 9.
+func TestWithRequestTimeout_Default(t *testing.T) {
+	t.Parallel()
+	c := newConfig()
+	if c.requestTimeout != 0 {
+		t.Fatalf("default requestTimeout = %v, want 0 (infinite)", c.requestTimeout)
+	}
+}
+
+// TestWithRequestTimeout_Sets verifies positive d values flow through to the
+// config field verbatim.
+func TestWithRequestTimeout_Sets(t *testing.T) {
+	t.Parallel()
+	c := newConfig()
+	WithRequestTimeout(500 * time.Millisecond)(c)
+	if c.requestTimeout != 500*time.Millisecond {
+		t.Fatalf("requestTimeout = %v, want 500ms", c.requestTimeout)
+	}
+}
+
+// TestWithRequestTimeout_Zero_Resets verifies explicit WithRequestTimeout(0)
+// resets a previously-set timeout back to "infinite". Zero is a valid caller
+// intent, not a "use the default" marker.
+func TestWithRequestTimeout_Zero_Resets(t *testing.T) {
+	t.Parallel()
+	c := newConfig()
+	WithRequestTimeout(100 * time.Millisecond)(c)
+	WithRequestTimeout(0)(c)
+	if c.requestTimeout != 0 {
+		t.Fatalf("requestTimeout after 0-reset = %v, want 0", c.requestTimeout)
+	}
+}
+
+// TestWithRequestTimeout_Negative verifies negative durations are coerced to
+// 0 (infinite). Rationale: callers MAY accidentally pass a subtraction
+// overflow or a "duration until deadline" that has already passed; treating
+// those as "no timeout" matches Linux v9fs parity and is safer than a
+// pathological sub-millisecond timeout.
+func TestWithRequestTimeout_Negative(t *testing.T) {
+	t.Parallel()
+	c := newConfig()
+	WithRequestTimeout(-1 * time.Second)(c)
+	if c.requestTimeout != 0 {
+		t.Fatalf("requestTimeout after negative input = %v, want 0 (coerced)", c.requestTimeout)
+	}
+}
+
+// TestConn_OpCtx_DefaultInfinite verifies opCtx returns the parent ctx
+// unchanged when requestTimeout is zero — no hidden allocation, no hidden
+// deadline, caller gets what they passed in.
+func TestConn_OpCtx_DefaultInfinite(t *testing.T) {
+	t.Parallel()
+	c := &Conn{} // requestTimeout zero-value = 0 (infinite)
+	ctx, cancel := c.opCtx(context.Background())
+	defer cancel()
+	if _, ok := ctx.Deadline(); ok {
+		t.Fatalf("opCtx(Background) with requestTimeout=0 returned ctx with Deadline; want no deadline")
+	}
+}
+
+// TestConn_OpCtx_Timeout verifies opCtx derives a context.WithTimeout when
+// requestTimeout is positive. The deadline is approximately now + d (within
+// a generous tolerance for test timing).
+func TestConn_OpCtx_Timeout(t *testing.T) {
+	t.Parallel()
+	const timeout = 50 * time.Millisecond
+	c := &Conn{requestTimeout: timeout}
+	before := time.Now()
+	ctx, cancel := c.opCtx(context.Background())
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatalf("opCtx with requestTimeout=%v returned ctx without Deadline", timeout)
+	}
+	// Deadline must sit within [before+timeout, before+timeout+5ms]. The
+	// 5ms upper bound is generous for slow CI hosts but tight enough to
+	// catch "forgot to apply the timeout at all" bugs.
+	min := before.Add(timeout)
+	max := before.Add(timeout + 5*time.Millisecond)
+	if deadline.Before(min) || deadline.After(max) {
+		t.Fatalf("opCtx deadline = %v; want within [%v, %v]", deadline, min, max)
 	}
 }
