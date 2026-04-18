@@ -126,6 +126,15 @@ func (c *Conn) OpenFile(ctx context.Context, p string, flags int, mode os.FileMo
 // empty (regular file). Callers needing non-default gid or .u
 // extensions should use [Raw.Lcreate] / [Raw.Create] directly.
 //
+// Only the permission bits of mode (mode & 0o7777) are honored;
+// [os.FileMode] type bits (os.ModeDir, os.ModeSymlink, os.ModeSetuid,
+// etc.) are masked off before the value is encoded on the wire. The
+// os.FileMode type-bit encoding does not align with 9P's DM* bits
+// (e.g. os.ModeSymlink is 1<<26 while DMSYMLINK is 1<<25), so
+// forwarding them verbatim would corrupt the wire mode silently.
+// Callers needing to create non-regular files should use the dedicated
+// ops (Tmkdir/Tsymlink, wired in a later phase).
+//
 // After a successful Lcreate/Tcreate, the fid that was walked to the
 // parent is mutated server-side to refer to the newly-created file
 // (9P semantics). The returned *File wraps that same fid.
@@ -155,13 +164,17 @@ func (c *Conn) Create(ctx context.Context, p string, flags int, mode os.FileMode
 		return nil, fmt.Errorf("client: partial walk to parent (%d of %d steps)", len(qids), len(parents))
 	}
 
+	// Mask to permission bits (0o7777). os.FileMode type bits do not
+	// align with 9P's DM* family -- see godoc above. Higher-layer
+	// creation of directories / symlinks goes through dedicated ops.
+	perm := proto.FileMode(uint32(mode) & 0o7777)
 	var qid proto.QID
 	var iounit uint32
 	switch c.dialect {
 	case protocolL:
-		qid, iounit, err = c.Lcreate(ctx, dirFid, name, uint32(flags), proto.FileMode(mode), 0)
+		qid, iounit, err = c.Lcreate(ctx, dirFid, name, uint32(flags), perm, 0)
 	case protocolU:
-		qid, iounit, err = c.CreateFid(ctx, dirFid, name, proto.FileMode(mode), posixToNinepMode(flags), "")
+		qid, iounit, err = c.CreateFid(ctx, dirFid, name, perm, posixToNinepMode(flags), "")
 	default:
 		err = fmt.Errorf("client: unknown dialect %v", c.dialect)
 	}
