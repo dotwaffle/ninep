@@ -17,6 +17,31 @@ var (
 	// I/O error that caused shutdown.
 	ErrClosed = errors.New("client: connection closed")
 
+	// ErrFlushed is returned as part of the error chain when a request's
+	// context is cancelled mid-flight and the server's Rflush arrives
+	// BEFORE the original response — signaling that the server
+	// acknowledged the Tflush and aborted the original request (D-05,
+	// D-08). The chain is constructed via
+	//
+	//	fmt.Errorf("9p: flushed tag %d: %w", oldTag,
+	//	    errors.Join(ctx.Err(), ErrFlushed))
+	//
+	// so callers can discriminate:
+	//
+	//	errors.Is(err, context.Canceled)          — "I cancelled"
+	//	errors.Is(err, context.DeadlineExceeded)  — "deadline expired"
+	//	errors.Is(err, ErrFlushed)                — "server saw my Tflush and Rflushed"
+	//	errors.Is(err, ErrClosed)                 — "connection died mid-request"
+	//
+	// Per D-11, ErrFlushed is distinct from ErrClosed — operationally
+	// meaningful to tell "server acked my flush" from "connection is gone".
+	// If the ORIGINAL R arrives before the Rflush (R-first path, D-05),
+	// ErrFlushed is NOT in the chain — only ctx.Err() is wrapped. Callers
+	// that want "was it flushed?" match on ErrFlushed; callers that want
+	// "did caller cancel or deadline expire?" match on context.Canceled /
+	// context.DeadlineExceeded.
+	ErrFlushed = errors.New("client: request flushed")
+
 	// ErrNotSupported is returned when a method is called on a Conn whose
 	// negotiated dialect does not support the operation — e.g. a
 	// 9P2000.L-only method invoked on a .u-negotiated Conn (see package
