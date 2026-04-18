@@ -112,6 +112,17 @@ func (f *File) twoPhaseXattrRead(ctx context.Context, name string) ([]byte, erro
 			f.conn.fids.release(newFid)
 			return nil, fmt.Errorf("client: xattr short read at offset %d/%d", off, size)
 		}
+		// Guard against an over-read: the server must not return more
+		// bytes than we asked for (want, which itself is clamped to
+		// remaining). copy() already bounds against len(buf[off:]) so
+		// the backing array is safe, but advancing off by len(data)
+		// would silently truncate the tail. Surface as an error.
+		if uint64(len(data)) > remaining {
+			_ = r.Clunk(ctx, newFid)
+			f.conn.fids.release(newFid)
+			return nil, fmt.Errorf("client: xattr over-read: server returned %d bytes at offset %d, only %d remaining",
+				len(data), off, remaining)
+		}
 		copy(buf[off:], data)
 		off += uint64(len(data))
 	}
