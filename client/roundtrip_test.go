@@ -228,3 +228,65 @@ func TestClient_Read_EmptyFile(t *testing.T) {
 		t.Errorf("Read returned %d bytes, want 0", len(data))
 	}
 }
+
+// TestClient_Lopen_L: Lopen against a .L-negotiated Conn returns the file's
+// QID and a server-chosen iounit.
+func TestClient_Lopen_L(t *testing.T) {
+	t.Parallel()
+	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
+	defer cleanup()
+
+	ctx, cancel := roundTripTestCtx(t)
+	defer cancel()
+
+	if _, err := cli.Attach(ctx, 0, "me", ""); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if _, err := cli.Walk(ctx, 0, 1, []string{"hello.txt"}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	qid, _, err := cli.Lopen(ctx, 1, 0) // O_RDONLY
+	if err != nil {
+		t.Fatalf("Lopen: %v", err)
+	}
+	if qid.Type&proto.QTDIR != 0 {
+		t.Errorf("hello.txt QID type = %#x, want non-directory", qid.Type)
+	}
+}
+
+// TestClient_Lcreate_L: create a new file in the root dir over a .L Conn.
+// memfs.MemDir implements NodeCreater (server calls the same entry point
+// for both Tcreate and Tlcreate via bridge.handleLcreate).
+func TestClient_Lcreate_L(t *testing.T) {
+	t.Parallel()
+	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
+	defer cleanup()
+
+	ctx, cancel := roundTripTestCtx(t)
+	defer cancel()
+
+	if _, err := cli.Attach(ctx, 0, "me", ""); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	// Clone root into fid 1 — Lcreate mutates the supplied fid into the
+	// newly-created file per the 9P spec, so we must not burn the root.
+	if _, err := cli.Walk(ctx, 0, 1, nil); err != nil {
+		t.Fatalf("Walk-clone: %v", err)
+	}
+	// Lcreate: O_RDWR=2, mode=0o644, gid=0.
+	qid, _, err := cli.Lcreate(ctx, 1, "new.txt", 2, proto.FileMode(0o644), 0)
+	if err != nil {
+		t.Fatalf("Lcreate: %v", err)
+	}
+	if qid.Type&proto.QTDIR != 0 {
+		t.Errorf("new.txt QID type = %#x, want file", qid.Type)
+	}
+	// Fid 1 is now open on the new file; read should return 0 bytes (empty).
+	data, err := cli.Read(ctx, 1, 0, 100)
+	if err != nil {
+		t.Fatalf("Read after Lcreate: %v", err)
+	}
+	if len(data) != 0 {
+		t.Errorf("Read on freshly-created file: %d bytes, want 0", len(data))
+	}
+}
