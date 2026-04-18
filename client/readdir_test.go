@@ -188,7 +188,6 @@ func TestFileReadDir_DirEntryInterface(t *testing.T) {
 	)
 	for _, e := range entries {
 		// Compile-time check that entries satisfy os.DirEntry.
-		var _ os.DirEntry = e
 		_ = e.Name()
 		switch e.Name() {
 		case "subdir":

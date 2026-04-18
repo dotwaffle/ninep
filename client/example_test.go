@@ -74,7 +74,7 @@ func ExampleConn_Attach() {
 		fmt.Println("attach failed:", err)
 		return
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	fmt.Printf("root is directory: %v\n", root.Qid().Type&proto.QTDIR != 0)
 	// Output: root is directory: true
 }
@@ -97,7 +97,7 @@ func ExampleConn_OpenFile() {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	data, err := io.ReadAll(f)
 	if err != nil {
@@ -123,7 +123,7 @@ func ExampleConn_Create() {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	n, err := f.Write([]byte("hello, 9P\n"))
 	if err != nil {
 		return
@@ -149,7 +149,7 @@ func ExampleFile_Clone() {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	const parallel = 4
 	var wg sync.WaitGroup
@@ -161,7 +161,7 @@ func ExampleFile_Clone() {
 		wg.Add(1)
 		go func(i int, c *client.File) {
 			defer wg.Done()
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 			buf := make([]byte, 16)
 			_, _ = c.ReadAt(buf, int64(i)*16)
 		}(i, clone)
