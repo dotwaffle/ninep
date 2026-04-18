@@ -31,14 +31,17 @@ import (
 // clamp — xattr ops do not carry an iounit, so the only bound is
 // msize minus per-message framing overhead.
 //
-// If the Conn's negotiated msize is below the framing overhead (only
-// possible for pathological mock servers), fall back to 4 KiB so the
-// loop still makes progress rather than dividing into a zero-size
-// chunk and spinning.
+// Returns 0 when the Conn's negotiated msize is at or below the
+// framing overhead — a state only reachable against a pathological
+// mock server ([Dial] enforces minMsize=256 > ioFrameOverhead).
+// Callers MUST treat chunk==0 as "no forward progress possible" and
+// surface a clear error before entering the Tread/Twrite loop; zero
+// must never be fed to r.Read/r.Write where it would mask as a
+// short-read/write.
 func (f *File) xattrChunk() uint32 {
 	m := f.conn.Msize()
 	if m <= ioFrameOverhead {
-		return 4096
+		return 0
 	}
 	return m - ioFrameOverhead
 }
@@ -93,6 +96,15 @@ func (f *File) twoPhaseXattrRead(ctx context.Context, name string) ([]byte, erro
 	buf := make([]byte, size)
 	off := uint64(0)
 	chunk := f.xattrChunk()
+	if chunk == 0 {
+		// Conn msize is at or below the per-message framing floor
+		// (only reachable against a pathological mock server — Dial
+		// enforces minMsize=256). No forward progress is possible.
+		_ = r.Clunk(ctx, newFid)
+		f.conn.fids.release(newFid)
+		return nil, fmt.Errorf("client: xattr chunk is 0 (msize %d ≤ ioFrameOverhead %d)",
+			f.conn.Msize(), ioFrameOverhead)
+	}
 	for off < size {
 		remaining := size - off
 		want := uint32(chunk)
@@ -207,6 +219,15 @@ func (f *File) XattrSet(ctx context.Context, name string, data []byte, flags uin
 	// which triggers the server's remove-on-commit path
 	// (server/dispatch.go:254-261).
 	chunk := f.xattrChunk()
+	if chunk == 0 && size > 0 {
+		// Conn msize is at or below the per-message framing floor
+		// (only reachable against a pathological mock server — Dial
+		// enforces minMsize=256). No forward progress is possible.
+		_ = r.Clunk(ctx, clone.fid)
+		f.conn.fids.release(clone.fid)
+		return fmt.Errorf("client: xattr chunk is 0 (msize %d ≤ ioFrameOverhead %d)",
+			f.conn.Msize(), ioFrameOverhead)
+	}
 	off := uint64(0)
 	for off < size {
 		end := off + uint64(chunk)
