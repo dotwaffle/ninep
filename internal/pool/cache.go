@@ -37,6 +37,11 @@ package pool
 // comparison.
 const Cap = 3
 
+// Ordering: channel-FIFO. A Put followed by three more Puts and four Gets
+// returns the first Put first, not last. The previous stack-based msgcache
+// in server/msgcache.go was LIFO; the change is benign because reuse
+// frequency dominates reuse locality for the cap-3 workload.
+
 // Cache is a bounded-channel cache of *T pointers reset on Get. T is
 // constrained to `any` rather than proto.Message because proto.Message's
 // methods use pointer receivers: *proto.Tread satisfies proto.Message but
