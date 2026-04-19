@@ -78,6 +78,15 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 			// Channel closed by inflight.cancelAll — Conn is shutting down.
 			// The read goroutine has signalled shutdown; our caller observes
 			// ErrClosed. The tag is released so no leak.
+			//
+			// unregister is called BEFORE release to keep pitfall-2 ordering
+			// uniform with the peer branches (line 85, line 97). cancelAll
+			// already deleted the entry today, so this is a no-op map
+			// lookup under Lock — but relying on that coupling would silently
+			// leak the entry if cancelAll is ever refactored to delay the
+			// delete (e.g. for a graceful-drain diagnostic pass). unregister
+			// is idempotent (map delete of a missing key).
+			c.inflight.unregister(tag)
 			c.tags.release(tag)
 			return nil, ErrClosed
 		}
