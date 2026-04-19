@@ -355,3 +355,65 @@ func TestPair_DefaultMsizeApplies(t *testing.T) {
 		t.Fatalf("Conn.Msize() = %d, want %d (defaultMsize)", got, want)
 	}
 }
+
+// TestUnixPair_Boots is the end-to-end meta-test for [UnixPair]. It
+// pairs a memfs server carrying "hello.txt" with a live client over a
+// real unix-domain socket and verifies the full Attach + OpenFile +
+// ReadAll round-trip returns exactly the file contents.
+//
+// This is a SMOKE test — it proves UnixPair boots, Dial succeeds over
+// unix, and the round-trip works end-to-end. It is NOT a benchmark;
+// Wave 2 (Plan 24-02) owns the perf numbers.
+//
+// Skipped on Windows via the runtime.GOOS check inside UnixPair.
+func TestUnixPair_Boots(t *testing.T) {
+	t.Parallel()
+	gen := &server.QIDGenerator{}
+	root := memfs.NewDir(gen).
+		AddStaticFile("hello.txt", "unixpair smoke\n")
+
+	srv, cli := UnixPair(t, root)
+	if srv == nil {
+		t.Fatal("UnixPair returned nil *server.Server")
+	}
+	if cli == nil {
+		t.Fatal("UnixPair returned nil *client.Conn")
+	}
+
+	rootFile, err := cli.Attach(context.Background(), "tester", "")
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	defer func() { _ = rootFile.Close() }()
+
+	f, err := cli.OpenFile(context.Background(), "hello.txt", os.O_RDONLY, 0)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if got, want := string(data), "unixpair smoke\n"; got != want {
+		t.Fatalf("file contents = %q, want %q", got, want)
+	}
+}
+
+// TestUnixPair_HonorsWithMsize verifies UnixPair threads WithMsize
+// through to the client-side Conn the same way Pair does (proves the
+// Option plumbing isn't silently dropped in the UnixPair entry point).
+func TestUnixPair_HonorsWithMsize(t *testing.T) {
+	t.Parallel()
+	gen := &server.QIDGenerator{}
+	root := memfs.NewDir(gen).AddStaticFile("x", "y")
+
+	_, cli := UnixPair(t, root, WithMsize(32768))
+	if got := cli.Msize(); got > 32768 {
+		t.Fatalf("Conn.Msize() = %d, want <= 32768", got)
+	}
+	if got := cli.Msize(); got < 256 {
+		t.Fatalf("Conn.Msize() = %d, want >= 256 (minMsize floor)", got)
+	}
+}
