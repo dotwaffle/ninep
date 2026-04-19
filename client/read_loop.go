@@ -102,6 +102,72 @@ func (c *Conn) readLoop() {
 		msgType := proto.MessageType(b[0])
 		tag := proto.Tag(binary.LittleEndian.Uint16(b[1:3]))
 
+		// 24-03 / D-05: zero-copy Rread fast path (Pattern B from
+		// 24-RESEARCH.md §Architecture Patterns).
+		//
+		// When Conn.readAtZeroCopy registered this tag with a non-nil dst
+		// slice, the full Rread body is already in our pooled buffer b.
+		// Copy the count[4]+data[count] payload directly into dst[:count]
+		// — bypassing newRMessage's Rread cache slot AND the Data alloc
+		// inside proto.Rread.DecodeFrom. Two allocs eliminated per ReadAt.
+		//
+		// Body layout: type[1]+tag[2] = b[0:3] (parsed above), then
+		// count[4] = b[3:7] and data[count] = b[7:7+count].
+		if msgType == proto.TypeRread {
+			if entry := c.inflight.lookup(tag); entry != nil && entry.dst != nil {
+				if len(b) < 7 {
+					bufpool.PutMsgBuf(bufPtr)
+					c.logger.Warn("client: Rread body too short",
+						slog.Int("len", len(b)),
+					)
+					c.signalShutdown()
+					return
+				}
+				count := binary.LittleEndian.Uint32(b[3:7])
+				// Match proto.Rread.DecodeFrom's MaxDataSize guard.
+				if count > proto.MaxDataSize {
+					bufpool.PutMsgBuf(bufPtr)
+					c.logger.Warn("client: Rread count exceeds MaxDataSize",
+						slog.Uint64("count", uint64(count)),
+					)
+					c.signalShutdown()
+					return
+				}
+				// Pitfall 1 (24-RESEARCH.md): server returned more bytes
+				// than the caller asked for. Spec says count <= request.count;
+				// any violation is a protocol error — never silently truncate.
+				if count > uint32(len(entry.dst)) {
+					bufpool.PutMsgBuf(bufPtr)
+					c.logger.Warn("client: Rread count > dst",
+						slog.Uint64("count", uint64(count)),
+						slog.Int("dst_len", len(entry.dst)),
+					)
+					c.signalShutdown()
+					return
+				}
+				// Pitfall 1 variant: count claims more bytes than the
+				// frame body actually carries (frame corruption). Fatal.
+				if int(count) > len(b)-7 {
+					bufpool.PutMsgBuf(bufPtr)
+					c.logger.Warn("client: Rread count exceeds body",
+						slog.Uint64("count", uint64(count)),
+						slog.Int("body_remaining", len(b)-7),
+					)
+					c.signalShutdown()
+					return
+				}
+				if count > 0 {
+					copy(entry.dst[:count], b[7:7+count])
+				}
+				*entry.n = int(count)
+				bufpool.PutMsgBuf(bufPtr)
+				// Sentinel-msg deliver — readAtZeroCopy identifies the
+				// fast-path success via pointer equality `r == rreadSentinelOK`.
+				c.inflight.deliver(tag, rreadSentinelOK)
+				continue
+			}
+		}
+
 		rmsg, err := c.newRMessage(msgType)
 		if err != nil {
 			bufpool.PutMsgBuf(bufPtr)

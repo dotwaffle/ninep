@@ -38,6 +38,23 @@ var (
 	rlerrorCache  = pool.NewCache[p9l.Rlerror]()
 )
 
+// rreadSentinelOK is the package-level singleton returned by the read
+// loop's zero-copy Rread fast path (read_loop.go). It carries no payload —
+// the response bytes have already been copied into the caller's dst slice
+// and the caller's *int n receives the byte count BEFORE deliver fires.
+//
+// Why a sentinel instead of a cached *proto.Rread: the whole point of
+// 24-03 is to eliminate the per-ReadAt Rread cache slot consumption + the
+// Rread.Data allocation inside DecodeFrom. Reusing a singleton (with
+// Data=nil for its lifetime) keeps the chan proto.Message contract intact
+// without paying any per-request cost. Conn.readAtZeroCopy identifies the
+// fast-path response by pointer equality (`r == rreadSentinelOK`).
+//
+// putCachedRMsg short-circuits the sentinel — it is never returned to the
+// rreadCache (which would corrupt the cache invariant that every entry
+// is independently writable).
+var rreadSentinelOK = &proto.Rread{}
+
 // getCachedRread returns a zero-reset *proto.Rread from the cache (or a
 // fresh allocation on miss). Call putCachedRMsg after the caller has
 // consumed the response to return the pointer to the cache.
@@ -91,6 +108,14 @@ func putCachedRMsg(msg proto.Message) {
 	}
 	switch m := msg.(type) {
 	case *proto.Rread:
+		// 24-03: never recycle the zero-copy sentinel into the rreadCache.
+		// The sentinel is a singleton observed by Conn.readAtZeroCopy via
+		// pointer-equality; pooling it would let the next cached-Rread
+		// borrower clobber the singleton's Data field and break that
+		// identity check.
+		if m == rreadSentinelOK {
+			return
+		}
 		m.Data = nil
 		rreadCache.Put(m)
 	case *proto.Rwrite:

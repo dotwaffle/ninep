@@ -313,6 +313,109 @@ func (c *Conn) Read(ctx context.Context, fid proto.Fid, offset uint64, count uin
 	return data, nil
 }
 
+// readAtZeroCopy issues a Tread whose Rread response is decoded directly
+// into dst[:count] by the read loop's zero-copy fast path. Returns the
+// number of bytes written into dst.
+//
+// 24-03 / D-05: this is the Payloader-symmetric peer of [Conn.Read].
+// Where Conn.Read pays two allocs per round trip — Rread.Data inside
+// proto.Rread.DecodeFrom plus a result-copy in Conn.Read itself — this
+// helper pays neither: the read loop copies the response payload directly
+// from its pooled body buffer into the caller's dst, and signals success
+// via the rreadSentinelOK singleton (no Rread cache slot consumed).
+//
+// Conn.Read is intentionally NOT removed: Raw.Read consumers and any
+// caller without a pre-allocated destination still use it. File.ReadAt
+// (Task 3) routes through readAtZeroCopy because the caller's dst is
+// always available there.
+//
+// dst MUST have len(dst) >= count. The read loop enforces this with a
+// protocol-error path (signalShutdown) if the server returns more than
+// len(dst) bytes — Pitfall 1 in 24-RESEARCH.md — so the caller's
+// guarantee prevents accidental truncation-without-error.
+//
+// Returns (0, err) on tag-acquisition, write, or context errors — dst is
+// untouched in those paths. Returns (n, nil) on success where n is the
+// bytes actually read (<= count; may be 0 at EOF).
+//
+// Phase 22 (CLIENT-04) ctx-cancel semantics preserved: ctx.Done →
+// flushAndWait(ctx, tag, respCh). Under Pattern B the entire response
+// body is received before the caller's select runs, so dst is either
+// fully written or completely untouched — there is no mid-write cancel
+// window to corrupt the caller's buffer.
+func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64, count uint32, dst []byte) (int, error) {
+	if c.isClosed() {
+		return 0, ErrClosed
+	}
+	c.callerWG.Add(1)
+	defer c.callerWG.Done()
+
+	tag, err := c.tags.acquire(ctx, c.closeCh)
+	if err != nil {
+		return 0, err
+	}
+
+	// Register ZC BEFORE writeT — Pitfall 1 (register-before-send).
+	var n int
+	respCh := c.inflight.registerZC(tag, dst, &n)
+
+	req := &proto.Tread{Fid: fid, Offset: offset, Count: count}
+	if err := c.writeT(tag, req); err != nil {
+		// Pitfall 2 ordering preserved on error paths: unregister, then release.
+		c.inflight.unregister(tag)
+		c.tags.release(tag)
+		if c.isClosed() {
+			return 0, ErrClosed
+		}
+		return 0, err
+	}
+
+	// Wait for response, ctx cancel, or shutdown — same shape as roundTrip.
+	select {
+	case r, ok := <-respCh:
+		if !ok {
+			// cancelAll fired during shutdown.
+			c.inflight.unregister(tag)
+			c.tags.release(tag)
+			return 0, ErrClosed
+		}
+		// Unregister BEFORE release — Pitfall 2.
+		c.inflight.unregister(tag)
+		c.tags.release(tag)
+		// r is one of: rreadSentinelOK (zero-copy fast path success) or
+		// an error R-message (Rlerror/Rerror). Defensive type-check at the
+		// end catches a misbehaving server returning Rread (cached path)
+		// or some other unexpected R-type — never panic, always return err.
+		if r == rreadSentinelOK {
+			return n, nil
+		}
+		if err := toError(r); err != nil {
+			return 0, err
+		}
+		// Defensive: server (or test mock) sent a non-sentinel Rread or
+		// some other unexpected R-type on this tag. Recycle the message
+		// and surface a descriptive error.
+		err := fmt.Errorf("client: readAtZeroCopy: expected Rread sentinel or Rlerror/Rerror, got %v", r.Type())
+		putCachedRMsg(r)
+		return 0, err
+	case <-ctx.Done():
+		// Phase 22 (CLIENT-04, D-01): delegate to flushAndWait, which
+		// owns the unregister + release of `tag` (and any flushTag it
+		// allocates). flushAndWait returns (msg, err); for the ZC path
+		// the response (if any) is the rreadSentinelOK singleton or an
+		// Rlerror — drop both via putCachedRMsg-style cleanup. Note:
+		// flushAndWait already calls putCachedRMsg on the original R
+		// message internally (origCh drain arms), and rreadSentinelOK
+		// is a no-op there per the sentinel guard in putCachedRMsg.
+		_, ferr := c.flushAndWait(ctx, tag, respCh)
+		return 0, ferr
+	case <-c.closeCh:
+		c.inflight.unregister(tag)
+		c.tags.release(tag)
+		return 0, ErrClosed
+	}
+}
+
 // Write writes data to fid starting at offset. Returns the number of bytes
 // the server reports as written (may be fewer than len(data)).
 func (c *Conn) Write(ctx context.Context, fid proto.Fid, offset uint64, data []byte) (uint32, error) {
