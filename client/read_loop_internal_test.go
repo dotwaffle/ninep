@@ -681,6 +681,129 @@ func TestReadAt_ZeroCopy_CancelRace(t *testing.T) {
 	}
 }
 
+// TestReadAt_ZeroCopy_CloseMidCopy_Race exercises WR-01: the data race
+// where Conn.Close → signalShutdown → cancelAll closes entry.ch while
+// the read loop's Rread fast path is mid-copy into entry.dst. The fix
+// holds the inflight RLock across the lookup + copy + n + send so that
+// cancelAll's Lock either runs before lookup (entry already gone, copy
+// never happens) or after the send (caller wakes from a delivered
+// sentinel, not from a closed-channel receive).
+//
+// Stress shape: many iterations, each registering a fresh ZC entry,
+// having the mock server write a well-formed Rread frame, then racing
+// a Close against the read loop's copy. Verifies:
+//
+//   - No -race detector report (the load-bearing assertion).
+//   - dst is NEVER partially written: it's either all-sentinel (the read
+//     loop never started the copy because the entry was gone) OR the
+//     full payload (the read loop's RLock-spanned copy completed atomically).
+//
+// Without the WR-01 fix, partial writes are observable when the caller
+// returns from <-entry.ch on the !ok arm (cancelAll closed it) before
+// the read loop's copy finishes. The dst sentinel-vs-content check
+// catches partial writes; the -race detector catches the unsynchronized
+// access on dst's backing array.
+func TestReadAt_ZeroCopy_CloseMidCopy_Race(t *testing.T) {
+	t.Parallel()
+
+	const iters = 50
+	const sentinelByte = 0xCC
+	payload := []byte("hello world\n")
+
+	for i := 0; i < iters; i++ {
+		// Per-iter Conn so Close is the natural teardown signal; no
+		// shared state across iters keeps the race surface clean.
+		cliNC, srvNC := net.Pipe()
+		go func() {
+			var sizeBuf [4]byte
+			if _, err := io.ReadFull(srvNC, sizeBuf[:]); err != nil {
+				return
+			}
+			size := binary.LittleEndian.Uint32(sizeBuf[:])
+			body := make([]byte, int(size)-4)
+			if _, err := io.ReadFull(srvNC, body); err != nil {
+				return
+			}
+			_ = p9l.Encode(srvNC, proto.NoTag, &proto.Rversion{Msize: 65536, Version: "9P2000.L"})
+		}()
+
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		cli, err := Dial(ctx, cliNC, WithMsize(65536))
+		cancel()
+		if err != nil {
+			_ = srvNC.Close()
+			t.Fatalf("iter %d: Dial: %v", i, err)
+		}
+
+		tag := proto.Tag(1000 + i)
+		dst := make([]byte, len(payload))
+		for j := range dst {
+			dst[j] = sentinelByte
+		}
+		entry := cli.inflight.registerZC(tag, dst)
+
+		// Prime the wire with the Rread frame in a goroutine so the
+		// read loop's copy can race with the Close below. Synchronous
+		// net.Pipe writes block until the read loop reads, so the
+		// goroutine is required. A failed write here is EXPECTED when
+		// Close wins the race (cliNC is closed before the frame lands)
+		// — tolerate via a local builder that doesn't t.Fatalf.
+		writeDone := make(chan struct{})
+		go func() {
+			defer close(writeDone)
+			bodyLen := 1 + 2 + 4 + len(payload)
+			size := uint32(4 + bodyLen)
+			frame := make([]byte, 4+bodyLen)
+			binary.LittleEndian.PutUint32(frame[0:4], size)
+			frame[4] = byte(proto.TypeRread)
+			binary.LittleEndian.PutUint16(frame[5:7], uint16(tag))
+			binary.LittleEndian.PutUint32(frame[7:11], uint32(len(payload)))
+			copy(frame[11:], payload)
+			_, _ = srvNC.Write(frame) // ignore EPIPE on Close-wins races
+		}()
+
+		// Race: Close concurrently with the read loop's copy. Whichever
+		// wins, dst must be consistent (all-sentinel or all-payload),
+		// and -race must not report a write-after-free.
+		closeDone := make(chan struct{})
+		go func() {
+			defer close(closeDone)
+			_ = cli.Close()
+		}()
+
+		// Drain the entry.ch arm or the cancelAll close-arm — both are
+		// terminal for this round trip. We don't assert the outcome
+		// because the race winner is intentionally non-deterministic.
+		select {
+		case <-entry.ch:
+			// Either rreadSentinelOK (read loop won) or zero/closed
+			// (cancelAll won). Either is acceptable.
+		case <-time.After(2 * time.Second):
+			t.Fatalf("iter %d: entry.ch never delivered or closed", i)
+		}
+
+		<-closeDone
+		<-writeDone
+		_ = srvNC.Close()
+
+		// Acceptance: dst is either all-sentinel (cancelAll won the
+		// race; copy never happened) OR full payload (read loop's
+		// RLock-spanned copy completed). Partial writes are a
+		// WR-01-regression signal.
+		allSentinel := true
+		for _, b := range dst {
+			if b != sentinelByte {
+				allSentinel = false
+				break
+			}
+		}
+		allPayload := bytes.Equal(dst, payload)
+		if !allSentinel && !allPayload {
+			t.Errorf("iter %d: PARTIAL DST WRITE (WR-01 regression): dst=%q, want all-sentinel or all-payload", i, dst)
+		}
+	}
+}
+
 // pipeFallbackPair is a tiny test fixture for the two pipe-based ZC tests
 // above. Builds a real memfs server with a known "hello.txt" fixture and
 // dials a client over net.Pipe. Lives in the internal test package so

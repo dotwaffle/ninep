@@ -113,9 +113,31 @@ func (c *Conn) readLoop() {
 		//
 		// Body layout: type[1]+tag[2] = b[0:3] (parsed above), then
 		// count[4] = b[3:7] and data[count] = b[7:7+count].
+		//
+		// Concurrency (WR-01 fix): the lookup, copy-into-entry.dst, n
+		// assignment, AND the cap-1 send happen under a single RLock span
+		// to serialize against inflightMap.cancelAll's Lock. Without this,
+		// cancelAll can close entry.ch (unblocking the caller with
+		// ErrClosed) while the read loop is mid-copy, allowing the caller
+		// to free / reuse dst's backing array before the copy completes —
+		// a write-after-free data race. Holding RLock across the copy
+		// guarantees that either the copy finishes before cancelAll can
+		// proceed, or the entry is already gone by the time we re-acquire
+		// (in which case lookup returns nil and we fall through to the
+		// non-ZC path, which decodes into a fresh slice and drops it via
+		// the deliver-into-nil-entry → putCachedRMsg arm).
+		//
+		// The send is inlined (rather than calling deliver) because we
+		// already hold the RLock; calling deliver would re-RLock and risk
+		// a write-starvation deadlock if another goroutine is waiting on
+		// the write Lock. The inlined send mirrors deliver's non-blocking
+		// select arm exactly.
 		if msgType == proto.TypeRread {
-			if entry := c.inflight.lookup(tag); entry != nil && entry.dst != nil {
+			c.inflight.mu.RLock()
+			entry := c.inflight.entries[tag]
+			if entry != nil && entry.dst != nil {
 				if len(b) < 7 {
+					c.inflight.mu.RUnlock()
 					bufpool.PutMsgBuf(bufPtr)
 					c.logger.Warn("client: Rread body too short",
 						slog.Int("len", len(b)),
@@ -126,6 +148,7 @@ func (c *Conn) readLoop() {
 				count := binary.LittleEndian.Uint32(b[3:7])
 				// Match proto.Rread.DecodeFrom's MaxDataSize guard.
 				if count > proto.MaxDataSize {
+					c.inflight.mu.RUnlock()
 					bufpool.PutMsgBuf(bufPtr)
 					c.logger.Warn("client: Rread count exceeds MaxDataSize",
 						slog.Uint64("count", uint64(count)),
@@ -137,6 +160,7 @@ func (c *Conn) readLoop() {
 				// than the caller asked for. Spec says count <= request.count;
 				// any violation is a protocol error — never silently truncate.
 				if count > uint32(len(entry.dst)) {
+					c.inflight.mu.RUnlock()
 					bufpool.PutMsgBuf(bufPtr)
 					c.logger.Warn("client: Rread count > dst",
 						slog.Uint64("count", uint64(count)),
@@ -148,6 +172,7 @@ func (c *Conn) readLoop() {
 				// Pitfall 1 variant: count claims more bytes than the
 				// frame body actually carries (frame corruption). Fatal.
 				if int(count) > len(b)-7 {
+					c.inflight.mu.RUnlock()
 					bufpool.PutMsgBuf(bufPtr)
 					c.logger.Warn("client: Rread count exceeds body",
 						slog.Uint64("count", uint64(count)),
@@ -160,12 +185,21 @@ func (c *Conn) readLoop() {
 					copy(entry.dst[:count], b[7:7+count])
 				}
 				entry.n = int(count)
+				// Inlined deliver — non-blocking send to cap-1 entry.ch.
+				// Sentinel-msg: readAtZeroCopy identifies the fast-path
+				// success via pointer equality `r == rreadSentinelOK`.
+				select {
+				case entry.ch <- rreadSentinelOK:
+				default:
+					// Unreachable under correct usage (cap-1 + tag
+					// serialization). Sentinel needs no putCachedRMsg
+					// reclaim — it is a singleton, not a pool slot.
+				}
+				c.inflight.mu.RUnlock()
 				bufpool.PutMsgBuf(bufPtr)
-				// Sentinel-msg deliver — readAtZeroCopy identifies the
-				// fast-path success via pointer equality `r == rreadSentinelOK`.
-				c.inflight.deliver(tag, rreadSentinelOK)
 				continue
 			}
+			c.inflight.mu.RUnlock()
 		}
 
 		rmsg, err := c.newRMessage(msgType)
