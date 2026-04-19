@@ -105,35 +105,6 @@ func (im *inflightMap) registerZC(tag proto.Tag, dst []byte) *requestEntry {
 	return entry
 }
 
-// lookup returns the entry registered for tag, or nil. The read loop
-// consults this before allocating an R-message via newRMessage so that
-// the zero-copy Rread fast path can be taken when entry.dst != nil.
-//
-// Safety of using the returned pointer after the RLock is released for
-// the non-ZC path: the register / unregister pair serializes via the
-// cap-1 ch — unregister only runs after the caller has received from ch,
-// and the read loop's sole deliver call for this tag happens-before the
-// caller's unregister. So as long as the read loop is the sole reader of
-// entry fields (which it is for the non-ZC path), no concurrent mutation
-// is possible.
-//
-// Caveat for the zero-copy Rread fast path (WR-01): the above invariant
-// is FALSE when cancelAll is the unblocker, because cancelAll closes
-// entry.ch unconditionally without waiting for an in-flight read-loop
-// copy to finish. The caller can therefore wake from a closed entry.ch
-// and free / reuse entry.dst before the read loop's copy completes.
-// Read loop callers that touch entry.dst (the ZC fast path in
-// read_loop.go) MUST hold im.mu.RLock across the lookup, copy, n
-// assignment, AND deliver, NOT call lookup standalone — see read_loop.go
-// for the inlined RLock span. lookup is preserved as a standalone helper
-// only for callers that touch entry.ch but never entry.dst (currently
-// none; reserved for future cold-path uses).
-func (im *inflightMap) lookup(tag proto.Tag) *requestEntry {
-	im.mu.RLock()
-	defer im.mu.RUnlock()
-	return im.entries[tag]
-}
-
 // deliver posts msg to the chan registered under tag. Non-blocking per the
 // cap-1 + tag-serialization invariant (research §4 invariant 2). If the tag
 // was not registered (Pitfall 10-A: late response after caller ctx cancel
