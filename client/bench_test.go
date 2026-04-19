@@ -129,3 +129,112 @@ func preGeneratedOffsets(readSize uint32) []uint64 {
 	}
 	return offsets
 }
+
+// BenchmarkClientRead_4K measures client-side Rread throughput at 4 KiB
+// reads over the default 64 KiB msize. Mirrors server/io_bench_test.go:
+// BenchmarkServerRead_4K shape and axes for benchstat parity (SC-4 gate).
+//
+// SC-2 target (per 24-CONTEXT.md D-12): allocs/op on transport=unix is on
+// par with server's BenchmarkServerRead_4K/transport=unix/encode=payloader
+// (within 1 alloc/op). This baseline bench measures the current (pre
+// zero-copy) path; 24-03 installs the zero-copy branch and 24-05's
+// VERIFICATION.md records the absolute-allocs number.
+func BenchmarkClientRead_4K(b *testing.B) {
+	const readSize uint32 = 4096
+	const msize uint32 = 65536
+
+	for _, transport := range []string{"unix", "pipe"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			root := newBenchTree(b)
+			cli := newBenchClient(b, transport, root, msize)
+			f := benchOpenDataFile(b, cli)
+
+			// dst reused across iterations (Pitfall 6). The alloc for
+			// dst belongs to setup, not the per-op cost.
+			dst := make([]byte, readSize)
+			offsets := preGeneratedOffsets(readSize)
+
+			b.ReportAllocs()
+			b.SetBytes(int64(readSize))
+			var idx int
+			for b.Loop() {
+				off := offsets[idx%numOffsets]
+				if _, err := f.ReadAt(dst, int64(off)); err != nil {
+					b.Fatalf("ReadAt: %v", err)
+				}
+				idx++
+			}
+		})
+	}
+}
+
+// BenchmarkClientRead_1M measures client-side Rread throughput at 1 MiB
+// reads over a negotiated 1 MiB msize. Mirrors server/io_bench_test.go:
+// BenchmarkServerRead_1M shape and axes.
+func BenchmarkClientRead_1M(b *testing.B) {
+	const readSize uint32 = 1 << 20
+	const msize uint32 = 1 << 20
+
+	for _, transport := range []string{"unix", "pipe"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			root := newBenchTree(b)
+			cli := newBenchClient(b, transport, root, msize)
+			f := benchOpenDataFile(b, cli)
+
+			dst := make([]byte, readSize)
+			offsets := preGeneratedOffsets(readSize)
+
+			b.ReportAllocs()
+			b.SetBytes(int64(readSize))
+			var idx int
+			for b.Loop() {
+				off := offsets[idx%numOffsets]
+				if _, err := f.ReadAt(dst, int64(off)); err != nil {
+					b.Fatalf("ReadAt: %v", err)
+				}
+				idx++
+			}
+		})
+	}
+}
+
+// BenchmarkClientWalkClunk baselines the walk+clunk round-trip cost from
+// the client side. Mirrors server/bench_test.go:BenchmarkWalkClunk shape
+// and axes (transport={unix,pipe}).
+//
+// Each iteration: root.Clone(ctx) issues Twalk(rootFid, newFid, nil) —
+// the 0-step "clone" walk that returns a fresh *File whose Close issues
+// Tclunk. This is the client-surface equivalent of the server's raw
+// Twalk(...,nil)/Tclunk frame pair. (The plan suggested File.Walk(ctx,
+// nil) but that path errors out — File.Walk rejects empty names; Clone
+// is the documented 0-step API per File.Walk's godoc.)
+func BenchmarkClientWalkClunk(b *testing.B) {
+	for _, transport := range []string{"unix", "pipe"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			root := newBenchTree(b)
+			cli := newBenchClient(b, transport, root, 65536)
+
+			attached, err := cli.Attach(b.Context(), "bench", "")
+			if err != nil {
+				b.Fatalf("attach: %v", err)
+			}
+			b.Cleanup(func() { _ = attached.Close() })
+
+			b.ReportAllocs()
+			// Approximate bytes on wire per iteration: Twalk(~17) +
+			// Rwalk(~9) + Tclunk(~11) + Rclunk(~7) ≈ 44. SetBytes gives
+			// a MB/s column that roughly tracks wire throughput; for
+			// allocs/op analysis, the ReportAllocs column is the signal.
+			b.SetBytes(44)
+			for b.Loop() {
+				clone, err := attached.Clone(b.Context())
+				if err != nil {
+					b.Fatalf("clone: %v", err)
+				}
+				if err := clone.Close(); err != nil {
+					b.Fatalf("close: %v", err)
+				}
+			}
+		})
+	}
+}
