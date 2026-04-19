@@ -248,6 +248,14 @@ func UnixPair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, 
 	// Accept runs concurrently with Dial. The accept goroutine signals
 	// through `accepted` so the main goroutine can surface accept errors
 	// with test-appropriate diagnostics rather than blocking.
+	//
+	// WR-02: defense against an Accept that completes after the main
+	// goroutine has already moved on (e.g. timer arm won the select
+	// race). The non-blocking send + close-on-default means a late
+	// successful Accept doesn't park forever AND doesn't leak the
+	// server-side conn — the goroutine closes it immediately if the
+	// recipient is gone. ln.Close in tb.Cleanup unblocks a still-blocked
+	// Accept with net.ErrClosed.
 	type acceptResult struct {
 		nc  net.Conn
 		err error
@@ -255,7 +263,13 @@ func UnixPair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, 
 	accepted := make(chan acceptResult, 1)
 	go func() {
 		c, err := ln.Accept()
-		accepted <- acceptResult{nc: c, err: err}
+		select {
+		case accepted <- acceptResult{nc: c, err: err}:
+		default:
+			if c != nil {
+				_ = c.Close()
+			}
+		}
 	}()
 
 	dialTimeout := cfg.dialTimeout
@@ -268,6 +282,15 @@ func UnixPair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, 
 		return nil, nil
 	}
 
+	// WR-02: use time.NewTimer/Stop instead of time.After so the timer
+	// goroutine is reclaimed on the success path (time.After always
+	// leaks a goroutine until its duration elapses). Drain `accepted`
+	// non-blockingly in the timeout arm so a late accept's conn is
+	// closed rather than leaked — Go's uniform-random select can pick
+	// the timer arm even after accepted is ready, and silently leaking
+	// the server-side conn until process exit is wrong.
+	timer := time.NewTimer(dialTimeout)
+	defer timer.Stop()
 	select {
 	case ar := <-accepted:
 		if ar.err != nil {
@@ -276,8 +299,19 @@ func UnixPair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, 
 			return nil, nil
 		}
 		return finalizePair(tb, cfg, root, cliNC, ar.nc, "clienttest.UnixPair")
-	case <-time.After(dialTimeout):
+	case <-timer.C:
 		_ = cliNC.Close()
+		// Drain a late-arriving accept result so its conn is closed
+		// rather than leaked. Non-blocking — if accept hasn't returned
+		// yet, ln.Close in tb.Cleanup will surface net.ErrClosed and
+		// the accept goroutine's default arm closes any partial conn.
+		select {
+		case ar := <-accepted:
+			if ar.err == nil && ar.nc != nil {
+				_ = ar.nc.Close()
+			}
+		default:
+		}
 		tb.Fatalf("clienttest.UnixPair: accept timed out after %s", dialTimeout)
 		return nil, nil
 	}
