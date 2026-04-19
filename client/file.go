@@ -419,6 +419,12 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 // ctx verbatim, so a cancel mid-chunk returns a partial count with
 // the ctx error.
 //
+// Internally uses the zero-copy read path (24-03 / D-05): each chunk of
+// length <= maxChunk() is decoded directly from the wire into the
+// corresponding sub-slice of p, skipping both the intermediate
+// Rread.Data allocation AND the Conn.Read result-copy. See
+// 24-RESEARCH.md §Pattern B for the design.
+//
 // Does NOT advance the local offset — the [io.ReaderAt] contract is
 // preserved regardless of what the caller's ctx does. Serializes
 // against other I/O methods on the same *File via f.mu per D-12.
@@ -437,17 +443,20 @@ func (f *File) ReadAtCtx(ctx context.Context, p []byte, off int64) (int, error) 
 		if m := f.maxChunk(); count > m {
 			count = m
 		}
-		data, err := f.conn.Read(ctx, f.fid, uint64(off)+uint64(total), count)
+		// Zero-copy: dst aliases the caller's buffer at the chunk slot.
+		// readAtZeroCopy decodes Rread.Data directly into dst[:count],
+		// no intermediate copy.
+		chunk := p[total : total+int(count)]
+		n, err := f.conn.readAtZeroCopy(ctx, f.fid, uint64(off)+uint64(total), count, chunk)
 		if err != nil {
 			if total > 0 {
 				return total, err
 			}
 			return 0, err
 		}
-		if len(data) == 0 {
+		if n == 0 {
 			return total, io.EOF
 		}
-		n := copy(p[total:], data)
 		total += n
 	}
 	return total, nil

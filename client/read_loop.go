@@ -159,7 +159,7 @@ func (c *Conn) readLoop() {
 				if count > 0 {
 					copy(entry.dst[:count], b[7:7+count])
 				}
-				*entry.n = int(count)
+				entry.n = int(count)
 				bufpool.PutMsgBuf(bufPtr)
 				// Sentinel-msg deliver — readAtZeroCopy identifies the
 				// fast-path success via pointer equality `r == rreadSentinelOK`.

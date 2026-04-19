@@ -356,8 +356,10 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 	}
 
 	// Register ZC BEFORE writeT — Pitfall 1 (register-before-send).
-	var n int
-	respCh := c.inflight.registerZC(tag, dst, &n)
+	// entry.n is written by the read loop's Rread fast path before deliver,
+	// and read here after entry.ch unblocks — happens-before via the
+	// cap-1 chan send/receive edge.
+	entry := c.inflight.registerZC(tag, dst)
 
 	req := &proto.Tread{Fid: fid, Offset: offset, Count: count}
 	if err := c.writeT(tag, req); err != nil {
@@ -372,7 +374,7 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 
 	// Wait for response, ctx cancel, or shutdown — same shape as roundTrip.
 	select {
-	case r, ok := <-respCh:
+	case r, ok := <-entry.ch:
 		if !ok {
 			// cancelAll fired during shutdown.
 			c.inflight.unregister(tag)
@@ -387,7 +389,7 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 		// end catches a misbehaving server returning Rread (cached path)
 		// or some other unexpected R-type — never panic, always return err.
 		if r == rreadSentinelOK {
-			return n, nil
+			return entry.n, nil
 		}
 		if err := toError(r); err != nil {
 			return 0, err
@@ -407,7 +409,7 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 		// flushAndWait already calls putCachedRMsg on the original R
 		// message internally (origCh drain arms), and rreadSentinelOK
 		// is a no-op there per the sentinel guard in putCachedRMsg.
-		_, ferr := c.flushAndWait(ctx, tag, respCh)
+		_, ferr := c.flushAndWait(ctx, tag, entry.ch)
 		return 0, ferr
 	case <-c.closeCh:
 		c.inflight.unregister(tag)

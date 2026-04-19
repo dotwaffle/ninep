@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"log/slog"
 	"net"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
 	"github.com/dotwaffle/ninep/proto/p9u"
+	"github.com/dotwaffle/ninep/server"
+	"github.com/dotwaffle/ninep/server/memfs"
 )
 
 // TestReadLoop_DispatchesRlerrorToRegisteredTag exercises the full
@@ -390,4 +393,357 @@ func TestNewRMessage_Phase21_Rstat_On_L_ReturnsError(t *testing.T) {
 	if _, err := c.newRMessage(proto.TypeRwstat); err == nil {
 		t.Fatal("newRMessage(TypeRwstat) on .L: want error, got nil")
 	}
+}
+
+// dialMockL is the internal-test version of dialPairL: builds a (cli,
+// srvNC) pair via net.Pipe + a tight Tversion exchange, returns the
+// internal *Conn (not *client.Conn) so tests can poke unexported fields
+// like inflight + closeCh.
+func dialMockL(t *testing.T) (*Conn, net.Conn) {
+	t.Helper()
+	cliNC, srvNC := net.Pipe()
+	t.Cleanup(func() { _ = srvNC.Close() })
+
+	go func() {
+		var sizeBuf [4]byte
+		if _, err := io.ReadFull(srvNC, sizeBuf[:]); err != nil {
+			return
+		}
+		size := binary.LittleEndian.Uint32(sizeBuf[:])
+		body := make([]byte, int(size)-4)
+		if _, err := io.ReadFull(srvNC, body); err != nil {
+			return
+		}
+		_ = p9l.Encode(srvNC, proto.NoTag, &proto.Rversion{Msize: 65536, Version: "9P2000.L"})
+	}()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	cli, err := Dial(ctx, cliNC, WithMsize(65536))
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	t.Cleanup(func() { _ = cli.Close() })
+	return cli, srvNC
+}
+
+// writeRreadFrame hand-constructs and writes an Rread frame on srv with
+// the given tag and payload. Bypasses p9l.Encode so tests can deliberately
+// craft malformed frames (e.g. count > len(payload), count > caller dst)
+// to exercise the zero-copy Pitfall 1 guard paths.
+//
+// frameOverride lets tests specify a count value DIFFERENT from
+// len(payload) — for the short-dst hazard where the server lies about
+// how many bytes it sent.
+func writeRreadFrame(t *testing.T, srv net.Conn, tag proto.Tag, count uint32, payload []byte) {
+	t.Helper()
+	// Frame: size[4] + type[1] + tag[2] + count[4] + payload[len(payload)]
+	bodyLen := 1 + 2 + 4 + len(payload)
+	size := uint32(4 + bodyLen)
+	frame := make([]byte, 4+bodyLen)
+	binary.LittleEndian.PutUint32(frame[0:4], size)
+	frame[4] = byte(proto.TypeRread)
+	binary.LittleEndian.PutUint16(frame[5:7], uint16(tag))
+	binary.LittleEndian.PutUint32(frame[7:11], count)
+	copy(frame[11:], payload)
+	if _, err := srv.Write(frame); err != nil {
+		t.Fatalf("write Rread frame: %v", err)
+	}
+}
+
+// TestReadAt_ZeroCopy_HappyPath is the foundational positive case: the
+// caller registers a ZC entry with a 12-byte dst; the mock server writes
+// a well-formed 12-byte Rread frame; the read loop's fast path must
+// copy the payload into dst, set entry.n = 12, and deliver
+// rreadSentinelOK to the caller's channel.
+//
+// This is the spec-of-record for the read loop's Rread fast path.
+func TestReadAt_ZeroCopy_HappyPath(t *testing.T) {
+	t.Parallel()
+	cli, srv := dialMockL(t)
+
+	tag := proto.Tag(7)
+	dst := make([]byte, 12)
+	for i := range dst {
+		dst[i] = 0xFF // sentinel — must be overwritten by payload
+	}
+	entry := cli.inflight.registerZC(tag, dst)
+
+	payload := []byte("hello world\n")
+	writeRreadFrame(t, srv, tag, uint32(len(payload)), payload)
+
+	select {
+	case msg, ok := <-entry.ch:
+		if !ok {
+			t.Fatal("entry.ch closed before delivery")
+		}
+		if msg != rreadSentinelOK {
+			t.Fatalf("got msg %T (%v), want rreadSentinelOK pointer-equal", msg, msg)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("zero-copy Rread not delivered within 2s")
+	}
+
+	if entry.n != len(payload) {
+		t.Errorf("entry.n = %d, want %d", entry.n, len(payload))
+	}
+	if string(dst) != string(payload) {
+		t.Errorf("dst = %q, want %q", dst, payload)
+	}
+}
+
+// TestReadAt_ZeroCopy_ShortDst exercises Pitfall 1 (24-RESEARCH.md):
+// the server returns Rread.count > len(caller's dst). The read loop's
+// zero-copy branch MUST detect the oversize and signalShutdown rather
+// than silently truncating into dst (or worse, writing past dst's end
+// and corrupting adjacent memory).
+//
+// Verified by:
+//  1. Registering a 4-byte dst.
+//  2. Sending a hand-crafted Rread frame whose count claims 8 bytes
+//     and whose body actually carries 8 bytes (frame is well-formed
+//     but oversized for THIS caller).
+//  3. Asserting the Conn transitions to shutdown (cli.closeCh fires)
+//     within a bounded window.
+//  4. Asserting dst is NOT corrupted (the read loop returns BEFORE the
+//     copy when count > len(dst); only the sentinel-fill survives).
+func TestReadAt_ZeroCopy_ShortDst(t *testing.T) {
+	t.Parallel()
+	cli, srv := dialMockL(t)
+
+	tag := proto.Tag(11)
+	dst := make([]byte, 4)
+	for i := range dst {
+		dst[i] = 0xAA
+	}
+	_ = cli.inflight.registerZC(tag, dst)
+
+	// Server says "I sent 8 bytes" + actually sends 8 bytes.
+	overflow := []byte("12345678")
+	writeRreadFrame(t, srv, tag, uint32(len(overflow)), overflow)
+
+	// Conn should detect count > len(dst) and shut down.
+	select {
+	case <-cli.closeCh:
+		// Expected: read loop signalled shutdown.
+	case <-time.After(2 * time.Second):
+		t.Fatal("Conn did not shut down within 2s after oversized Rread")
+	}
+
+	// dst MUST NOT have been touched (Pitfall 1: never silently truncate).
+	for i, b := range dst {
+		if b != 0xAA {
+			t.Errorf("dst[%d] = %#x, want 0xAA (untouched); read loop wrote into dst before shutting down", i, b)
+		}
+	}
+}
+
+// TestReadAt_ZeroCopy_PipeFallback verifies Pattern B is transport-
+// agnostic: the zero-copy branch fires equally on net.Pipe (no writev,
+// no msg-coalescing) as it does on AF_UNIX. The win is alloc elimination,
+// not transport-specific writev — pipe must work end-to-end.
+//
+// Goes through the full File.ReadAt → readAtZeroCopy → read-loop fast
+// path → real memfs server stack. Asserts both the byte content AND a
+// trailing 0xFF sentinel survives unmodified (proves no overrun beyond
+// the requested count).
+func TestReadAt_ZeroCopy_PipeFallback(t *testing.T) {
+	t.Parallel()
+	pair := pipeFallbackPair(t)
+	defer pair.cleanup()
+
+	root, err := pair.cli.Attach(pair.ctx, "me", "")
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	defer func() { _ = root.Close() }()
+
+	f, err := pair.cli.OpenFile(pair.ctx, "hello.txt", 0 /*O_RDONLY*/, 0)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	const content = "hello world\n"
+	const sentinelLen = 8
+	dst := make([]byte, len(content)+sentinelLen)
+	for i := range dst {
+		dst[i] = 0xFF
+	}
+
+	n, err := f.ReadAt(dst[:len(content)], 0)
+	if err != nil {
+		t.Fatalf("ReadAt: %v", err)
+	}
+	if n != len(content) {
+		t.Errorf("ReadAt n=%d, want %d", n, len(content))
+	}
+	if string(dst[:n]) != content {
+		t.Errorf("ReadAt content = %q, want %q", dst[:n], content)
+	}
+	// Trailing sentinel: read loop MUST NOT have written past dst[:len(content)].
+	for i := len(content); i < len(dst); i++ {
+		if dst[i] != 0xFF {
+			t.Errorf("dst[%d] = %#x, want 0xFF (overrun beyond requested count)", i, dst[i])
+		}
+	}
+}
+
+// TestReadAt_ZeroCopy_CancelRace verifies Pitfall 2: ctx cancel during
+// a ReadAt does not corrupt dst, regardless of whether Rread or Rflush
+// wins the first-frame race. Under Pattern B the entire response body
+// is received before the caller's select runs, so dst is either
+// fully written or untouched — there is no mid-write cancel window.
+//
+// Stress: 100 sequential ReadAt iterations on independent Files,
+// each with a per-iter random-microsecond cancel deadline. Verifies
+// no panic + no -race report. Does NOT assert specific success/failure
+// counts because the race outcome is intentionally non-deterministic
+// (some iters complete normally if Rread wins; some return ErrFlushed
+// if Rflush wins; some race the ctx).
+func TestReadAt_ZeroCopy_CancelRace(t *testing.T) {
+	t.Parallel()
+	pair := pipeFallbackPair(t)
+	defer pair.cleanup()
+
+	root, err := pair.cli.Attach(pair.ctx, "me", "")
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	defer func() { _ = root.Close() }()
+
+	const iters = 100
+	const content = "hello world\n"
+	for i := 0; i < iters; i++ {
+		f, err := pair.cli.OpenFile(pair.ctx, "hello.txt", 0 /*O_RDONLY*/, 0)
+		if err != nil {
+			t.Fatalf("iter %d: OpenFile: %v", i, err)
+		}
+
+		// Per-iter ctx with a random nanosecond deadline (0–500µs) — some
+		// iters fire before the round trip starts (instant cancel), some
+		// after the read loop delivers (no cancel triggered).
+		ctx, cancel := context.WithTimeout(pair.ctx, time.Duration(i*5)*time.Microsecond)
+
+		dst := make([]byte, len(content))
+		// Pre-fill with sentinel; assertion below verifies no partial-write.
+		for j := range dst {
+			dst[j] = 0xCC
+		}
+		n, err := f.ReadAtCtx(ctx, dst, 0)
+		cancel()
+
+		// Acceptance: either complete success (n == len, err == nil, dst == content)
+		// or full failure (n == 0, err != nil, dst untouched).
+		// What is NOT acceptable: partial dst write paired with err != nil
+		// (the Pattern B contract is all-or-nothing per round trip).
+		if err == nil {
+			if n != len(content) {
+				t.Errorf("iter %d: nil err but n=%d, want %d", i, n, len(content))
+			}
+			if string(dst) != content {
+				t.Errorf("iter %d: nil err but dst=%q, want %q", i, dst, content)
+			}
+		} else {
+			// err != nil under Pattern B: dst must either be fully
+			// untouched (sentinel preserved — cancel beat the read loop's
+			// copy) OR fully written with content (the read loop won the
+			// copy race but Go's select picked the ctx.Done arm of
+			// readAtZeroCopy non-deterministically — a Pattern B win
+			// observable as a "flushed" error).
+			//
+			// readAtZeroCopy returns (0, ferr) on the ctx.Done arm even
+			// when dst was fully written, because the response chan was
+			// not read by the time select fired. That's correct contract
+			// behavior — the caller asked to cancel, and got a cancel
+			// error — but it means n is 0 even when dst is full content.
+			allSentinel := true
+			for _, b := range dst {
+				if b != 0xCC {
+					allSentinel = false
+					break
+				}
+			}
+			allContent := string(dst) == content
+			if !allSentinel && !allContent {
+				t.Errorf("iter %d: err=%v but dst is neither all-sentinel nor full content: %q (n=%d)",
+					i, err, dst, n)
+			}
+			// Partial writes are NEVER acceptable under Pattern B —
+			// the read loop either copies the entire payload into dst
+			// or doesn't touch dst at all.
+			if !allSentinel && !allContent {
+				t.Errorf("iter %d: PARTIAL DST WRITE: dst=%q (n=%d) — Pattern B contract violated",
+					i, dst, n)
+			}
+		}
+		_ = f.Close()
+	}
+}
+
+// pipeFallbackPair is a tiny test fixture for the two pipe-based ZC tests
+// above. Builds a real memfs server with a known "hello.txt" fixture and
+// dials a client over net.Pipe. Lives in the internal test package so
+// it has access to unexported *Conn methods if needed; constructs the
+// public *client.Conn equivalent via the same Dial path the external
+// helpers use.
+type zcPipePair struct {
+	cli     *Conn
+	cleanup func()
+	ctx     context.Context
+}
+
+func pipeFallbackPair(t *testing.T) *zcPipePair {
+	t.Helper()
+	root := buildZCTestRoot(t)
+	cliNC, srvNC := net.Pipe()
+
+	srv := newZCTestServer(t, root)
+	srvCtx, srvCancel := context.WithTimeout(t.Context(), 30*time.Second)
+	srvDone := make(chan struct{})
+	go func() {
+		defer close(srvDone)
+		srv.ServeConn(srvCtx, srvNC)
+	}()
+
+	dialCtx, dialCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer dialCancel()
+	cli, err := Dial(dialCtx, cliNC, WithMsize(65536))
+	if err != nil {
+		_ = cliNC.Close()
+		srvCancel()
+		<-srvDone
+		t.Fatalf("Dial: %v", err)
+	}
+
+	tCtx, tCancel := context.WithTimeout(t.Context(), 10*time.Second)
+	cleanup := func() {
+		tCancel()
+		_ = cli.Close()
+		srvCancel()
+		_ = srvNC.Close()
+		<-srvDone
+	}
+	return &zcPipePair{cli: cli, cleanup: cleanup, ctx: tCtx}
+}
+
+// buildZCTestRoot constructs a small memfs tree with a known "hello.txt"
+// fixture for the zero-copy hazard tests. Mirrors the public-test fixture
+// pattern in client/pair_test.go:buildTestRoot but lives in the internal
+// package so dialMockL + pipeFallbackPair don't need cross-package
+// helpers.
+func buildZCTestRoot(tb testing.TB) server.Node {
+	tb.Helper()
+	gen := &server.QIDGenerator{}
+	return memfs.NewDir(gen).AddStaticFile("hello.txt", "hello world\n")
+}
+
+// newZCTestServer wraps server.New for the ZC tests. Discards logs so
+// the -v output stays focused on test signal.
+func newZCTestServer(tb testing.TB, root server.Node) *server.Server {
+	tb.Helper()
+	return server.New(root,
+		server.WithMaxMsize(65536),
+		server.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+	)
 }

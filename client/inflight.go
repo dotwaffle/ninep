@@ -31,7 +31,7 @@ type inflightMap struct {
 
 // requestEntry is the inflight map's value type. Pre-24-03 the map stored
 // `chan proto.Message` directly; the indirection through *requestEntry
-// adds the optional dst slice + n out-parameter for the zero-copy Rread
+// adds the optional dst slice + n out-field for the zero-copy Rread
 // path described in 24-RESEARCH.md §Pattern B and 24-CONTEXT.md D-05.
 //
 // Invariants (all of which existed pre-24-03 for the ch field; dst/n are
@@ -39,21 +39,23 @@ type inflightMap struct {
 //
 //   - ch is cap-1; deliver's send is non-blocking by tag-serialization
 //     invariant (one outstanding deliver per tag at a time).
-//   - dst == nil && n == nil on non-ZC requests (registered via register).
-//   - dst != nil && n != nil on ZC requests (registered via registerZC) —
-//     both fields are set together or not at all.
+//   - dst == nil on non-ZC requests (registered via register); n is unused.
+//   - dst != nil on ZC requests (registered via registerZC); the read loop
+//     writes the byte count into entry.n before delivering rreadSentinelOK.
 //   - Entries are short-lived: register → deliver → unregister within one
 //     roundTrip call. There is no concurrent reader/writer on entry
 //     fields outside the read loop's single deliver call.
 //
-// The read loop's Rread fast path (read_loop.go) writes payload bytes
-// into dst[:count] and sets *n = int(count) BEFORE calling deliver, so
-// the caller observes consistent (n, sentinel-msg) state when its
-// receive on entry.ch unblocks.
+// n is stored inline (not *int) to avoid a per-ReadAt heap allocation —
+// readAtZeroCopy holds the *requestEntry by pointer (it's already heap
+// because it's stored in the map), and the read loop's write-then-deliver
+// happens-before the caller's receive-then-read-n via the cap-1 ch's
+// happens-before edge. So the inline field is data-race-free without an
+// indirection.
 type requestEntry struct {
 	ch  chan proto.Message
 	dst []byte
-	n   *int
+	n   int
 }
 
 // newInflightMap returns an empty inflightMap.
@@ -79,25 +81,28 @@ func (im *inflightMap) register(tag proto.Tag) chan proto.Message {
 
 // registerZC allocates a cap-1 response chan and stores a zero-copy entry
 // under tag. The read loop's Rread fast path (read_loop.go) will copy
-// the response payload directly into dst[:count] and set *n = int(count)
-// before posting a sentinel R-message (rreadSentinelOK) on the returned
-// chan. This avoids both the proto.Rread.Data alloc inside DecodeFrom
-// AND the result-copy in Conn.Read — see 24-03-PLAN §objective.
+// the response payload directly into dst[:count] and set entry.n = int(count)
+// before posting a sentinel R-message (rreadSentinelOK) on entry.ch.
+// This avoids both the proto.Rread.Data alloc inside DecodeFrom AND the
+// result-copy in Conn.Read — see 24-03-PLAN §objective.
 //
-// dst and n MUST both be non-nil; len(dst) MUST be >= the requested
-// Tread.count. If the server returns more than len(dst) bytes (Pitfall
-// 1 in 24-RESEARCH.md), the read loop treats it as a protocol error and
+// Returns the entry pointer (so callers can read entry.n after the
+// receive on entry.ch unblocks) — entry escapes to the heap once via
+// the map insertion below; returning the pointer adds no extra alloc.
+//
+// dst MUST be non-nil; len(dst) MUST be >= the requested Tread.count.
+// If the server returns more than len(dst) bytes (Pitfall 1 in
+// 24-RESEARCH.md), the read loop treats it as a protocol error and
 // shuts the Conn down rather than silently truncating.
 //
 // Caller owns dst for the duration of the round trip; do NOT release dst
 // back to any pool until ch has delivered (or the Conn has shut down).
-func (im *inflightMap) registerZC(tag proto.Tag, dst []byte, n *int) chan proto.Message {
-	ch := make(chan proto.Message, 1)
-	entry := &requestEntry{ch: ch, dst: dst, n: n}
+func (im *inflightMap) registerZC(tag proto.Tag, dst []byte) *requestEntry {
+	entry := &requestEntry{ch: make(chan proto.Message, 1), dst: dst}
 	im.mu.Lock()
 	im.entries[tag] = entry
 	im.mu.Unlock()
-	return ch
+	return entry
 }
 
 // lookup returns the entry registered for tag, or nil. The read loop
