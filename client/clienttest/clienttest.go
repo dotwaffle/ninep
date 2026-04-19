@@ -94,8 +94,12 @@ func WithMsize(n uint32) Option {
 
 // WithCtx sets the parent context used to derive the server's serve ctx
 // and the client's Dial ctx. Cancelling the parent unblocks the server
-// goroutine spawned by [Pair]; [tb.Cleanup] additionally cancels it at
-// test end.
+// goroutine spawned by [Pair].
+//
+// tb.Cleanup cancels the DERIVED server ctx (not the caller-supplied
+// parent), closes the client, closes the server-side pipe half, and
+// drains the server goroutine. The parent ctx is the caller's to manage;
+// the harness never propagates cancellation upward into it.
 //
 // Passing nil is silently coerced to [context.Background] — the harness
 // never panics on a nil ctx, matching the defensive posture of other
