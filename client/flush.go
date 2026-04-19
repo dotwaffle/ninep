@@ -116,6 +116,17 @@ func (c *Conn) flushAndWait(
 	// in [inflightMap.deliver]; because our defers have already run
 	// (on the return path below), the second frame's tag is
 	// unregistered and deliver drops it via putCachedRMsg (Pitfall 7).
+	//
+	// Buffered-race note (WR-01): origCh and flushCh are both cap-1
+	// buffered. If the read loop delivers BOTH frames before this
+	// select fires, Go picks the winning arm uniformly at random; the
+	// OTHER frame is already buffered and cannot be salvaged by
+	// deliver's unregistered-tag drop path (that path only catches
+	// frames that arrive AFTER the defer unregister). Each arm below
+	// therefore performs a non-blocking drain of its peer channel and
+	// reclaims the frame via putCachedRMsg. Without this, under
+	// sustained cancellation against an RflushSendImmediately server
+	// the bounded Rread/Rwalk/Rlerror caches slowly drain to GC.
 	select {
 	case r, ok := <-origCh:
 		if !ok {
@@ -127,6 +138,17 @@ func (c *Conn) flushAndWait(
 		// R-message slot (Q1 resolution, Phase 19 WR-03 pattern).
 		// putCachedRMsg is a no-op for types not in the cache set.
 		putCachedRMsg(r)
+		// Non-blocking drain of flushCh: Rflush is uncached today
+		// (falls to the default arm of putCachedRMsg) so this is a
+		// no-op for correctness, but keeps the two arms symmetric if
+		// Rflush ever joins the cache set.
+		select {
+		case rf, ok := <-flushCh:
+			if ok {
+				putCachedRMsg(rf)
+			}
+		default:
+		}
 		return nil, fmt.Errorf(
 			"9p: flushed tag %d: %w", oldTag, ctx.Err(),
 		)
@@ -140,6 +162,18 @@ func (c *Conn) flushAndWait(
 		// msgcache.go but the call keeps the return path uniform with
 		// the origCh arm).
 		putCachedRMsg(r)
+		// Non-blocking drain of origCh: if the original R raced into
+		// origCh before the select fired, it is invisible to
+		// deliver's unregistered-tag drop path (the defer hasn't run
+		// yet) and would leak to GC, slowly draining the bounded
+		// Rread/Rwalk/Rlerror caches. Reclaim it here.
+		select {
+		case orig, ok := <-origCh:
+			if ok {
+				putCachedRMsg(orig)
+			}
+		default:
+		}
 		return nil, fmt.Errorf(
 			"9p: flushed tag %d: %w", oldTag,
 			errors.Join(ctx.Err(), ErrFlushed),
