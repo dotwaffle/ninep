@@ -5,6 +5,8 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -199,6 +201,103 @@ func Pair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, *cli
 	}
 
 	cliNC, srvNC := net.Pipe()
+	return finalizePair(tb, cfg, root, cliNC, srvNC, "clienttest.Pair")
+}
+
+// UnixPair is the net.UnixConn analogue of [Pair]. It boots a server
+// goroutine serving root over a unix-domain socket in tb.TempDir() and
+// dials the client-side half. Returns the live *server.Server and
+// *client.Conn so tests can drive from either side.
+//
+// UnixPair skips the test on Windows (runtime.GOOS == "windows") since
+// unix-domain sockets are not broadly supported there.
+//
+// Callers needing the writev fast path for bench validation (SC-4 mirror
+// benches) use UnixPair; correctness-only tests should use [Pair] for
+// cross-platform coverage and lower overhead.
+//
+// The harness applies the same defaults and Option semantics as [Pair];
+// see Pair's godoc for the full contract. Teardown is registered via
+// tb.Cleanup: the listener is closed AFTER the client+server drain so
+// teardown order is LIFO-safe.
+func UnixPair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, *client.Conn) {
+	tb.Helper()
+	if runtime.GOOS == "windows" {
+		tb.Skipf("clienttest.UnixPair: unix transport not supported on windows")
+	}
+
+	cfg := newConfig()
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	if cfg.parentCtx == nil {
+		cfg.parentCtx = context.Background()
+	}
+
+	sockPath := filepath.Join(tb.TempDir(), "ninep.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		tb.Fatalf("clienttest.UnixPair: listen unix: %v", err)
+		return nil, nil
+	}
+	// Register listener close BEFORE finalizePair registers its cleanups:
+	// Cleanup runs LIFO, so the listener closes AFTER the client+server
+	// drain, avoiding spurious read/accept errors during teardown.
+	tb.Cleanup(func() { _ = ln.Close() })
+
+	// Accept runs concurrently with Dial. The accept goroutine signals
+	// through `accepted` so the main goroutine can surface accept errors
+	// with test-appropriate diagnostics rather than blocking.
+	type acceptResult struct {
+		nc  net.Conn
+		err error
+	}
+	accepted := make(chan acceptResult, 1)
+	go func() {
+		c, err := ln.Accept()
+		accepted <- acceptResult{nc: c, err: err}
+	}()
+
+	dialTimeout := cfg.dialTimeout
+	if dialTimeout == 0 {
+		dialTimeout = defaultDialTimeout
+	}
+	cliNC, err := net.DialTimeout("unix", sockPath, dialTimeout)
+	if err != nil {
+		tb.Fatalf("clienttest.UnixPair: dial unix: %v", err)
+		return nil, nil
+	}
+
+	select {
+	case ar := <-accepted:
+		if ar.err != nil {
+			_ = cliNC.Close()
+			tb.Fatalf("clienttest.UnixPair: accept: %v", ar.err)
+			return nil, nil
+		}
+		return finalizePair(tb, cfg, root, cliNC, ar.nc, "clienttest.UnixPair")
+	case <-time.After(dialTimeout):
+		_ = cliNC.Close()
+		tb.Fatalf("clienttest.UnixPair: accept timed out after %s", dialTimeout)
+		return nil, nil
+	}
+}
+
+// finalizePair wires a server + client over already-constructed net.Conn
+// halves. Shared between [Pair] (net.Pipe) and [UnixPair] (unix-domain
+// sockets) to dedupe option application, server spawn, Dial, and the
+// tb.Cleanup ordering.
+//
+// cfg is the fully-applied option config; root is the server-side Node;
+// cliNC / srvNC are the client-side and server-side net.Conn halves,
+// both already open and paired. caller is the diagnostic prefix used in
+// tb.Fatalf messages ("clienttest.Pair" / "clienttest.UnixPair").
+//
+// On success, returns the live *server.Server and *client.Conn and
+// registers tb.Cleanup to tear both down. On failure, fails via
+// tb.Fatalf and never returns.
+func finalizePair(tb testing.TB, cfg *config, root server.Node, cliNC, srvNC net.Conn, caller string) (*server.Server, *client.Conn) {
+	tb.Helper()
 
 	srvMsize := cfg.serverMsize
 	if srvMsize == 0 {
@@ -261,7 +360,7 @@ func Pair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, *cli
 		_ = cliNC.Close()
 		srvCancel()
 		<-srvDone
-		tb.Fatalf("clienttest.Pair: client.Dial: %v", err)
+		tb.Fatalf("%s: client.Dial: %v", caller, err)
 		return nil, nil // unreachable; tb.Fatalf aborts
 	}
 	// Post-19-03: Dial never returns (nil, nil). If the contract is
@@ -271,7 +370,7 @@ func Pair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, *cli
 		_ = cliNC.Close()
 		srvCancel()
 		<-srvDone
-		tb.Fatalf("clienttest.Pair: client.Dial returned nil Conn with nil error (API contract violation)")
+		tb.Fatalf("%s: client.Dial returned nil Conn with nil error (API contract violation)", caller)
 		return nil, nil // unreachable
 	}
 
