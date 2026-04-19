@@ -20,18 +20,38 @@ import (
 // under the client's 1 MiB default and bounds test allocations.
 const defaultMsize uint32 = 65536
 
+// defaultServeTimeout bounds the server goroutine's serve ctx so a
+// hung handler fails fast instead of stalling the test binary until the
+// outer testing framework kills it. Overridable via [WithServeTimeout];
+// automatically shortened when [testing.TB.Deadline] reports one.
+const defaultServeTimeout = 30 * time.Second
+
+// defaultDialTimeout bounds the client-side Dial ctx so a stuck
+// Tversion negotiation fails fast with a dial-timeout error rather than
+// silently hanging. Overridable via [WithDialTimeout].
+const defaultDialTimeout = 5 * time.Second
+
+// deadlineSafetyMargin is subtracted from [testing.TB.Deadline] when
+// deriving the serve timeout so tb.Cleanup has time to run before the
+// testing framework force-kills the test. Matches the spirit of
+// net/http/httptest.Server.Close (give teardown a breath).
+const deadlineSafetyMargin = 100 * time.Millisecond
+
 // config captures the resolved harness configuration.
 //
-// serverMsize and clientMsize use a zero-value "sentinel" convention:
-// 0 means "no override supplied by the caller, use defaultMsize on that
-// side". Options never write 0 explicitly — WithMsize always writes the
-// caller's value to BOTH fields.
+// serverMsize, clientMsize, serveTimeout, and dialTimeout use a
+// zero-value "sentinel" convention: 0 means "no override supplied by the
+// caller, use the harness default". Options never write 0 explicitly —
+// WithMsize always writes the caller's value to BOTH msize fields, and
+// WithServeTimeout / WithDialTimeout only write their respective field.
 type config struct {
-	serverOpts  []server.Option
-	clientOpts  []client.Option
-	serverMsize uint32
-	clientMsize uint32
-	parentCtx   context.Context
+	serverOpts   []server.Option
+	clientOpts   []client.Option
+	serverMsize  uint32
+	clientMsize  uint32
+	serveTimeout time.Duration
+	dialTimeout  time.Duration
+	parentCtx    context.Context
 }
 
 // newConfig returns a config with harness defaults: empty option slices,
@@ -92,6 +112,25 @@ func WithMsize(n uint32) Option {
 	}
 }
 
+// WithServeTimeout overrides the default server-side serve ctx timeout
+// (30 s). Pass a larger value for slow-CI / -race / breakpoint-debugging
+// sessions, or pass 0 to fall back to the harness default.
+//
+// When the surrounding [testing.TB.Deadline] is closer than the supplied
+// duration, Pair still honours it (minus a small safety margin) so
+// tb.Cleanup runs before the testing framework force-kills the test.
+func WithServeTimeout(d time.Duration) Option {
+	return func(c *config) { c.serveTimeout = d }
+}
+
+// WithDialTimeout overrides the default client Dial ctx timeout (5 s).
+// Useful when the underlying transport or Tversion negotiation path
+// runs under -race / -cpu=1 and the default would false-positive. Pass
+// 0 to fall back to the harness default.
+func WithDialTimeout(d time.Duration) Option {
+	return func(c *config) { c.dialTimeout = d }
+}
+
 // WithCtx sets the parent context used to derive the server's serve ctx
 // and the client's Dial ctx. Cancelling the parent unblocks the server
 // goroutine spawned by [Pair].
@@ -125,19 +164,26 @@ func discardLogger() *slog.Logger {
 // the client-side half. Returns the live *server.Server and *client.Conn
 // so tests can drive from either side.
 //
-// Teardown is registered via tb.Cleanup: the client is Close()d, the
-// server ctx is cancelled, the client net.Pipe half is closed, and the
-// server goroutine is drained. Callers do NOT need to track a cleanup
-// closure themselves.
+// Teardown is registered via tb.Cleanup: the client is Close()d (which
+// closes its pipe half), the derived server ctx is cancelled, the
+// server-side net.Pipe half is closed, and the server goroutine is
+// drained. Callers do NOT need to track a cleanup closure themselves.
 //
 // The harness applies sensible defaults:
 //   - msize = 65536 on both sides (bounds test allocations)
 //   - discard logger on both sides (keeps -v output readable)
-//   - 30 s server ctx deadline (fail-fast on serve-loop hangs)
-//   - 5 s dial ctx deadline (fail-fast on Tversion negotiation hangs)
+//   - 30 s server ctx timeout (fail-fast on serve-loop hangs)
+//   - 5 s dial ctx timeout (fail-fast on Tversion negotiation hangs)
+//
+// When [testing.TB.Deadline] reports a deadline closer than the serve
+// timeout, Pair shortens the serve ctx to fire just before that deadline
+// so tb.Cleanup can run before the testing framework force-kills the
+// test.
 //
 // Caller-supplied options (via WithServerOpts / WithClientOpts) are
 // appended after the harness defaults, so caller overrides always win.
+// Timeout overrides via [WithServeTimeout] / [WithDialTimeout] replace
+// the defaults outright.
 //
 // A nil root is a programming error and is surfaced by [server.New],
 // not by Pair — the harness does not second-guess server.New's contract.
@@ -166,7 +212,27 @@ func Pair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, *cli
 
 	srv := server.New(root, serverOpts...)
 
-	srvCtx, srvCancel := context.WithTimeout(cfg.parentCtx, 30*time.Second)
+	serveTimeout := cfg.serveTimeout
+	if serveTimeout == 0 {
+		serveTimeout = defaultServeTimeout
+	}
+	// Shorten the serve timeout when the testing framework itself has a
+	// nearer deadline, leaving a small margin so tb.Cleanup runs before
+	// the outer deadline fires. Deadline is exposed only on *testing.T
+	// (not on the TB interface, and not on *testing.B / *testing.F), so
+	// narrow via type assertion.
+	type deadliner interface {
+		Deadline() (time.Time, bool)
+	}
+	if dl, ok := tb.(deadliner); ok {
+		if d, have := dl.Deadline(); have {
+			if remaining := time.Until(d) - deadlineSafetyMargin; remaining > 0 && remaining < serveTimeout {
+				serveTimeout = remaining
+			}
+		}
+	}
+
+	srvCtx, srvCancel := context.WithTimeout(cfg.parentCtx, serveTimeout)
 	srvDone := make(chan struct{})
 	go func() {
 		defer close(srvDone)
@@ -183,7 +249,11 @@ func Pair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, *cli
 	}
 	clientOpts = append(clientOpts, cfg.clientOpts...)
 
-	dialCtx, dialCancel := context.WithTimeout(cfg.parentCtx, 5*time.Second)
+	dialTimeout := cfg.dialTimeout
+	if dialTimeout == 0 {
+		dialTimeout = defaultDialTimeout
+	}
+	dialCtx, dialCancel := context.WithTimeout(cfg.parentCtx, dialTimeout)
 	defer dialCancel()
 
 	cli, err := client.Dial(dialCtx, cliNC, clientOpts...)
