@@ -6,16 +6,18 @@ import (
 	"github.com/dotwaffle/ninep/proto"
 )
 
-// inflightMap tracks per-tag response channels for requests awaiting
-// replies. Mirrors server/flush.go's inflightMap shape but stores
-// chan proto.Message (cap 1) instead of *requestCtx.
+// inflightMap tracks per-tag response state for requests awaiting replies.
+// Mirrors server/flush.go's inflightMap shape but stores *requestEntry,
+// not *requestCtx (server) — the client side has no per-request context
+// machinery; the entry just carries a cap-1 response chan and, for the
+// 24-03 zero-copy Rread path, an optional caller-supplied dst slice.
 //
-// Chan-type rationale (plan 19-03 objective): proto.Message is an interface
-// holding a pointer-to-concrete-type (e.g. *proto.Rread). A
-// `chan proto.Message` already transports the pointer at zero extra
-// indirection; `chan *proto.Message` (pointer-to-interface) adds a level
-// with no benefit and makes the register→deliver→unregister invariants
-// harder to reason about.
+// Entry-type rationale (24-03 / D-05): pre-24-03 the value type was
+// chan proto.Message direct. Replacing it with a *requestEntry adds one
+// pointer indirection per lookup but lets the read loop's Rread fast
+// path consult entry.dst without a second map probe — and keeps the
+// register / deliver / unregister contract byte-identical for non-ZC
+// callers (roundTrip, flushAndWait).
 //
 // Per D-04 (19-CONTEXT): RWMutex-guarded map; read goroutine takes RLock
 // for the per-frame lookup; caller goroutines take Lock for register /
@@ -24,24 +26,95 @@ import (
 // BEFORE returning the tag to the allocator.
 type inflightMap struct {
 	mu      sync.RWMutex
-	entries map[proto.Tag]chan proto.Message
+	entries map[proto.Tag]*requestEntry
+}
+
+// requestEntry is the inflight map's value type. Pre-24-03 the map stored
+// `chan proto.Message` directly; the indirection through *requestEntry
+// adds the optional dst slice + n out-parameter for the zero-copy Rread
+// path described in 24-RESEARCH.md §Pattern B and 24-CONTEXT.md D-05.
+//
+// Invariants (all of which existed pre-24-03 for the ch field; dst/n are
+// new and additive):
+//
+//   - ch is cap-1; deliver's send is non-blocking by tag-serialization
+//     invariant (one outstanding deliver per tag at a time).
+//   - dst == nil && n == nil on non-ZC requests (registered via register).
+//   - dst != nil && n != nil on ZC requests (registered via registerZC) —
+//     both fields are set together or not at all.
+//   - Entries are short-lived: register → deliver → unregister within one
+//     roundTrip call. There is no concurrent reader/writer on entry
+//     fields outside the read loop's single deliver call.
+//
+// The read loop's Rread fast path (read_loop.go) writes payload bytes
+// into dst[:count] and sets *n = int(count) BEFORE calling deliver, so
+// the caller observes consistent (n, sentinel-msg) state when its
+// receive on entry.ch unblocks.
+type requestEntry struct {
+	ch  chan proto.Message
+	dst []byte
+	n   *int
 }
 
 // newInflightMap returns an empty inflightMap.
 func newInflightMap() *inflightMap {
-	return &inflightMap{entries: make(map[proto.Tag]chan proto.Message)}
+	return &inflightMap{entries: make(map[proto.Tag]*requestEntry)}
 }
 
-// register allocates a cap-1 response chan and stores it under tag. The
-// returned chan is the caller's receive end; the read goroutine delivers
-// into it via deliver. Cap-1 guarantees the read goroutine's send in
-// deliver never blocks (research §4 Pitfall 3).
+// register allocates a cap-1 response chan and stores a non-ZC entry
+// under tag. The returned chan is the caller's receive end; the read
+// goroutine delivers into it via deliver. Cap-1 guarantees the read
+// goroutine's send in deliver never blocks (research §4 Pitfall 3).
+//
+// Contract is unchanged from pre-24-03: callers (roundTrip / flushAndWait)
+// see no behavior change. The added *requestEntry indirection is internal.
 func (im *inflightMap) register(tag proto.Tag) chan proto.Message {
 	ch := make(chan proto.Message, 1)
+	entry := &requestEntry{ch: ch}
 	im.mu.Lock()
-	im.entries[tag] = ch
+	im.entries[tag] = entry
 	im.mu.Unlock()
 	return ch
+}
+
+// registerZC allocates a cap-1 response chan and stores a zero-copy entry
+// under tag. The read loop's Rread fast path (read_loop.go) will copy
+// the response payload directly into dst[:count] and set *n = int(count)
+// before posting a sentinel R-message (rreadSentinelOK) on the returned
+// chan. This avoids both the proto.Rread.Data alloc inside DecodeFrom
+// AND the result-copy in Conn.Read — see 24-03-PLAN §objective.
+//
+// dst and n MUST both be non-nil; len(dst) MUST be >= the requested
+// Tread.count. If the server returns more than len(dst) bytes (Pitfall
+// 1 in 24-RESEARCH.md), the read loop treats it as a protocol error and
+// shuts the Conn down rather than silently truncating.
+//
+// Caller owns dst for the duration of the round trip; do NOT release dst
+// back to any pool until ch has delivered (or the Conn has shut down).
+func (im *inflightMap) registerZC(tag proto.Tag, dst []byte, n *int) chan proto.Message {
+	ch := make(chan proto.Message, 1)
+	entry := &requestEntry{ch: ch, dst: dst, n: n}
+	im.mu.Lock()
+	im.entries[tag] = entry
+	im.mu.Unlock()
+	return ch
+}
+
+// lookup returns the entry registered for tag, or nil. The read loop
+// consults this before allocating an R-message via newRMessage so that
+// the zero-copy Rread fast path can be taken when entry.dst != nil.
+//
+// Safety of using the returned pointer after the RLock is released:
+// the register / unregister pair serializes via the cap-1 ch — unregister
+// only runs after the caller has received from ch, and the read loop's
+// sole deliver call for this tag happens-before the caller's unregister.
+// So as long as the read loop is the sole reader of entry.dst / entry.n
+// (which it is — only the Rread fast path writes them), no concurrent
+// mutation is possible.
+func (im *inflightMap) lookup(tag proto.Tag) *requestEntry {
+	im.mu.RLock()
+	defer im.mu.RUnlock()
+	return im.entries[tag]
 }
 
 // deliver posts msg to the chan registered under tag. Non-blocking per the
@@ -68,8 +141,8 @@ func (im *inflightMap) register(tag proto.Tag) chan proto.Message {
 func (im *inflightMap) deliver(tag proto.Tag, msg proto.Message) {
 	im.mu.RLock()
 	defer im.mu.RUnlock()
-	ch := im.entries[tag]
-	if ch == nil {
+	entry := im.entries[tag]
+	if entry == nil {
 		// Late delivery after unregister (ctx cancel / shutdown race) or
 		// an unregistered tag from a misbehaving server. Reclaim the
 		// cache slot before dropping.
@@ -77,7 +150,7 @@ func (im *inflightMap) deliver(tag proto.Tag, msg proto.Message) {
 		return
 	}
 	select {
-	case ch <- msg:
+	case entry.ch <- msg:
 	default:
 		// Unreachable under correct Phase 19 usage — cap-1 chan +
 		// tag-serialization (free-list handoff) means the slot is free.
@@ -102,8 +175,8 @@ func (im *inflightMap) unregister(tag proto.Tag) {
 func (im *inflightMap) cancelAll() {
 	im.mu.Lock()
 	defer im.mu.Unlock()
-	for tag, ch := range im.entries {
-		close(ch)
+	for tag, entry := range im.entries {
+		close(entry.ch)
 		delete(im.entries, tag)
 	}
 }
