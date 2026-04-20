@@ -86,20 +86,20 @@ func (s *Session) Conn(ctx context.Context) (*Conn, error) {
 		if err == nil {
 			var c *Conn
 			c, err = Dial(ctx, nc, s.opts...)
-				if err == nil {
-					if s.onReconnect != nil {
-						if err = s.onReconnect(ctx, c); err != nil {
-							_ = c.Close()
-						}
+			if err == nil {
+				if s.onReconnect != nil {
+					if err = s.onReconnect(ctx, c); err != nil {
+						_ = c.Close()
 					}
-					if err == nil {
-						s.conn = c
-						s.mu.Unlock()
-						return c, nil
-					}
-				} else {
-					_ = nc.Close()
 				}
+				if err == nil {
+					s.conn = c
+					s.mu.Unlock()
+					return c, nil
+				}
+			} else {
+				_ = nc.Close()
+			}
 		}
 
 		s.mu.Unlock()

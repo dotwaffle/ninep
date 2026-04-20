@@ -8,8 +8,9 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9u"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
-	// "go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // instrumentationName is the OTel instrumentation scope name used for all
@@ -63,6 +64,83 @@ func (c *Conn) probeOTel(cfg *config) {
 			c.meterEnabled = counter.Enabled(context.Background())
 		}
 	}
+}
+
+func (c *Conn) startSpan(ctx context.Context, opName string, msg proto.Message) (context.Context, trace.Span) {
+	if !c.tracerRecording {
+		return ctx, trace.SpanFromContext(ctx)
+	}
+
+	opts := []trace.SpanStartOption{
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("rpc.system.name", "9p"),
+			attribute.String("rpc.method", opName),
+			attribute.String("ninep.protocol", c.dialect.String()),
+		),
+	}
+
+	if fid, ok := fidFromMessage(msg); ok {
+		opts = append(opts, trace.WithAttributes(attribute.Int64("ninep.fid", int64(fid))))
+	}
+
+	return c.tracer.Start(ctx, opName, opts...)
+}
+
+func (c *Conn) recordRequest(ctx context.Context, msg proto.Message) {
+	if !c.meterEnabled {
+		return
+	}
+
+	var reqBytes proto.ByteCounter
+	if err := msg.EncodeTo(&reqBytes); err == nil {
+		c.inst.reqSize.Add(ctx, int64(reqBytes))
+	}
+}
+
+func (c *Conn) recordResponse(ctx context.Context, opType proto.MessageType, elapsed float64, resp proto.Message) {
+	if !c.meterEnabled {
+		return
+	}
+
+	opt, ok := c.opNameAttrs[opType]
+	if !ok {
+		opt = metric.WithAttributes(attribute.String("rpc.method", opType.String()))
+	}
+	c.inst.duration.Record(ctx, elapsed, opt)
+
+	if resp != nil {
+		var respBytes proto.ByteCounter
+		if err := resp.EncodeTo(&respBytes); err == nil {
+			c.inst.respSize.Add(ctx, int64(respBytes))
+		}
+	}
+}
+
+func (c *Conn) recordZCResponse(ctx context.Context, opType proto.MessageType, elapsed float64, n int) {
+	if !c.meterEnabled {
+		return
+	}
+
+	opt, ok := c.opNameAttrs[opType]
+	if !ok {
+		opt = metric.WithAttributes(attribute.String("rpc.method", opType.String()))
+	}
+	c.inst.duration.Record(ctx, elapsed, opt)
+	c.inst.respSize.Add(ctx, int64(n))
+}
+
+func (c *Conn) recordError(span trace.Span, err error) {
+	if !c.tracerRecording || err == nil {
+		return
+	}
+	span.SetStatus(codes.Error, err.Error())
+	span.RecordError(err)
+}
+
+func isErrorResponse(msg proto.Message) bool {
+	t := msg.Type()
+	return t == proto.TypeRlerror || t == proto.TypeRerror
 }
 
 // buildOpNameAttrs returns a per-T-message-type metric.MeasurementOption map

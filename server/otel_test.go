@@ -71,9 +71,10 @@ func setupOTelTest(t *testing.T) (client net.Conn, spanExporter *tracetest.InMem
 	t.Helper()
 
 	tp, spanExporter := otelutil.NewTestTracerProvider(t)
-	metricReader = sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(metricReader))
-	t.Cleanup(func() { _ = mp.Shutdown(t.Context()) })
+	// We use sdkmetric.ManualReader in the signature for concrete type access
+	// in existing tests, but we can still use otelutil to get the provider.
+	mp, reader := otelutil.NewTestMeterProvider(t)
+	metricReader = reader.(*sdkmetric.ManualReader)
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
@@ -410,9 +411,8 @@ func TestOTelMiddlewareConnectionGauge(t *testing.T) {
 	t.Parallel()
 
 	tp, _ := otelutil.NewTestTracerProvider(t)
-	metricReader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(metricReader))
-	t.Cleanup(func() { _ = mp.Shutdown(t.Context()) })
+	mp, reader := otelutil.NewTestMeterProvider(t)
+	metricReader := reader.(*sdkmetric.ManualReader)
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
