@@ -19,7 +19,7 @@ func NewTestTracerProvider(tb testing.TB) (*trace.TracerProvider, *tracetest.InM
 }
 
 // NewTestMeterProvider returns a MeterProvider with a manual reader.
-func NewTestMeterProvider(tb testing.TB) (*metric.MeterProvider, metric.Reader) {
+func NewTestMeterProvider(tb testing.TB) (*metric.MeterProvider, *metric.ManualReader) {
 	tb.Helper()
 	reader := metric.NewManualReader()
 	mp := metric.NewMeterProvider(metric.WithReader(reader))
