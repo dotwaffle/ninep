@@ -53,6 +53,74 @@ func (n *trackingNode) Lookup(_ context.Context, _ string) (Node, error) {
 	return f, nil
 }
 
+// stableGoroutineBaseline samples runtime.NumGoroutine() repeatedly and
+// returns the minimum observed value.
+//
+// Server-package tests run alongside many t.Parallel() siblings (300+ tests in
+// the binary, each spawning handler/listener goroutines). runtime.NumGoroutine
+// is process-global, so a single sample captures the concurrent world, not
+// just our test. Taking the minimum of several samples filters out transient
+// spikes from sibling-test activity, giving a conservative "lower bound" for
+// the population we care about (our own goroutines + steady-state sibling
+// load).
+func stableGoroutineBaseline(t *testing.T) int {
+	t.Helper()
+	const samples = 10
+	const interval = 20 * time.Millisecond
+
+	runtime.GC()
+	time.Sleep(interval)
+
+	minCount := runtime.NumGoroutine()
+	for range samples - 1 {
+		time.Sleep(interval)
+		runtime.GC()
+		if n := runtime.NumGoroutine(); n < minCount {
+			minCount = n
+		}
+	}
+	return minCount
+}
+
+// assertNoGoroutineLeak polls runtime.NumGoroutine() for up to timeout, taking
+// the minimum observed count. It reports a leak if the minimum exceeds
+// baseline+tolerance -- meaning the population never drained to the baseline
+// even across the full polling window.
+//
+// This pattern is robust against process-global noise from parallel sibling
+// tests: those tests' goroutines appear and vanish on their own clock, so any
+// sample-moment is a blend of "our goroutines" and "sibling goroutines in
+// flight". The MINIMUM over many samples approximates the steady-state count,
+// filtering out siblings that are transiently busy. Compare against the same
+// minimum-sampled baseline (see stableGoroutineBaseline) to isolate the delta
+// attributable to the test under examination.
+//
+// Precedent: client.TestClient_Close_GoroutineLeak (smaller-scale version of
+// this loop in a less-parallel package).
+func assertNoGoroutineLeak(t *testing.T, baseline, tolerance int, timeout time.Duration) {
+	t.Helper()
+	const interval = 50 * time.Millisecond
+
+	deadline := time.Now().Add(timeout)
+	minCount := int(^uint(0) >> 1) // max int
+	for {
+		runtime.GC()
+		time.Sleep(interval)
+		n := runtime.NumGoroutine()
+		if n < minCount {
+			minCount = n
+		}
+		if minCount <= baseline+tolerance {
+			return // drained to within tolerance; not a leak
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("goroutine leak: baseline=%d, min observed after drain=%d (delta=%d, tolerance=%d)",
+				baseline, minCount, minCount-baseline, tolerance)
+			return
+		}
+	}
+}
+
 func TestDisconnectCleanup_ClunksAllFids(t *testing.T) {
 	t.Parallel()
 
@@ -288,6 +356,11 @@ func TestServerSurvivesDisconnect(t *testing.T) {
 // same clock, introducing noise that has nothing to do with this test's
 // connection lifecycle. Serial execution isolates the delta to just rapid
 // connect/disconnect cycles (precedent: client.TestClient_Close_GoroutineLeak).
+//
+// Even without t.Parallel() here, the server test binary has hundreds of
+// concurrent t.Parallel() tests running. We use stableGoroutineBaseline and
+// assertNoGoroutineLeak (both minimum-of-many-samples) to filter out the
+// process-global noise so the signal reflects our own connection lifecycle.
 func TestRapidConnectDisconnect(t *testing.T) {
 	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
 	root := newDirNode(rootQID)
@@ -297,10 +370,7 @@ func TestRapidConnectDisconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
-	// Warm up the runtime to stabilize goroutine count.
-	runtime.GC()
-	time.Sleep(10 * time.Millisecond)
-	baseGoroutines := runtime.NumGoroutine()
+	baseGoroutines := stableGoroutineBaseline(t)
 
 	const cycles = 50
 	var active atomic.Int32
@@ -345,18 +415,10 @@ func TestRapidConnectDisconnect(t *testing.T) {
 		}
 	}
 
-	// Allow time for goroutine cleanup.
-	time.Sleep(100 * time.Millisecond)
-	runtime.GC()
-	time.Sleep(100 * time.Millisecond)
-
-	finalGoroutines := runtime.NumGoroutine()
-	// Allow reasonable tolerance for runtime goroutines.
-	tolerance := 10
-	if finalGoroutines > baseGoroutines+tolerance {
-		t.Errorf("goroutine leak: before=%d, after=%d (tolerance=%d)",
-			baseGoroutines, finalGoroutines, tolerance)
-	}
+	// Poll until goroutine count drains to within tolerance of baseline, or
+	// the 3s window expires. Uses minimum-of-samples to filter sibling-test
+	// noise (see assertNoGoroutineLeak doc comment).
+	assertNoGoroutineLeak(t, baseGoroutines, 10, 3*time.Second)
 }
 
 // Compile-time checks.

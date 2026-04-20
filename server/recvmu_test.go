@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"net"
-	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -209,13 +208,16 @@ func TestRecvMuWorkerLifecycle(t *testing.T) {
 
 	// This subtest does NOT call t.Parallel() because runtime.NumGoroutine()
 	// is a process-global count — parallel sibling (sub)tests introduce noise
-	// unrelated to this test's server-conn lifecycle. Serial execution
-	// isolates the delta. Precedent: client.TestClient_Close_GoroutineLeak.
+	// unrelated to this test's server-conn lifecycle. Serial execution within
+	// the parent reduces (but does not eliminate) that noise: the parent
+	// TestRecvMuWorkerLifecycle IS t.Parallel, so other top-level parallel
+	// tests are still spawning/draining goroutines during our sample window.
+	// We use stableGoroutineBaseline + assertNoGoroutineLeak (both
+	// minimum-of-many-samples, defined in cleanup_test.go) to filter out that
+	// process-global noise so the signal reflects our own connection
+	// lifecycle. Precedent: client.TestClient_Close_GoroutineLeak.
 	t.Run("CleanExitOnDisconnect", func(t *testing.T) {
-		// Warm up to stabilise goroutine count.
-		runtime.GC()
-		time.Sleep(10 * time.Millisecond)
-		baseGoroutines := runtime.NumGoroutine()
+		baseGoroutines := stableGoroutineBaseline(t)
 
 		rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
 		root := newRecvmuBlockingNode(rootQID)
@@ -271,16 +273,10 @@ func TestRecvMuWorkerLifecycle(t *testing.T) {
 
 		_ = server.Close()
 
-		// Allow time for goroutine cleanup.
-		time.Sleep(100 * time.Millisecond)
-		runtime.GC()
-		time.Sleep(100 * time.Millisecond)
-
-		finalGoroutines := runtime.NumGoroutine()
-		if finalGoroutines > baseGoroutines+10 {
-			t.Errorf("goroutine leak: before=%d, after=%d (tolerance=10)",
-				baseGoroutines, finalGoroutines)
-		}
+		// Poll until goroutine count drains to within tolerance of
+		// baseline, or the 3s window expires. Uses minimum-of-samples
+		// to filter sibling-test noise.
+		assertNoGoroutineLeak(t, baseGoroutines, 10, 3*time.Second)
 	})
 
 	t.Run("SpawnsSuccessorAfterDispatch", func(t *testing.T) {
