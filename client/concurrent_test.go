@@ -37,13 +37,13 @@ func TestClient_Concurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var errCount atomic.Int64
-	for g := 0; g < numG; g++ {
+	for g := range numG {
 		wg.Add(1)
 		go func(gid int) {
 			defer wg.Done()
 			// Each goroutine owns fids [100+gid*iters, 100+gid*iters+iters).
 			baseFid := proto.Fid(100 + gid*iters)
-			for i := 0; i < iters; i++ {
+			for i := range iters {
 				fid := baseFid + proto.Fid(i)
 				_, err := cli.Walk(ctx, rootFid, fid, []string{"hello.txt"})
 				if err != nil {
@@ -111,7 +111,7 @@ func TestClient_TagReuse_Stress(t *testing.T) {
 	}
 
 	// Sequential: 1000 Walk+Clunk cycles. After each, inflight MUST be 0.
-	for i := 0; i < seqIters; i++ {
+	for i := range seqIters {
 		fid := proto.Fid(1 + i%500) // reuse fids to stress allocator churn
 		_, err := cli.Walk(ctx, rootFid, fid, []string{"hello.txt"})
 		if err != nil {
@@ -136,12 +136,12 @@ func TestClient_TagReuse_Stress(t *testing.T) {
 	// or a panic on duplicate map keys.
 	var wg sync.WaitGroup
 	var errCount atomic.Int64
-	for g := 0; g < concG; g++ {
+	for g := range concG {
 		wg.Add(1)
 		go func(gid int) {
 			defer wg.Done()
 			baseFid := proto.Fid(10000 + gid*concIters)
-			for i := 0; i < concIters; i++ {
+			for i := range concIters {
 				fid := baseFid + proto.Fid(i)
 				_, err := cli.Walk(ctx, rootFid, fid, []string{"hello.txt"})
 				if err != nil {
@@ -191,14 +191,14 @@ func TestClient_Concurrent_Close(t *testing.T) {
 	errs := make([]error, numG)
 	started := make(chan struct{}, numG)
 
-	for g := 0; g < numG; g++ {
+	for g := range numG {
 		wg.Add(1)
 		go func(gid int) {
 			defer wg.Done()
 			started <- struct{}{}
 			// Tight loop of Walk+Clunk until either we hit an error
 			// (Close fired) or we've run enough iterations.
-			for i := 0; i < 10000; i++ {
+			for i := range 10000 {
 				fid := proto.Fid(1000 + gid*10000 + i)
 				_, err := cli.Walk(ctx, rootFid, fid, []string{"hello.txt"})
 				if err != nil {
@@ -216,7 +216,7 @@ func TestClient_Concurrent_Close(t *testing.T) {
 
 	// Wait for all goroutines to start, then give them a brief window to
 	// get a real op in-flight.
-	for i := 0; i < numG; i++ {
+	for range numG {
 		<-started
 	}
 	time.Sleep(10 * time.Millisecond)

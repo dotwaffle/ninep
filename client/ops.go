@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/dotwaffle/ninep/proto"
@@ -182,10 +183,8 @@ func expectRType(msg proto.Message, wantTypes ...proto.MessageType) error {
 		return errors.New("client: nil response")
 	}
 	got := msg.Type()
-	for _, w := range wantTypes {
-		if got == w {
-			return nil
-		}
+	if slices.Contains(wantTypes, got) {
+		return nil
 	}
 	return fmt.Errorf("client: unexpected response type %v", got)
 }

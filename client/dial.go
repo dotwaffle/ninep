@@ -148,10 +148,7 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
 	}
 
 	// 6. msize = min(client proposal, server Rversion.Msize). Floor at 256.
-	negotiated := cfg.msize
-	if rver.Msize < negotiated {
-		negotiated = rver.Msize
-	}
+	negotiated := min(rver.Msize, cfg.msize)
 	if negotiated < minMsize {
 		return nil, fmt.Errorf("%w: negotiated %d < %d", ErrMsizeTooSmall, negotiated, minMsize)
 	}

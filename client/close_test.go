@@ -37,7 +37,7 @@ func TestClient_Close_UnblocksCallers(t *testing.T) {
 	go func() {
 		// Do a busy loop of ops; one of them will land in respCh just as
 		// Close fires.
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			fid := proto.Fid(100 + i)
 			_, err := cli.Walk(ctx, proto.Fid(0), fid, []string{"hello.txt"})
 			if err != nil {
@@ -91,7 +91,7 @@ func TestClient_Close_IdempotentFromMultipleGoroutines(t *testing.T) {
 	const N = 10
 	var wg sync.WaitGroup
 	errs := make([]error, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -133,7 +133,7 @@ func TestClient_Close_GoroutineLeak(t *testing.T) {
 	}
 
 	// A few ops to exercise the caller/respCh path.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		fid := proto.Fid(100 + i)
 		if _, err := cli.Walk(ctx, proto.Fid(0), fid, []string{"hello.txt"}); err != nil {
 			cleanup()
@@ -150,7 +150,7 @@ func TestClient_Close_GoroutineLeak(t *testing.T) {
 
 	// Allow a grace window for goroutines to actually exit scheduler-side.
 	// runtime.Gosched + GC keeps this deterministic under -race.
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		runtime.GC()
 		time.Sleep(25 * time.Millisecond)
 		if runtime.NumGoroutine() <= baseline+1 {

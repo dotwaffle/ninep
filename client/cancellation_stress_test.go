@@ -93,7 +93,7 @@ func TestClient_Cancellation_Stress(t *testing.T) {
 	}()
 
 	var wg sync.WaitGroup
-	for g := 0; g < numG; g++ {
+	for g := range numG {
 		wg.Add(1)
 		go func(gid int) {
 			defer wg.Done()
@@ -101,7 +101,7 @@ func TestClient_Cancellation_Stress(t *testing.T) {
 			// deterministic per goroutine (aids debugging) while still
 			// giving the aggregate a random mix.
 			r := rand.New(rand.NewPCG(uint64(gid), uint64(gid)*0x9E3779B97F4A7C15))
-			for i := 0; i < iters; i++ {
+			for i := range iters {
 				mode := r.IntN(4)
 				opCtx, opCancel := context.WithCancel(parent)
 
@@ -156,7 +156,7 @@ func TestClient_Cancellation_Stress(t *testing.T) {
 
 	// Drain scheduler so server/client goroutines actually exit before
 	// the leak check. Mirrors TestClient_Close_GoroutineLeak's poll loop.
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		runtime.GC()
 		time.Sleep(50 * time.Millisecond)
 		if runtime.NumGoroutine() <= baseline+5 {

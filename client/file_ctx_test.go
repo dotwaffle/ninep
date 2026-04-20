@@ -462,7 +462,7 @@ func TestFile_ReadCtx_MutexInvariance(t *testing.T) {
 	// Spawn 10 goroutines alternating Read + ReadCtx. Each reads 1 byte
 	// so the 12-byte file is consumed quickly; we don't care about
 	// specific byte ordering, only race-freedom.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		i := i
 		go func() {

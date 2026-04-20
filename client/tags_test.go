@@ -18,7 +18,7 @@ func TestTagAllocator_Seed(t *testing.T) {
 	stop := make(chan struct{})
 
 	seen := make(map[proto.Tag]bool, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		tag, err := ta.acquire(ctx, stop)
 		if err != nil {
 			t.Fatalf("acquire(%d) err = %v", i, err)
@@ -197,7 +197,7 @@ func TestTagAllocator_NoTagExcluded(t *testing.T) {
 	ctx := context.Background()
 	stop := make(chan struct{})
 
-	for i := 0; i < maxMaxInflight; i++ {
+	for i := range maxMaxInflight {
 		tag, err := ta.acquire(ctx, stop)
 		if err != nil {
 			t.Fatalf("acquire(%d): %v", i, err)
@@ -226,10 +226,10 @@ func TestTagAllocator_Stress_TagReuse(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(workers)
-	for w := 0; w < workers; w++ {
+	for range workers {
 		go func() {
 			defer wg.Done()
-			for i := 0; i < iterations; i++ {
+			for range iterations {
 				tag, err := ta.acquire(ctx, stop)
 				if err != nil {
 					t.Errorf("acquire: %v", err)

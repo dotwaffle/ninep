@@ -157,7 +157,6 @@ func TestDial_VersionMismatch_Garbage(t *testing.T) {
 		{name: "unknown-future", version: "9P99.z"},
 		{name: "empty", version: ""},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cliNC, srvNC := net.Pipe()

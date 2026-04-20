@@ -68,7 +68,7 @@ func TestFidAllocator_ReuseCapBounded(t *testing.T) {
 	}
 
 	// Release 2000 synthetic fids. Excess beyond reuseCacheSize must drop.
-	for i := 0; i < 2000; i++ {
+	for i := range 2000 {
 		fa.release(proto.Fid(1000 + i))
 	}
 
@@ -147,10 +147,10 @@ func TestFidAllocator_Concurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(workers)
-	for w := 0; w < workers; w++ {
+	for range workers {
 		go func() {
 			defer wg.Done()
-			for i := 0; i < iterations; i++ {
+			for range iterations {
 				fid, err := fa.acquire()
 				if err != nil {
 					t.Errorf("acquire: %v", err)
@@ -183,7 +183,7 @@ func TestFidAllocator_Concurrent(t *testing.T) {
 func TestFidAllocator_LeakStress_1000Cycles(t *testing.T) {
 	fa := newFidAllocator()
 
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		fid, err := fa.acquire()
 		if err != nil {
 			t.Fatalf("acquire iteration %d: %v", i, err)

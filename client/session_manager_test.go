@@ -110,7 +110,7 @@ func TestSession_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
 	conns := make([]*Conn, numGoroutines)
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		go func(i int) {
 			defer wg.Done()
 			c, err := s.Conn(ctx)
@@ -274,10 +274,10 @@ func TestSession_Flaky(t *testing.T) {
 	const numGoroutines = 20
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		go func(i int) {
 			defer wg.Done()
-			for j := 0; j < 5; j++ {
+			for j := range 5 {
 				_, err := s.Conn(ctx)
 				if err != nil {
 					if ctx.Err() != nil {

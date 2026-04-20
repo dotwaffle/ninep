@@ -433,7 +433,7 @@ func TestClient_Xattr_NoFidLeak(t *testing.T) {
 	defer cancel()
 
 	const iters = 250
-	for i := 0; i < iters; i++ {
+	for i := range iters {
 		if err := f.XattrSet(ctx, "user.iter", []byte{byte(i)}, 0); err != nil {
 			t.Fatalf("iter %d: XattrSet: %v", i, err)
 		}

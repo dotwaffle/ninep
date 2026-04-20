@@ -190,12 +190,12 @@ func TestFileReadAt_Concurrent_Race(t *testing.T) {
 	const iters = 100
 	var wg sync.WaitGroup
 	errs := make(chan error, G*iters)
-	for gi := 0; gi < G; gi++ {
+	for gi := range G {
 		wg.Add(1)
 		go func(seed int64) {
 			defer wg.Done()
 			r := rand.New(rand.NewSource(seed))
-			for i := 0; i < iters; i++ {
+			for range iters {
 				// Pick offset in [0, 12); read 1..(12-off) bytes.
 				off := r.Intn(len(content))
 				maxLen := len(content) - off
@@ -210,7 +210,7 @@ func TestFileReadAt_Concurrent_Race(t *testing.T) {
 					errs <- errors.New("short read")
 					return
 				}
-				for k := 0; k < n; k++ {
+				for k := range n {
 					if buf[k] != content[off+k] {
 						errs <- errors.New("mismatch")
 						return

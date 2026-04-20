@@ -146,11 +146,9 @@ func TestMaxConnections_ConcurrentAccept(t *testing.T) {
 		cc, sc := net.Pipe()
 		clients[i] = cc
 		servers[i] = sc
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			srv.ServeConn(ctx, sc)
-		}()
+		})
 	}
 
 	var negWg sync.WaitGroup

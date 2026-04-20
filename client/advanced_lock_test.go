@@ -30,7 +30,6 @@ func TestClient_LockType_Values(t *testing.T) {
 		{"LockUnlock", client.LockUnlock, proto.LockTypeUnlck},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			if uint8(c.got) != uint8(c.want) {
@@ -176,7 +175,7 @@ func TestClient_Lock_CtxCancel_SendsUnlock(t *testing.T) {
 	t.Parallel()
 	root, locker := buildLockerRoot(t)
 	// Queue enough Blocked statuses that ctx deadline fires before OK.
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		locker.queueStatus(proto.LockStatusBlocked)
 	}
 
@@ -447,7 +446,7 @@ func TestClient_GetLock_NotSupportedOnU(t *testing.T) {
 func TestClient_Lock_NoFidLeak(t *testing.T) {
 	root, locker := buildLockerRoot(t)
 	// Queue Blocked, Blocked, OK for every iteration (3 * 1000 statuses).
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		locker.queueStatus(proto.LockStatusBlocked, proto.LockStatusBlocked, proto.LockStatusOK)
 	}
 
@@ -466,7 +465,7 @@ func TestClient_Lock_NoFidLeak(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		if err := f.Lock(ctx, client.LockWrite); err != nil {
 			t.Fatalf("iter %d Lock: %v", i, err)
 		}

@@ -100,7 +100,7 @@ func TestClient_Link_NoFidLeak(t *testing.T) {
 	}
 
 	const iters = 100
-	for i := 0; i < iters; i++ {
+	for i := range iters {
 		name := "link-" + intName(i)
 		if err := cli.Link(ctx, "/src", "/"+name); err != nil {
 			t.Fatalf("Link iter %d: %v", i, err)

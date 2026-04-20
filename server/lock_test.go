@@ -571,7 +571,7 @@ func TestLock_Concurrent(t *testing.T) {
 
 	// Build G connections using twoConnPair (which produces 2 at a time).
 	conns := make([]*connPair, 0, numConns)
-	for i := 0; i < numConns/2; i++ {
+	for range numConns / 2 {
 		a, b := twoConnPair(t, root)
 		conns = append(conns, a, b)
 	}
@@ -594,13 +594,12 @@ func TestLock_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(len(conns))
 	for i, cp := range conns {
-		i, cp := i, cp
 		go func() {
 			defer wg.Done()
 			clientID := string(rune('A' + i))
 			// Unique tag range per connection to avoid tag collisions.
 			baseTag := proto.Tag(100 + i*100)
-			for k := 0; k < numCycles; k++ {
+			for k := range numCycles {
 				tag := baseTag + proto.Tag(k*2)
 				// Try to acquire WrLck (may succeed or be Blocked).
 				sendMessage(t, cp.client, tag, &p9l.Tlock{

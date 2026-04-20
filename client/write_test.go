@@ -128,7 +128,7 @@ func TestWriteT_ConcurrentCalls_NoInterleaving(t *testing.T) {
 	readerDone := make(chan struct{})
 	go func() {
 		defer close(readerDone)
-		for i := 0; i < N; i++ {
+		for range N {
 			var sizeBuf [4]byte
 			if _, err := io.ReadFull(srvNC, sizeBuf[:]); err != nil {
 				return
@@ -147,11 +147,9 @@ func TestWriteT_ConcurrentCalls_NoInterleaving(t *testing.T) {
 
 	// 50 writer goroutines.
 	var wg sync.WaitGroup
-	for i := 0; i < N; i++ {
+	for i := range N {
 		i := i
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			tw := &proto.Twrite{
 				Fid:    proto.Fid(10 + i),
 				Offset: uint64(i),
@@ -160,7 +158,7 @@ func TestWriteT_ConcurrentCalls_NoInterleaving(t *testing.T) {
 			if err := cli.writeT(proto.Tag(100+i), tw); err != nil {
 				t.Errorf("writeT[%d]: %v", i, err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -227,7 +225,7 @@ func TestWriteT_NetBuffersReslice(t *testing.T) {
 	readerDone := make(chan struct{})
 	go func() {
 		defer close(readerDone)
-		for i := 0; i < N; i++ {
+		for range N {
 			var sizeBuf [4]byte
 			if _, err := io.ReadFull(srvNC, sizeBuf[:]); err != nil {
 				return
@@ -241,7 +239,7 @@ func TestWriteT_NetBuffersReslice(t *testing.T) {
 		}
 	}()
 
-	for i := 0; i < N; i++ {
+	for i := range N {
 		tw := &proto.Twalk{Fid: proto.Fid(i), NewFid: proto.Fid(i + N), Names: nil}
 		if err := cli.writeT(proto.Tag(i+1), tw); err != nil {
 			t.Fatalf("writeT[%d]: %v", i, err)

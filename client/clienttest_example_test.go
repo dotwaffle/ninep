@@ -163,7 +163,7 @@ func Example_concurrentAccess() {
 
 	const parallel = 4
 	var wg sync.WaitGroup
-	for i := 0; i < parallel; i++ {
+	for i := range parallel {
 		clone, err := f.Clone(context.Background())
 		if err != nil {
 			continue
@@ -255,7 +255,7 @@ func TestExample_ConcurrentAccess_ViaClienttest(t *testing.T) {
 	// demo).
 	const parallel = 4
 	var wg sync.WaitGroup
-	for i := 0; i < parallel; i++ {
+	for i := range parallel {
 		clone, err := f.Clone(t.Context())
 		if err != nil {
 			t.Fatalf("clone %d: %v", i, err)

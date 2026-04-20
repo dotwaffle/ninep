@@ -29,7 +29,6 @@ func TestSplitPath(t *testing.T) {
 		{"trailing_dot", "/a/./b", []string{"a", "b"}},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := splitPath(tc.in)

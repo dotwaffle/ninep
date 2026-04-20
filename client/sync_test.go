@@ -104,7 +104,7 @@ func TestFileSync_IsIdempotent(t *testing.T) {
 	}
 	defer func() { _ = f.Close() }()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := f.Sync(); err != nil {
 			t.Errorf("Sync #%d: %v, want nil", i+1, err)
 		}

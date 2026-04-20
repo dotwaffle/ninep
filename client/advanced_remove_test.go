@@ -128,7 +128,7 @@ func TestClient_Remove_NoFidLeak(t *testing.T) {
 	d := &testRUDir{gen: gen}
 	d.Init(gen.Next(proto.QTDIR), d)
 	// Pre-seed 50 files so we have things to remove.
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		f := &memfs.MemFile{}
 		f.Init(gen.Next(proto.QTFILE), f)
 		d.AddChild(intName(i), f.EmbeddedInode())
@@ -146,7 +146,7 @@ func TestClient_Remove_NoFidLeak(t *testing.T) {
 	// Record fid-reuse depth before the loop; after the loop it must not
 	// drift below that (it may grow as fids cycle, but no fid must be
 	// stranded).
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		if err := cli.Remove(ctx, "/"+intName(i)); err != nil {
 			t.Fatalf("Remove iter %d: %v", i, err)
 		}

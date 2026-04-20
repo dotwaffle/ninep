@@ -164,7 +164,7 @@ func TestRecvMuWorkerLifecycle(t *testing.T) {
 		// (at most one) successor parked on recvMu. So workerCount
 		// must always be <= 2.
 		var maxObserved int32
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			n := c.workerCount.Load()
 			if n > maxObserved {
 				maxObserved = n

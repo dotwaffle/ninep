@@ -76,7 +76,7 @@ func TestCache_PutOnFullDropsToGC(t *testing.T) {
 	// original four was dropped). We don't assert which one — FIFO channel
 	// order just means the first Cap-sized Puts stayed; the last was lost.
 	seen := make(map[*proto.Tread]bool)
-	for i := 0; i < Cap; i++ {
+	for range Cap {
 		m := c.Get()
 		seen[m] = true
 	}
@@ -100,10 +100,10 @@ func TestCache_ConcurrentGetPut(t *testing.T) {
 	go func() {
 		var wg sync.WaitGroup
 		wg.Add(goroutines)
-		for g := 0; g < goroutines; g++ {
+		for g := range goroutines {
 			go func(id int) {
 				defer wg.Done()
-				for i := 0; i < iters; i++ {
+				for i := range iters {
 					m := c.Get()
 					m.Fid = proto.Fid(id)
 					m.NewFid = proto.Fid(i)

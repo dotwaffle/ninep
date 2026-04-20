@@ -90,7 +90,7 @@ func TestInflightMap_ConcurrentRegisterDeliver(t *testing.T) {
 	}
 	pairs := make([]pair, N)
 	var wg sync.WaitGroup
-	for i := 0; i < N; i++ {
+	for i := range N {
 		pairs[i] = pair{tag: proto.Tag(i + 1), msg: &proto.Rclunk{}}
 	}
 
@@ -104,10 +104,7 @@ func TestInflightMap_ConcurrentRegisterDeliver(t *testing.T) {
 	results := make(map[proto.Tag]proto.Message)
 	var resultsMu sync.Mutex
 	for _, p := range pairs {
-		p := p
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			got, ok := <-channels[p.tag]
 			if !ok {
 				t.Errorf("tag %d: chan closed before deliver", p.tag)
@@ -116,18 +113,16 @@ func TestInflightMap_ConcurrentRegisterDeliver(t *testing.T) {
 			resultsMu.Lock()
 			results[p.tag] = got
 			resultsMu.Unlock()
-		}()
+		})
 	}
 
 	// Deliverer: scrambled order.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		// Reverse order.
 		for i := N - 1; i >= 0; i-- {
 			im.deliver(pairs[i].tag, pairs[i].msg)
 		}
-	}()
+	})
 
 	wg.Wait()
 

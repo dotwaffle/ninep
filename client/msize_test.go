@@ -249,7 +249,7 @@ func TestClient_Msize_RreadOversized(t *testing.T) {
 	// Wait briefly for readLoop to process the oversized response.
 	// Then a second op MUST return ErrClosed.
 	var secondErr error
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		time.Sleep(10 * time.Millisecond)
 		_, secondErr = cli.Raw().Attach(ctx, proto.Fid(1), "me", "")
 		if secondErr != nil && errors.Is(secondErr, client.ErrClosed) {

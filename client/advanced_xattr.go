@@ -233,10 +233,7 @@ func (f *File) XattrSet(ctx context.Context, name string, data []byte, flags uin
 	}
 	off := uint64(0)
 	for off < size {
-		end := off + uint64(chunk)
-		if end > size {
-			end = size
-		}
+		end := min(off+uint64(chunk), size)
 		n, err := r.Write(ctx, clone.fid, off, data[off:end])
 		if err != nil {
 			// Must still Clunk to release server state; the server

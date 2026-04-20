@@ -37,7 +37,6 @@ func TestWithMsize(t *testing.T) {
 		{"large", 4 << 20, 4 << 20},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			c := newConfig()
@@ -65,7 +64,6 @@ func TestWithMaxInflight(t *testing.T) {
 		{"way-above-clamps", 1 << 20, 65534},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			c := newConfig()

@@ -173,13 +173,13 @@ func TestReadLoop_UsesBytesReaderReset(t *testing.T) {
 
 	const N = 50
 	channels := make([]chan proto.Message, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		channels[i] = cli.inflight.register(proto.Tag(i + 100))
 	}
 
 	// Encode all Rclunks into a buffer, write once.
 	var frames bytes.Buffer
-	for i := 0; i < N; i++ {
+	for i := range N {
 		if err := p9l.Encode(&frames, proto.Tag(i+100), &proto.Rclunk{}); err != nil {
 			t.Fatalf("encode Rclunk: %v", err)
 		}
@@ -188,7 +188,7 @@ func TestReadLoop_UsesBytesReaderReset(t *testing.T) {
 		_, _ = srvNC.Write(frames.Bytes())
 	}()
 
-	for i := 0; i < N; i++ {
+	for i := range N {
 		select {
 		case msg := <-channels[i]:
 			if _, ok := msg.(*proto.Rclunk); !ok {
@@ -614,7 +614,7 @@ func TestReadAt_ZeroCopy_CancelRace(t *testing.T) {
 
 	const iters = 100
 	const content = "hello world\n"
-	for i := 0; i < iters; i++ {
+	for i := range iters {
 		f, err := pair.cli.OpenFile(pair.ctx, "hello.txt", 0 /*O_RDONLY*/, 0)
 		if err != nil {
 			t.Fatalf("iter %d: OpenFile: %v", i, err)
@@ -710,7 +710,7 @@ func TestReadAt_ZeroCopy_CloseMidCopy_Race(t *testing.T) {
 	const sentinelByte = 0xCC
 	payload := []byte("hello world\n")
 
-	for i := 0; i < iters; i++ {
+	for i := range iters {
 		// Per-iter Conn so Close is the natural teardown signal; no
 		// shared state across iters keeps the race surface clean.
 		cliNC, srvNC := net.Pipe()

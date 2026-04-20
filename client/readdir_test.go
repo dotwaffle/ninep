@@ -233,7 +233,7 @@ func TestFileReadDir_MultipleTreaddir(t *testing.T) {
 	root := memfs.NewDir(gen)
 	const nEntries = 200
 	wantNames := make([]string, 0, nEntries)
-	for i := 0; i < nEntries; i++ {
+	for i := range nEntries {
 		name := randomishName(i)
 		root.AddStaticFile(name, "")
 		wantNames = append(wantNames, name)
