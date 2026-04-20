@@ -12,6 +12,8 @@ import (
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
 	"github.com/dotwaffle/ninep/proto/p9u"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // protocol identifies the negotiated 9P dialect for a Conn. Stored on Conn
@@ -129,6 +131,13 @@ type Conn struct {
 	// parent ctx as-is" — matches Linux v9fs parity per Pitfall 9.
 	// Set at Dial time via [WithRequestTimeout]; immutable after Dial.
 	requestTimeout time.Duration
+
+	tracer          trace.Tracer
+	meter           metric.Meter
+	inst            *otelInstruments
+	opNameAttrs     map[proto.MessageType]metric.MeasurementOption
+	tracerRecording bool
+	meterEnabled    bool
 }
 
 // isClosed returns true once signalShutdown has fired. Non-blocking

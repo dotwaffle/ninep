@@ -177,6 +177,17 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
 		lockPollSchedule: cfg.lockPollSchedule,
 		requestTimeout:   cfg.requestTimeout,
 	}
+
+	c.probeOTel(cfg)
+	if c.tracerRecording {
+		c.tracer = cfg.tracerProvider.Tracer(instrumentationName)
+	}
+	if c.meterEnabled {
+		c.meter = cfg.meterProvider.Meter(instrumentationName)
+		c.inst = newOTelInstruments(cfg.meterProvider)
+		c.opNameAttrs = buildOpNameAttrs()
+	}
+
 	c.readerWG.Add(1)
 	go c.readLoop()
 	return c, nil

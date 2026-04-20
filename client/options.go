@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/dotwaffle/ninep/proto"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Option configures a Conn. Options are applied by the Conn constructor in the
@@ -27,6 +29,8 @@ type config struct {
 	// only of the non-ctx io.* methods; the *Ctx variants honor the
 	// caller-supplied ctx verbatim.
 	requestTimeout time.Duration
+	tracerProvider trace.TracerProvider
+	meterProvider  metric.MeterProvider
 }
 
 // Defaults for Conn configuration.
@@ -168,4 +172,16 @@ func WithRequestTimeout(d time.Duration) Option {
 		}
 		c.requestTimeout = d
 	}
+}
+
+// WithTracer sets the TracerProvider used by the Conn for instrumentation.
+// If nil, tracing is disabled.
+func WithTracer(tp trace.TracerProvider) Option {
+	return func(c *config) { c.tracerProvider = tp }
+}
+
+// WithMeter sets the MeterProvider used by the Conn for instrumentation.
+// If nil, metrics are disabled.
+func WithMeter(mp metric.MeterProvider) Option {
+	return func(c *config) { c.meterProvider = mp }
 }
