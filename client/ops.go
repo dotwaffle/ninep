@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
 	"github.com/dotwaffle/ninep/proto/p9u"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // roundTrip is the shared dispatch helper used by every op method on *Conn.
@@ -44,11 +46,24 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 	if c.isClosed() {
 		return nil, ErrClosed
 	}
+
+	opName := msg.Type().String()
+	ctx, span := c.startSpan(ctx, opName, msg)
+	defer span.End()
+
+	if c.meterEnabled {
+		c.inst.activeReqs.Add(ctx, 1)
+		defer c.inst.activeReqs.Add(ctx, -1)
+	}
+	c.recordRequest(ctx, msg)
+
 	c.callerWG.Add(1)
 	defer c.callerWG.Done()
 
+	start := time.Now()
 	tag, err := c.tags.acquire(ctx, c.closeCh)
 	if err != nil {
+		c.recordError(span, err)
 		return nil, err
 	}
 
@@ -66,12 +81,15 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 		// consistent shutdown signal rather than the transport-specific
 		// io.ErrClosedPipe / net.ErrClosed wrapper.
 		if c.isClosed() {
+			c.recordError(span, ErrClosed)
 			return nil, ErrClosed
 		}
+		c.recordError(span, err)
 		return nil, err
 	}
 
 	// Wait for response.
+	var resp proto.Message
 	select {
 	case r, ok := <-respCh:
 		if !ok {
@@ -88,12 +106,13 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 			// is idempotent (map delete of a missing key).
 			c.inflight.unregister(tag)
 			c.tags.release(tag)
+			c.recordError(span, ErrClosed)
 			return nil, ErrClosed
 		}
 		// Unregister BEFORE release — pitfall 2.
 		c.inflight.unregister(tag)
 		c.tags.release(tag)
-		return r, nil
+		resp = r
 	case <-ctx.Done():
 		// Phase 22 (CLIENT-04, D-01): delegate to flushAndWait, which
 		// sends Tflush(tag) and owns the unregister + release of both
@@ -101,12 +120,24 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 		// returned error wraps ctx.Err() so errors.Is(err,
 		// context.Canceled) / context.DeadlineExceeded work; on the
 		// Rflush-first path, ErrFlushed is also in the chain (D-05).
-		return c.flushAndWait(ctx, tag, respCh)
+		r, ferr := c.flushAndWait(ctx, tag, respCh)
+		if ferr != nil {
+			c.recordError(span, ferr)
+		}
+		return r, ferr
 	case <-c.closeCh:
 		c.inflight.unregister(tag)
 		c.tags.release(tag)
+		c.recordError(span, ErrClosed)
 		return nil, ErrClosed
 	}
+
+	elapsed := time.Since(start).Seconds()
+	c.recordResponse(ctx, msg.Type(), elapsed, resp)
+	if isErrorResponse(resp) {
+		span.SetStatus(codes.Error, opName)
+	}
+	return resp, nil
 }
 
 // toError translates an R-message into a *Error if it represents a
@@ -347,11 +378,23 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 	if c.isClosed() {
 		return 0, ErrClosed
 	}
+
+	opName := "Tread"
+	ctx, span := c.startSpan(ctx, opName, &proto.Tread{Fid: fid, Offset: offset, Count: count})
+	defer span.End()
+
+	if c.meterEnabled {
+		c.inst.activeReqs.Add(ctx, 1)
+		defer c.inst.activeReqs.Add(ctx, -1)
+	}
+
 	c.callerWG.Add(1)
 	defer c.callerWG.Done()
 
+	start := time.Now()
 	tag, err := c.tags.acquire(ctx, c.closeCh)
 	if err != nil {
+		c.recordError(span, err)
 		return 0, err
 	}
 
@@ -362,44 +405,34 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 	entry := c.inflight.registerZC(tag, dst)
 
 	req := &proto.Tread{Fid: fid, Offset: offset, Count: count}
+	c.recordRequest(ctx, req)
 	if err := c.writeT(tag, req); err != nil {
 		// Pitfall 2 ordering preserved on error paths: unregister, then release.
 		c.inflight.unregister(tag)
 		c.tags.release(tag)
 		if c.isClosed() {
+			c.recordError(span, ErrClosed)
 			return 0, ErrClosed
 		}
+		c.recordError(span, err)
 		return 0, err
 	}
 
 	// Wait for response, ctx cancel, or shutdown — same shape as roundTrip.
+	var resp proto.Message
 	select {
 	case r, ok := <-entry.ch:
 		if !ok {
 			// cancelAll fired during shutdown.
 			c.inflight.unregister(tag)
 			c.tags.release(tag)
+			c.recordError(span, ErrClosed)
 			return 0, ErrClosed
 		}
 		// Unregister BEFORE release — Pitfall 2.
 		c.inflight.unregister(tag)
 		c.tags.release(tag)
-		// r is one of: rreadSentinelOK (zero-copy fast path success) or
-		// an error R-message (Rlerror/Rerror). Defensive type-check at the
-		// end catches a misbehaving server returning Rread (cached path)
-		// or some other unexpected R-type — never panic, always return err.
-		if r == rreadSentinelOK {
-			return entry.n, nil
-		}
-		if err := toError(r); err != nil {
-			return 0, err
-		}
-		// Defensive: server (or test mock) sent a non-sentinel Rread or
-		// some other unexpected R-type on this tag. Recycle the message
-		// and surface a descriptive error.
-		err := fmt.Errorf("client: readAtZeroCopy: expected Rread sentinel or Rlerror/Rerror, got %v", r.Type())
-		putCachedRMsg(r)
-		return 0, err
+		resp = r
 	case <-ctx.Done():
 		// Phase 22 (CLIENT-04, D-01): delegate to flushAndWait, which
 		// owns the unregister + release of `tag` (and any flushTag it
@@ -410,12 +443,38 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 		// message internally (origCh drain arms), and rreadSentinelOK
 		// is a no-op there per the sentinel guard in putCachedRMsg.
 		_, ferr := c.flushAndWait(ctx, tag, entry.ch)
+		if ferr != nil {
+			c.recordError(span, ferr)
+		}
 		return 0, ferr
 	case <-c.closeCh:
 		c.inflight.unregister(tag)
 		c.tags.release(tag)
+		c.recordError(span, ErrClosed)
 		return 0, ErrClosed
 	}
+
+	elapsed := time.Since(start).Seconds()
+	// r is one of: rreadSentinelOK (zero-copy fast path success) or
+	// an error R-message (Rlerror/Rerror). Defensive type-check at the
+	// end catches a misbehaving server returning Rread (cached path)
+	// or some other unexpected R-type — never panic, always return err.
+	if resp == rreadSentinelOK {
+		c.recordZCResponse(ctx, proto.TypeTread, elapsed, entry.n)
+		return entry.n, nil
+	}
+	if err := toError(resp); err != nil {
+		c.recordError(span, err)
+		return 0, err
+	}
+
+	// Defensive: server (or test mock) sent a non-sentinel Rread or
+	// some other unexpected R-type on this tag. Recycle the message
+	// and surface a descriptive error.
+	err = fmt.Errorf("client: readAtZeroCopy: expected Rread sentinel or Rlerror/Rerror, got %v", resp.Type())
+	c.recordError(span, err)
+	putCachedRMsg(resp)
+	return 0, err
 }
 
 // Write writes data to fid starting at offset. Returns the number of bytes
