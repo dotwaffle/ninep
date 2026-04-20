@@ -207,9 +207,11 @@ func TestRecvMuWorkerLifecycle(t *testing.T) {
 		}
 	})
 
+	// This subtest does NOT call t.Parallel() because runtime.NumGoroutine()
+	// is a process-global count — parallel sibling (sub)tests introduce noise
+	// unrelated to this test's server-conn lifecycle. Serial execution
+	// isolates the delta. Precedent: client.TestClient_Close_GoroutineLeak.
 	t.Run("CleanExitOnDisconnect", func(t *testing.T) {
-		t.Parallel()
-
 		// Warm up to stabilise goroutine count.
 		runtime.GC()
 		time.Sleep(10 * time.Millisecond)

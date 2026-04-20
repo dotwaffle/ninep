@@ -283,9 +283,12 @@ func TestServerSurvivesDisconnect(t *testing.T) {
 	<-done2
 }
 
+// This test does NOT call t.Parallel() because runtime.NumGoroutine() is a
+// process-global count — parallel sibling tests spawn/drain goroutines on the
+// same clock, introducing noise that has nothing to do with this test's
+// connection lifecycle. Serial execution isolates the delta to just rapid
+// connect/disconnect cycles (precedent: client.TestClient_Close_GoroutineLeak).
 func TestRapidConnectDisconnect(t *testing.T) {
-	t.Parallel()
-
 	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
 	root := newDirNode(rootQID)
 
