@@ -70,3 +70,21 @@ jobs:
 
       - name: Stress tests (requestCtx race surface)
         run: go test -tags=stress -race -count=1 ./server/...
+
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: Run benchmarks
+        run: go test -v -bench=BenchmarkClient -run=^$ ./client/ | tee benchmarks.txt
+
+      - name: Process benchmarks
+        run: benchstat benchmarks.txt
