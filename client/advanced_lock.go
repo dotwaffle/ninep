@@ -131,6 +131,9 @@ type Lock struct {
 // mutex.
 //
 // Requires 9P2000.L; returns a wrapped [ErrNotSupported] on a .u Conn.
+//
+// Protocol Safety Warning: 9P2000.L locks are tied to the fid. Clunking
+// the fid releases all locks held via that fid.
 func (f *File) Lock(ctx context.Context, lt LockType) error {
 	if err := f.conn.requireDialect(protocolL, "Lock"); err != nil {
 		return err

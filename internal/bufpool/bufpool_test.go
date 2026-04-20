@@ -188,6 +188,49 @@ func TestGetStringBuf_OversizedNotPooled(t *testing.T) {
 	}
 }
 
+func TestGetStringBuf_BucketSizing(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		n       int
+		wantCap int
+	}{
+		{0, 128},
+		{100, 128},
+		{128, 128},
+		{129, 512},
+		{512, 512},
+		{513, 1024},
+		{1024, 1024},
+		{1025, 4096},
+		{4096, 4096},
+	}
+	for _, tc := range cases {
+		b := GetStringBuf(tc.n)
+		if cap(*b) != tc.wantCap {
+			t.Errorf("GetStringBuf(%d) cap=%d, want %d", tc.n, cap(*b), tc.wantCap)
+		}
+		PutStringBuf(b)
+	}
+}
+
+func TestReadMetrics(t *testing.T) {
+	// Reset counters isn't possible (package vars), so we check for increment.
+	m1 := ReadMetrics()
+
+	// Trigger msg miss.
+	_ = GetMsgBuf(PoolMaxBufSize * 2)
+	// Trigger string miss.
+	_ = GetStringBuf(8192)
+
+	m2 := ReadMetrics()
+	if m2.MsgBufMisses <= m1.MsgBufMisses {
+		t.Errorf("MsgBufMisses did not increment: %d -> %d", m1.MsgBufMisses, m2.MsgBufMisses)
+	}
+	if m2.StringBufMisses <= m1.StringBufMisses {
+		t.Errorf("StringBufMisses did not increment: %d -> %d", m1.StringBufMisses, m2.StringBufMisses)
+	}
+}
+
 func TestStringBufCycle_ZeroAllocs(t *testing.T) {
 	// Warm the pool.
 	for range 100 {

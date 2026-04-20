@@ -66,7 +66,11 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
 	// 1. Encode Tversion body into a cold-path buffer. No bufpool — this
 	//    runs once per Conn and keeping allocation explicit simplifies the
 	//    error-unwind paths that follow.
-	tver := &proto.Tversion{Msize: cfg.msize, Version: "9P2000.L"}
+	proposedVersion := "9P2000.L"
+	if cfg.version != "" {
+		proposedVersion = string(cfg.version)
+	}
+	tver := &proto.Tversion{Msize: cfg.msize, Version: proposedVersion}
 	body := new(bytes.Buffer)
 	if err := tver.EncodeTo(body); err != nil {
 		return nil, fmt.Errorf("client.Dial: encode Tversion: %w", err)
@@ -123,6 +127,10 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
 	// 5. Select codec + dialect per D-09. Bare "9P2000" maps to .u (Linux
 	//    v9fs kernel convention); "9P2000.u" maps to .u; "9P2000.L" maps to
 	//    .L; anything else is ErrVersionMismatch.
+	if cfg.version != "" && rver.Version != string(cfg.version) {
+		return nil, fmt.Errorf("%w: exact version match failed (requested %q, server returned %q)", ErrVersionMismatch, cfg.version, rver.Version)
+	}
+
 	var dialect protocol
 	var cc codec
 	switch rver.Version {

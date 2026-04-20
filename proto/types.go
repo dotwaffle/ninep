@@ -7,6 +7,15 @@ package proto
 // a multi-gigabyte allocation and OOM.
 const MaxDataSize = 1 << 24 // 16 MiB
 
+// Version represents a 9P protocol version string.
+type Version string
+
+// Version constants.
+const (
+	VersionL Version = "9P2000.L"
+	VersionU Version = "9P2000.u"
+)
+
 // Fid is a 32-bit handle identifying a file on the server, scoped to a
 // single 9P connection.
 type Fid uint32

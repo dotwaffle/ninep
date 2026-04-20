@@ -45,6 +45,8 @@ type MemFile struct {
 	mu   sync.RWMutex
 	Data []byte
 	Mode uint32 // POSIX permission bits; defaults to 0o644 if zero.
+	UID  uint32
+	GID  uint32
 }
 
 // Open implements server.NodeOpener. MemFile does not use per-open state;
@@ -95,19 +97,27 @@ func (f *MemFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, erro
 	}
 	return proto.Attr{
 		Mode:  mode,
+		UID:   f.UID,
+		GID:   f.GID,
 		Size:  uint64(len(f.Data)),
 		NLink: 1,
 	}, nil
 }
 
-// Setattr implements server.NodeSetattrer. It applies mode and size
-// changes when the corresponding bits are set in attr.Valid.
+// Setattr implements server.NodeSetattrer. It applies mode, size, and
+// ownership changes when the corresponding bits are set in attr.Valid.
 func (f *MemFile) Setattr(_ context.Context, attr proto.SetAttr) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if attr.Valid&proto.SetAttrMode != 0 {
 		f.Mode = attr.Mode
+	}
+	if attr.Valid&proto.SetAttrUID != 0 {
+		f.UID = attr.UID
+	}
+	if attr.Valid&proto.SetAttrGID != 0 {
+		f.GID = attr.GID
 	}
 	if attr.Valid&proto.SetAttrSize != 0 {
 		newSize := int(attr.Size)
@@ -130,6 +140,8 @@ type MemDir struct {
 	server.Inode
 	gen  *server.QIDGenerator
 	Mode uint32 // POSIX permission bits; defaults to 0o755 if zero.
+	UID  uint32
+	GID  uint32
 }
 
 // Open implements server.NodeOpener. MemDir does not use per-open state.
@@ -166,6 +178,8 @@ func (d *MemDir) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error
 	}
 	return proto.Attr{
 		Mode:  sIFDIR | mode,
+		UID:   d.UID,
+		GID:   d.GID,
 		NLink: uint64(2 + len(children)),
 	}, nil
 }

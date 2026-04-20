@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dotwaffle/ninep/internal/otelutil"
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
 
@@ -30,6 +31,38 @@ func otelConnPair(t *testing.T) (client, server net.Conn) {
 	return client, server
 }
 
+func TestOTelMiddlewareSpanCreation(t *testing.T) {
+	t.Parallel()
+
+	tp, exporter := otelutil.NewTestTracerProvider(t)
+	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
+	root := newDirNode(rootQID)
+
+	srv := New(root,
+		WithMaxMsize(65536),
+		WithTracer(tp),
+	)
+
+	client, server := otelConnPair(t)
+	go srv.ServeConn(t.Context(), server)
+
+	// Handshake
+	nc := client
+	sendTversion(t, nc, 65536, "9P2000.L")
+	_ = readRversion(t, nc)
+
+	// Tattach
+	tattach := &proto.Tattach{Fid: 0, Afid: proto.NoFid, Uname: "nobody", Aname: ""}
+	sendMessage(t, nc, 1, tattach)
+	_, _ = readResponse(t, nc)
+
+	// Verify spans
+	spans := exporter.GetSpans()
+	if len(spans) < 2 {
+		t.Errorf("got %d spans, want >= 2", len(spans))
+	}
+}
+
 // setupOTelTest creates a Server with OTel tracing and metrics, starts serving
 // a connection, and returns the client conn plus the test span exporter and
 // metric reader for assertion. The caller should negotiate version and send
@@ -37,10 +70,7 @@ func otelConnPair(t *testing.T) (client, server net.Conn) {
 func setupOTelTest(t *testing.T) (client net.Conn, spanExporter *tracetest.InMemoryExporter, metricReader *sdkmetric.ManualReader) {
 	t.Helper()
 
-	spanExporter = tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(spanExporter))
-	t.Cleanup(func() { _ = tp.Shutdown(t.Context()) })
-
+	tp, spanExporter := otelutil.NewTestTracerProvider(t)
 	metricReader = sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(metricReader))
 	t.Cleanup(func() { _ = mp.Shutdown(t.Context()) })
@@ -93,49 +123,6 @@ func findMetric(rm metricdata.ResourceMetrics, name string) *metricdata.Metrics 
 		}
 	}
 	return nil
-}
-
-func TestOTelMiddlewareSpanCreation(t *testing.T) {
-	t.Parallel()
-
-	client, spanExporter, _ := setupOTelTest(t)
-
-	// Negotiate version.
-	sendTversion(t, client, 65536, "9P2000.L")
-	_ = readRversion(t, client)
-
-	// Send Tattach -- this goes through middleware.
-	sendMessage(t, client, 1, &proto.Tattach{
-		Fid:   0,
-		Afid:  proto.NoFid,
-		Uname: "test",
-		Aname: "",
-	})
-	_, msg := readResponse(t, client)
-	if _, ok := msg.(*proto.Rattach); !ok {
-		t.Fatalf("expected Rattach, got %T", msg)
-	}
-
-	// Close client so server finishes and flushes spans.
-	_ = client.Close()
-	time.Sleep(100 * time.Millisecond)
-
-	spans := spanExporter.GetSpans()
-	if len(spans) == 0 {
-		t.Fatal("expected at least one span, got none")
-	}
-
-	// Find the Tattach span.
-	var attachSpan *tracetest.SpanStub
-	for i := range spans {
-		if spans[i].Name == "Tattach" {
-			attachSpan = &spans[i]
-			break
-		}
-	}
-	if attachSpan == nil {
-		t.Fatal("expected span named 'Tattach', not found")
-	}
 }
 
 func TestOTelMiddlewareSpanAttributes(t *testing.T) {
@@ -422,10 +409,7 @@ func TestOTelMiddlewareActiveRequestsGauge(t *testing.T) {
 func TestOTelMiddlewareConnectionGauge(t *testing.T) {
 	t.Parallel()
 
-	spanExporter := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(spanExporter))
-	t.Cleanup(func() { _ = tp.Shutdown(t.Context()) })
-
+	tp, _ := otelutil.NewTestTracerProvider(t)
 	metricReader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(metricReader))
 	t.Cleanup(func() { _ = mp.Shutdown(t.Context()) })

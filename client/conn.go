@@ -99,11 +99,11 @@ type Conn struct {
 	// escape.
 	encHdr [proto.HeaderSize]byte
 	// encBufsArr is the backing array for the net.Buffers slice used in
-	// writeT. Two entries suffice: hdr + body. Re-sliced on every call
-	// because net.Buffers.WriteTo mutates both len AND cap of its
-	// receiver on full consumption (see the framing helper godoc and
-	// ninep CLAUDE.md §Performance). Guarded by writeMu.
-	encBufsArr [2][]byte
+	// writeT. Three entries suffice: hdr + fixed body + payload. Re-sliced
+	// on every call because net.Buffers.WriteTo mutates both len AND cap
+	// of its receiver on full consumption (see the framing helper godoc
+	// and ninep CLAUDE.md §Performance). Guarded by writeMu.
+	encBufsArr [3][]byte
 
 	// closeCh is closed exactly once by closeOnce to signal shutdown to the
 	// read goroutine and any caller blocked in tagAllocator.acquire.

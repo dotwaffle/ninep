@@ -17,10 +17,10 @@
 //     bridge buffers and the decode-side message body. Buckets are sized
 //     1 KiB / 4 KiB / 64 KiB / 1 MiB to span the dynamic range of 9P
 //     traffic without mixing classes.
-//   - [GetStringBuf] / [PutStringBuf] -- a separate small-string scratch
-//     pool for proto.ReadString. 9P strings carry a uint16 length prefix,
-//     so most strings (names, paths, version, uname) fit comfortably in
-//     the 1 KiB initial cap.
+//   - [GetStringBuf] / [PutStringBuf] -- a separate bucketed pool for
+//     proto.ReadString. 9P strings carry a uint16 length prefix, so most
+//     strings (names, paths, version, uname) fit comfortably in the
+//     128B - 4KiB buckets.
 //
 // # Why *[]byte, not []byte
 //
@@ -63,7 +63,31 @@ package bufpool
 import (
 	"bytes"
 	"sync"
+	"sync/atomic"
 )
+
+// Metrics holds counters for pool activity.
+type Metrics struct {
+	// MsgBufMisses is the count of GetMsgBuf calls that exceeded PoolMaxBufSize
+	// and required a fresh allocation.
+	MsgBufMisses uint64
+	// StringBufMisses is the count of GetStringBuf calls that exceeded the
+	// largest bucket (4 KiB) and required a fresh allocation.
+	StringBufMisses uint64
+}
+
+var (
+	msgBufMisses    uint64
+	stringBufMisses uint64
+)
+
+// ReadMetrics returns a snapshot of the current pool metrics.
+func ReadMetrics() Metrics {
+	return Metrics{
+		MsgBufMisses:    atomic.LoadUint64(&msgBufMisses),
+		StringBufMisses: atomic.LoadUint64(&stringBufMisses),
+	}
+}
 
 // PoolMaxBufSize is the upper bound on pooled buffer capacity. Buffers
 // that grow above this cap are released to the GC on PutBuf rather than
@@ -109,12 +133,6 @@ func PutBuf(b *bytes.Buffer) {
 //   - 4 KiB:  small data reads (matches kernel page size, common FUSE unit)
 //   - 64 KiB: medium data reads / readdir fragments
 //   - 1 MiB:  msize-scale reads (matches PoolMaxBufSize and kernel cap)
-//
-// Without bucketing, a 7-byte Tclunk would claim a 1 MiB buffer from the
-// pool. Under GC pressure (sync.Pool drains every other cycle), the cost
-// of refilling 1 MiB buffers was the dominant source of seq_read_4k
-// throughput variance observed by the Q consumer — see the Q debug doc
-// "ninep-smallfile-seq4k-analysis.md" Target G for the measurement.
 var msgBucketSizes = [...]int{
 	1 << 10, // 1 KiB
 	1 << 12, // 4 KiB
@@ -124,15 +142,6 @@ var msgBucketSizes = [...]int{
 
 // msgBufBuckets holds one sync.Pool per size class. Each pool returns
 // a *[]byte whose cap is exactly msgBucketSizes[i].
-//
-// The pool stores *[]byte rather than []byte because sync.Pool boxes its
-// argument into an `any` interface; a slice header is larger than a word
-// and causes the boxing to allocate. Pooling a pointer avoids the box
-// alloc (see RESEARCH Pitfall: "Pool pointer not value").
-//
-// Each New closure hard-codes its size to keep the pools usable as a
-// composite literal (sync.Pool has an internal noCopy that forbids
-// returning pools by value from a factory function).
 var msgBufBuckets = [len(msgBucketSizes)]sync.Pool{
 	{New: func() any { b := make([]byte, 1<<10); return &b }},
 	{New: func() any { b := make([]byte, 1<<12); return &b }},
@@ -141,9 +150,7 @@ var msgBufBuckets = [len(msgBucketSizes)]sync.Pool{
 }
 
 // msgBucketFor returns the index of the smallest bucket whose capacity is
-// >= n, or -1 if n exceeds all buckets. Linear search over 4 entries;
-// the cost is negligible vs the alternative (pointer indirection + map
-// lookup) and the compiler tends to unroll it.
+// >= n, or -1 if n exceeds all buckets.
 func msgBucketFor(n int) int {
 	for i, size := range msgBucketSizes {
 		if n <= size {
@@ -155,12 +162,11 @@ func msgBucketFor(n int) int {
 
 // GetMsgBuf returns a pointer to a []byte with capacity >= n, drawn from
 // the smallest bucket that fits. If n exceeds PoolMaxBufSize, a fresh
-// buffer of size n is allocated (not pooled) so pool memory stays
-// proportional to steady-state traffic.
-// Callers MUST call PutMsgBuf(b) when finished (typically via defer).
+// buffer of size n is allocated (not pooled).
 func GetMsgBuf(n int) *[]byte {
 	idx := msgBucketFor(n)
 	if idx < 0 {
+		atomic.AddUint64(&msgBufMisses, 1)
 		b := make([]byte, n)
 		return &b
 	}
@@ -168,67 +174,81 @@ func GetMsgBuf(n int) *[]byte {
 }
 
 // PutMsgBuf returns b to its source bucket iff cap(*b) exactly matches a
-// bucket size. Buffers with caps outside the bucket set (e.g. oversized
-// fresh allocations from the GetMsgBuf > PoolMaxBufSize path, or buffers
-// resized by callers) are dropped to GC rather than polluting a bucket
-// with a mis-sized entry.
+// bucket size.
 func PutMsgBuf(b *[]byte) {
 	c := cap(*b)
-	// Bucket sizes are monotonically increasing; a buffer only re-pools if
-	// its cap exactly equals one of them.
-	for i, size := range msgBucketSizes {
-		if c == size {
-			// Reset length to full capacity so the next caller sees the
-			// full slice.
-			*b = (*b)[:c]
-			msgBufBuckets[i].Put(b)
-			return
-		}
+	switch c {
+	case 1 << 10: // 1 KiB
+		*b = (*b)[:c]
+		msgBufBuckets[0].Put(b)
+	case 1 << 12: // 4 KiB
+		*b = (*b)[:c]
+		msgBufBuckets[1].Put(b)
+	case 1 << 16: // 64 KiB
+		*b = (*b)[:c]
+		msgBufBuckets[2].Put(b)
+	case 1 << 20: // 1 MiB
+		*b = (*b)[:c]
+		msgBufBuckets[3].Put(b)
 	}
-	// cap does not match any bucket; drop.
 }
 
-// stringBufPool pools raw []byte scratch buffers for proto.ReadString.
-// Strings in 9P have a uint16 length prefix, so typical sizes are small
-// (names, paths, version strings, uname). Initial cap is 1024 bytes,
-// well below PoolMaxBufSize; a separate pool keeps the size class tight.
-var stringBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, 0, 1024)
-		return &b
-	},
+var stringBucketSizes = [...]int{
+	128,
+	512,
+	1024,
+	4096,
+}
+
+var stringBufBuckets = [len(stringBucketSizes)]sync.Pool{
+	{New: func() any { b := make([]byte, 0, 128); return &b }},
+	{New: func() any { b := make([]byte, 0, 512); return &b }},
+	{New: func() any { b := make([]byte, 0, 1024); return &b }},
+	{New: func() any { b := make([]byte, 0, 4096); return &b }},
+}
+
+func stringBucketFor(n int) int {
+	for i, size := range stringBucketSizes {
+		if n <= size {
+			return i
+		}
+	}
+	return -1
 }
 
 // GetStringBuf returns a pointer to a []byte suitable for use as a scratch
-// buffer for up to n bytes. The returned buffer is guaranteed to have
-// capacity >= n. If n exceeds PoolMaxBufSize, a fresh buffer is allocated
-// (not pooled). If a pooled buffer has insufficient capacity for n, it is
-// dropped and a fresh buffer of the required size is allocated; the fresh
-// buffer enters the pool on PutStringBuf (assuming it fits under the cap
-// guard), gradually growing the pool's effective size class.
-// Callers MUST call PutStringBuf(b) when finished.
-// The returned slice has length 0; callers reslice as needed.
+// buffer for up to n bytes. If n exceeds 4 KiB, a fresh buffer is allocated.
 func GetStringBuf(n int) *[]byte {
-	if n > PoolMaxBufSize {
+	idx := stringBucketFor(n)
+	if idx < 0 {
+		atomic.AddUint64(&stringBufMisses, 1)
 		b := make([]byte, 0, n)
 		return &b
 	}
-	b := stringBufPool.Get().(*[]byte)
+	b := stringBufBuckets[idx].Get().(*[]byte)
 	if cap(*b) < n {
-		// Pooled buffer too small. Drop it (let GC reclaim) and allocate
-		// one sized to n; caller will Put it back and subsequent callers
-		// will benefit from the larger size class.
 		nb := make([]byte, 0, n)
 		return &nb
 	}
+	*b = (*b)[:0]
 	return b
 }
 
-// PutStringBuf returns b to the pool iff cap(*b) <= PoolMaxBufSize.
+// PutStringBuf returns b to its source bucket iff cap(*b) matches a size class.
 func PutStringBuf(b *[]byte) {
-	if cap(*b) > PoolMaxBufSize {
-		return
+	c := cap(*b)
+	switch c {
+	case 128:
+		*b = (*b)[:0]
+		stringBufBuckets[0].Put(b)
+	case 512:
+		*b = (*b)[:0]
+		stringBufBuckets[1].Put(b)
+	case 1024:
+		*b = (*b)[:0]
+		stringBufBuckets[2].Put(b)
+	case 4096:
+		*b = (*b)[:0]
+		stringBufBuckets[3].Put(b)
 	}
-	*b = (*b)[:0]
-	stringBufPool.Put(b)
 }

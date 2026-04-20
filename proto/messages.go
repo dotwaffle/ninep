@@ -492,8 +492,10 @@ type Twrite struct {
 // Type returns TypeTwrite.
 func (m *Twrite) Type() MessageType { return TypeTwrite }
 
-// EncodeTo writes the Twrite body: fid[4] + offset[8] + count[4] + data[count].
-func (m *Twrite) EncodeTo(w io.Writer) error {
+// EncodeFixed implements Payloader. Writes fid[4] + offset[8] + count[4].
+// The client's outbound writer emits m.Data as a separate net.Buffers entry
+// via a single writev.
+func (m *Twrite) EncodeFixed(w io.Writer) error {
 	if err := WriteUint32(w, uint32(m.Fid)); err != nil {
 		return fmt.Errorf("encode twrite fid: %w", err)
 	}
@@ -502,6 +504,22 @@ func (m *Twrite) EncodeTo(w io.Writer) error {
 	}
 	if err := WriteUint32(w, uint32(len(m.Data))); err != nil {
 		return fmt.Errorf("encode twrite count: %w", err)
+	}
+	return nil
+}
+
+// Payload implements Payloader. Returns m.Data so the outbound writer
+// can place it directly into net.Buffers without an intermediate copy.
+func (m *Twrite) Payload() []byte { return m.Data }
+
+// EncodeTo writes the Twrite body: fid[4] + offset[8] + count[4] + data[count].
+//
+// Deprecation Note: for hot-path zero-copy writes, use EncodeFixed + Payload
+// instead. EncodeTo is preserved for legacy callers and tests that write
+// the full message body into a single buffer.
+func (m *Twrite) EncodeTo(w io.Writer) error {
+	if err := m.EncodeFixed(w); err != nil {
+		return err
 	}
 	if len(m.Data) > 0 {
 		if _, err := w.Write(m.Data); err != nil {

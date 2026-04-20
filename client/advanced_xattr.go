@@ -189,6 +189,9 @@ func (f *File) XattrGet(ctx context.Context, name string) ([]byte, error) {
 // via [WithMsize] or use [Raw.Txattrcreate] directly.
 //
 // Requires a 9P2000.L-negotiated Conn.
+//
+// Performance Note: XattrSet clones the current file internally to
+// preserve the fid's open/offset state. This consumes one transient fid.
 func (f *File) XattrSet(ctx context.Context, name string, data []byte, flags uint32) error {
 	if err := f.conn.requireDialect(protocolL, "XattrSet"); err != nil {
 		return err

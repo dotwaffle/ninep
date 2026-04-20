@@ -15,6 +15,7 @@ type Option func(*config)
 // mutate it only through Option values.
 type config struct {
 	msize            uint32
+	version          proto.Version
 	maxInflight      int
 	logger           *slog.Logger
 	lockPollSchedule []time.Duration
@@ -59,6 +60,17 @@ func newConfig() *config {
 		maxInflight: defaultMaxInflight,
 		logger:      slog.Default(),
 	}
+}
+
+// WithVersion sets the protocol version to negotiate during Dial. When set,
+// the client proposes this version and returns an error if the server
+// negotiates any other version (including lower versions). This is useful
+// for deterministic testing of protocol-specific logic.
+//
+// When not set, the client proposes the highest supported version
+// ([proto.VersionL]) and accepts whatever the server negotiates.
+func WithVersion(v proto.Version) Option {
+	return func(c *config) { c.version = v }
 }
 
 // WithMsize sets the proposed maximum message size. The default is 1 MiB

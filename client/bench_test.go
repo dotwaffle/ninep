@@ -44,6 +44,14 @@ func (f *benchFile) Read(_ context.Context, buf []byte, offset uint64) (int, err
 	return copy(buf, f.data[offset:end]), nil
 }
 
+func (f *benchFile) Write(_ context.Context, data []byte, offset uint64) (uint32, error) {
+	if offset >= uint64(len(f.data)) {
+		return 0, nil
+	}
+	end := min(int(offset)+len(data), len(f.data))
+	return uint32(copy(f.data[offset:end], data)), nil
+}
+
 func (f *benchFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {
 	return proto.Attr{Mode: 0o644, Size: uint64(len(f.data)), NLink: 1}, nil
 }
@@ -191,6 +199,60 @@ func BenchmarkClientRead_1M(b *testing.B) {
 				off := offsets[idx%numOffsets]
 				if _, err := f.ReadAt(dst, int64(off)); err != nil {
 					b.Fatalf("ReadAt: %v", err)
+				}
+				idx++
+			}
+		})
+	}
+}
+
+func BenchmarkClientWrite_4K(b *testing.B) {
+	const writeSize uint32 = 4096
+	const msize uint32 = 65536
+
+	for _, transport := range []string{"unix", "pipe"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			root := newBenchTree(b)
+			cli := newBenchClient(b, transport, root, msize)
+			f := benchOpenDataFile(b, cli)
+
+			src := make([]byte, writeSize)
+			offsets := preGeneratedOffsets(writeSize)
+
+			b.ReportAllocs()
+			b.SetBytes(int64(writeSize))
+			var idx int
+			for b.Loop() {
+				off := offsets[idx%numOffsets]
+				if _, err := f.WriteAt(src, int64(off)); err != nil {
+					b.Fatalf("WriteAt: %v", err)
+				}
+				idx++
+			}
+		})
+	}
+}
+
+func BenchmarkClientWrite_1M(b *testing.B) {
+	const writeSize uint32 = 1 << 20
+	const msize uint32 = 1 << 20
+
+	for _, transport := range []string{"unix", "pipe"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			root := newBenchTree(b)
+			cli := newBenchClient(b, transport, root, msize)
+			f := benchOpenDataFile(b, cli)
+
+			src := make([]byte, writeSize)
+			offsets := preGeneratedOffsets(writeSize)
+
+			b.ReportAllocs()
+			b.SetBytes(int64(writeSize))
+			var idx int
+			for b.Loop() {
+				off := offsets[idx%numOffsets]
+				if _, err := f.WriteAt(src, int64(off)); err != nil {
+					b.Fatalf("WriteAt: %v", err)
 				}
 				idx++
 			}
