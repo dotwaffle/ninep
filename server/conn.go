@@ -742,14 +742,19 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 
 	var tver proto.Tversion
 	if err := tver.DecodeFrom(bytes.NewReader(body)); err != nil {
-		c.logger.Warn("re-negotiation decode error", slog.Any("error", err))
+		c.logger.Warn("re-negotiation decode error; closing connection", slog.Any("error", err))
+		_ = c.nc.Close() // D-02: Fatal error policy
 		return
 	}
 
 	// Validate msize + select protocol via shared helper (D-SIMP-01).
 	res, err := c.negotiate(&tver)
 	if err != nil {
-		c.logger.Warn("re-negotiation msize too small", slog.Uint64("msize", uint64(tver.Msize)))
+		c.logger.Warn("re-negotiation msize too small; closing connection",
+			slog.Uint64("msize", uint64(tver.Msize)),
+			slog.Any("error", err),
+		)
+		_ = c.nc.Close() // D-02: Fatal error policy
 		return
 	}
 
@@ -757,7 +762,8 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 	// prevent interleaving with other dispatchers' writes (CR-01).
 	rver := &proto.Rversion{Msize: res.msize, Version: res.version}
 	if err := c.writeRaw(tag, rver); err != nil {
-		c.logger.Warn("re-negotiation send error", slog.Any("error", err))
+		c.logger.Warn("re-negotiation send error; closing connection", slog.Any("error", err))
+		_ = c.nc.Close() // D-02: Fatal error policy
 		return
 	}
 
