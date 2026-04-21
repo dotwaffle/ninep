@@ -35,7 +35,7 @@ func TestTversion_Stress(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			c1, c2 := net.Pipe()
-			defer c1.Close()
+			defer func() { _ = c1.Close() }()
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -79,7 +79,7 @@ func TestTversion_RateLimitStress(t *testing.T) {
 	srv := New(root)
 
 	c1, c2 := net.Pipe()
-	defer c1.Close()
+	defer func() { _ = c1.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go srv.ServeConn(ctx, c2)
@@ -130,7 +130,7 @@ func TestTversion_DrainTimeout(t *testing.T) {
 	srv := New(slowNode)
 
 	c1, c2 := net.Pipe()
-	defer c1.Close()
+	defer func() { _ = c1.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go srv.ServeConn(ctx, c2)

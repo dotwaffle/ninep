@@ -46,8 +46,7 @@ func TestHandleReVersion_FatalErrors(t *testing.T) {
 			_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
 			_, _, err := proto9PRead(client)
 			if err == nil {
-				// If we successfully read something, it might be a response we didn't expect,
-				// but we expect the connection to close.
+				t.Errorf("expected error/EOF after connection close, got nil")
 			}
 		}()
 
@@ -88,8 +87,8 @@ func TestHandleReVersion_FatalErrors(t *testing.T) {
 			defer close(done)
 			_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
 			_, _, err := proto9PRead(client)
-			if err != nil {
-				// Expected
+			if err == nil {
+				t.Errorf("expected error/EOF after connection close, got nil")
 			}
 		}()
 
