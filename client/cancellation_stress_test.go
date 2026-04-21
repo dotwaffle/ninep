@@ -78,30 +78,27 @@ func TestClient_Cancellation_Stress(t *testing.T) {
 
 	var observed cancellationStressCounters
 
-	// Observer goroutine fires cli.Close() 80ms after stress starts.
-	// 80ms is long enough for the 500 goroutines to spin up and saturate
-	// the tag allocator (maxInflight=64) while being short enough that
-	// many goroutines are still actively issuing ops when the close lands.
+	// Observer goroutine fires cli.Close() once a threshold of operations have started.
+	// This ensures we always hit the close path even on very fast machines where
+	// a hardcoded sleep would be too long.
 	closeFired := make(chan struct{})
-	var closeOnce atomic.Int32
-	go func() {
-		time.Sleep(80 * time.Millisecond)
-		if closeOnce.CompareAndSwap(0, 1) {
-			_ = cli.Close()
-			close(closeFired)
-		}
-	}()
-
+	startCount := atomic.Int32{}
+	const closeThreshold = 2500 // Fire close halfway through
+	
 	var wg sync.WaitGroup
 	for g := range numG {
 		wg.Add(1)
 		go func(gid int) {
 			defer wg.Done()
-			// Per-goroutine PCG seeded from gid so mode distribution is
-			// deterministic per goroutine (aids debugging) while still
-			// giving the aggregate a random mix.
 			r := rand.New(rand.NewPCG(uint64(gid), uint64(gid)*0x9E3779B97F4A7C15))
 			for i := range iters {
+				if startCount.Add(1) == closeThreshold {
+					go func() {
+						_ = cli.Close()
+						close(closeFired)
+					}()
+				}
+
 				mode := r.IntN(4)
 				opCtx, opCancel := context.WithCancel(parent)
 
