@@ -102,10 +102,12 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 			return &proto.Rread{Data: nil}
 		}
 		end := min(offset+uint64(m.Count), uint64(len(fs.xattrData)))
-		data := make([]byte, end-offset)
-		copy(data, fs.xattrData[offset:end])
+		count := end - offset
+		bufPtr := bufpool.GetMsgBuf(int(count))
+		buf := (*bufPtr)[:count]
+		copy(buf, fs.xattrData[offset:end])
 		fs.mu.Unlock()
-		return &proto.Rread{Data: data}
+		return &pooledRread{Rread: proto.Rread{Data: buf}, bufPtr: bufPtr}
 	}
 	fs.mu.Unlock()
 
@@ -333,18 +335,20 @@ func (c *conn) readdirSimple(ctx context.Context, fs *fidState, m *p9l.Treaddir,
 		fs.dirCached = true
 	}
 
+	// Borrow buffer from pool; wrapper Release() returns it after encode.
+	bufPtr := bufpool.GetMsgBuf(int(m.Count))
+	buf := (*bufPtr)[:m.Count]
+
 	// Find starting entry. Offset N means "entries after the one with cookie N",
 	// so start from index N (since cookie = index+1).
 	start := min(int(m.Offset), len(fs.dirCache))
 
-	remaining := fs.dirCache[start:]
-	// Copy dirents under lock to avoid races on the cached slice.
-	snapshot := make([]proto.Dirent, len(remaining))
-	copy(snapshot, remaining)
+	// Encode dirents directly from the cache into the pooled buffer while holding
+	// the lock. EncodeDirentsInto avoids the need for a full snapshot copy.
+	n, _ := EncodeDirentsInto(buf, fs.dirCache[start:])
 	fs.mu.Unlock()
 
-	data, _ := EncodeDirents(snapshot, m.Count)
-	return &p9l.Rreaddir{Data: data}
+	return &pooledRreaddir{Rreaddir: p9l.Rreaddir{Data: buf[:n]}, bufPtr: bufPtr}
 }
 
 // handleLcreate dispatches to NodeCreater, mutates fid to the new child in
@@ -839,10 +843,18 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 		if err != nil {
 			return c.errorMsg(errnoFromError(err))
 		}
-		var buf []byte
+		// Pre-calculate size to avoid multiple allocations in the append loop.
+		size := 0
 		for _, name := range names {
-			buf = append(buf, []byte(name)...)
-			buf = append(buf, 0)
+			size += len(name) + 1
+		}
+		buf := make([]byte, size)
+		curr := 0
+		for _, name := range names {
+			copy(buf[curr:], name)
+			curr += len(name)
+			buf[curr] = 0
+			curr++
 		}
 		xfs := &fidState{
 			node:      fs.node,

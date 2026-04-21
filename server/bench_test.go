@@ -449,6 +449,90 @@ func BenchmarkEncodeDirents(b *testing.B) {
 	}
 }
 
+// BenchmarkReaddir measures allocations and throughput for the readdirSimple
+// path (server-managed caching).
+func BenchmarkReaddir(b *testing.B) {
+	dirents := makeBenchDirents(100)
+	node := &benchReaddirNode{dirents: dirents}
+	node.Init(proto.QID{Type: proto.QTDIR, Path: 100}, node)
+
+	for _, transport := range []string{"pipe", "unix"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			cp := newConnPairTransport(b, transport, node)
+			b.Cleanup(func() { cp.close(b) })
+
+			benchAttachFid0(b, cp)
+
+			// Treaddir(count=4096) on directory fid 0.
+			readdirFrame := mustEncode(b, proto.Tag(1), &p9l.Treaddir{
+				Fid:    0,
+				Offset: 0,
+				Count:  4096,
+			})
+
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := cp.client.Write(readdirFrame); err != nil {
+					b.Fatalf("write: %v", err)
+				}
+				if err := drainResponse(cp.client); err != nil {
+					b.Fatalf("drain: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkXattrRead measures allocations and throughput for reading
+// extended attributes via the Txattrwalk + Tread pipeline.
+func BenchmarkXattrRead(b *testing.B) {
+	xattrData := make([]byte, 4096)
+	for i := range xattrData {
+		xattrData[i] = byte(i)
+	}
+	node := &benchXattrNode{xattrs: map[string][]byte{"user.test": xattrData}}
+	node.Init(proto.QID{Type: proto.QTFILE, Path: 100}, node)
+
+	for _, transport := range []string{"pipe", "unix"} {
+		b.Run("transport="+transport, func(b *testing.B) {
+			cp := newConnPairTransport(b, transport, node)
+			b.Cleanup(func() { cp.close(b) })
+
+			benchAttachFid0(b, cp)
+
+			// Txattrwalk fid 0 -> fid 1 ("user.test")
+			xattrWalk := mustEncode(b, proto.Tag(1), &p9l.Txattrwalk{
+				Fid:    0,
+				NewFid: 1,
+				Name:   "user.test",
+			})
+			if _, err := cp.client.Write(xattrWalk); err != nil {
+				b.Fatalf("xattrwalk write: %v", err)
+			}
+			if err := drainResponse(cp.client); err != nil {
+				b.Fatalf("xattrwalk drain: %v", err)
+			}
+
+			// Tread fid 1
+			readFrame := mustEncode(b, proto.Tag(2), &proto.Tread{
+				Fid:    1,
+				Offset: 0,
+				Count:  4096,
+			})
+
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := cp.client.Write(readFrame); err != nil {
+					b.Fatalf("write: %v", err)
+				}
+				if err := drainResponse(cp.client); err != nil {
+					b.Fatalf("drain: %v", err)
+				}
+			}
+		})
+	}
+}
+
 // benchCreateDir is a bench-only directory node that implements NodeCreater
 // (server/node.go:85-88) so BenchmarkCreateWriteClose exercises Tlcreate
 // through the full bridge path rather than bouncing off Rlerror(ENOSYS).
@@ -541,4 +625,38 @@ func BenchmarkCreateWriteClose(b *testing.B) {
 			}
 		}
 	}
+}
+
+type benchReaddirNode struct {
+	Inode
+	dirents []proto.Dirent
+}
+
+func (n *benchReaddirNode) Open(_ context.Context, _ uint32) (FileHandle, uint32, error) {
+	return nil, 0, nil
+}
+
+func (n *benchReaddirNode) Readdir(_ context.Context) ([]proto.Dirent, error) {
+	return n.dirents, nil
+}
+
+type benchXattrNode struct {
+	Inode
+	xattrs map[string][]byte
+}
+
+func (n *benchXattrNode) Open(_ context.Context, _ uint32) (FileHandle, uint32, error) {
+	return nil, 0, nil
+}
+
+func (n *benchXattrNode) ListXattrs(_ context.Context) ([]string, error) {
+	names := make([]string, 0, len(n.xattrs))
+	for k := range n.xattrs {
+		names = append(names, k)
+	}
+	return names, nil
+}
+
+func (n *benchXattrNode) GetXattr(_ context.Context, name string) ([]byte, error) {
+	return n.xattrs[name], nil
 }
