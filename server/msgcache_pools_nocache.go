@@ -41,6 +41,12 @@ var (
 	tlopenCache   = &pool.Cache[p9l.Tlopen]{}
 	tgetattrCache = &pool.Cache[p9l.Tgetattr]{}
 	tlcreateCache = &pool.Cache[p9l.Tlcreate]{}
+	tremoveCache  = &pool.Cache[proto.Tremove]{}
+	tmkdirCache   = &pool.Cache[p9l.Tmkdir]{}
+	tsetattrCache = &pool.Cache[p9l.Tsetattr]{}
+	trenameCache  = &pool.Cache[p9l.Trename]{}
+	tsymlinkCache = &pool.Cache[p9l.Tsymlink]{}
+	tmknodCache   = &pool.Cache[p9l.Tmknod]{}
 )
 
 // putCachedMsg is a no-op under -tags nocache. The default build caches

@@ -88,6 +88,12 @@ func TestCachedMsgReuseDoesNotAliasFields(t *testing.T) {
 		{"Tlopen/fields_zeroed_on_get", testTlopenAliasing},
 		{"Tgetattr/fields_zeroed_on_get", testTgetattrAliasing},
 		{"Tlcreate/fields_zeroed_on_get", testTlcreateAliasing},
+		{"Tremove/fields_zeroed_on_get", testTremoveAliasing},
+		{"Tmkdir/fields_zeroed_on_get", testTmkdirAliasing},
+		{"Tsetattr/fields_zeroed_on_get", testTsetattrAliasing},
+		{"Trename/fields_zeroed_on_get", testTrenameAliasing},
+		{"Tsymlink/fields_zeroed_on_get", testTsymlinkAliasing},
+		{"Tmknod/fields_zeroed_on_get", testTmknodAliasing},
 	}
 	for _, tc := range cases {
 		// Subtests NOT parallel: the cache chans are package-global.
@@ -307,5 +313,91 @@ func testTlcreateAliasing(t *testing.T) {
 	}
 	if m2.Fid != 99 || m2.Flags != 0 || m2.Mode != proto.FileMode(0o600) || m2.GID != 2000 {
 		t.Errorf("cache reuse leaked scalar fields: got %+v, want Fid=99 Flags=0 Mode=0o600 GID=2000", *m2)
+	}
+}
+
+func testTremoveAliasing(t *testing.T) {
+	m1 := tremoveCache.Get()
+	m1.Fid = 11
+	putCachedMsg(m1)
+
+	m2 := tremoveCache.Get()
+	t.Cleanup(func() { putCachedMsg(m2) })
+	if m2.Fid != 0 {
+		t.Errorf("tremoveCache.Get() did not zero struct: got Fid=%d, want 0", m2.Fid)
+	}
+}
+
+func testTmkdirAliasing(t *testing.T) {
+	m1 := tmkdirCache.Get()
+	m1.DirFid = 12
+	m1.Name = "dir"
+	m1.Mode = 0o755
+	m1.GID = 1000
+	putCachedMsg(m1)
+
+	m2 := tmkdirCache.Get()
+	t.Cleanup(func() { putCachedMsg(m2) })
+	if m2.DirFid != 0 || m2.Name != "" || m2.Mode != 0 || m2.GID != 0 {
+		t.Errorf("tmkdirCache.Get() did not zero struct: got %+v, want all zero", *m2)
+	}
+}
+
+func testTsetattrAliasing(t *testing.T) {
+	m1 := tsetattrCache.Get()
+	m1.Fid = 13
+	m1.Attr.Valid = 0xFFFF
+	putCachedMsg(m1)
+
+	m2 := tsetattrCache.Get()
+	t.Cleanup(func() { putCachedMsg(m2) })
+	if m2.Fid != 0 || m2.Attr.Valid != 0 {
+		t.Errorf("tsetattrCache.Get() did not zero struct: got %+v, want all zero", *m2)
+	}
+}
+
+func testTrenameAliasing(t *testing.T) {
+	m1 := trenameCache.Get()
+	m1.Fid = 14
+	m1.DirFid = 15
+	m1.Name = "newname"
+	putCachedMsg(m1)
+
+	m2 := trenameCache.Get()
+	t.Cleanup(func() { putCachedMsg(m2) })
+	if m2.Fid != 0 || m2.DirFid != 0 || m2.Name != "" {
+		t.Errorf("trenameCache.Get() did not zero struct: got %+v, want all zero", *m2)
+	}
+}
+
+func testTsymlinkAliasing(t *testing.T) {
+	m1 := tsymlinkCache.Get()
+	m1.DirFid = 16
+	m1.Name = "link"
+	m1.Target = "target"
+	m1.GID = 1000
+	putCachedMsg(m1)
+
+	m2 := tsymlinkCache.Get()
+	t.Cleanup(func() { putCachedMsg(m2) })
+	if m2.DirFid != 0 || m2.Name != "" || m2.Target != "" || m2.GID != 0 {
+		t.Errorf("tsymlinkCache.Get() did not zero struct: got %+v, want all zero", *m2)
+	}
+}
+
+func testTmknodAliasing(t *testing.T) {
+	m1 := tmknodCache.Get()
+	m1.DirFid = 17
+	m1.Name = "node"
+	m1.Mode = 0o644
+	m1.Major = 1
+	m1.Minor = 2
+	m1.GID = 1000
+	putCachedMsg(m1)
+
+	m2 := tmknodCache.Get()
+	t.Cleanup(func() { putCachedMsg(m2) })
+	if m2.DirFid != 0 || m2.Name != "" || m2.Mode != 0 || m2.Major != 0 || m2.Minor != 0 || m2.GID != 0 {
+		t.Errorf("tmknodCache.Get() did not zero struct: got %+v, want all zero", *m2)
 	}
 }

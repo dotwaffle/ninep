@@ -18,10 +18,11 @@ import (
 //   - Twalk, Tclunk (every open/close cycle)
 //   - Tlopen, Tgetattr (file metadata lifecycle)
 //   - Tlcreate (added Phase 13-05 for create-write-close micro-workloads)
+//   - Tremove, Tmkdir, Tsetattr (file lifecycle metadata — Phase 33)
+//   - Trename, Tsymlink, Tmknod (common structural metadata — Phase 33)
 //
 // NOT_CACHED (declined per 13-05 profile audit, 2026-04-16):
-// Trename, Tsetattr, Tmkdir, Tsymlink, Tmknod, Trenameat, Tunlinkat,
-// Tlink, Txattrwalk, Txattrcreate, Tlock, Tgetlock — cold-path ops with
+// Trenameat, Tunlinkat, Tlink, Txattrwalk, Txattrcreate, Tlock, Tgetlock — cold-path ops with
 // zero allocs in the 17-bench suite. See .planning/phases/13/13-05-audit.md.
 var (
 	treadCache    = pool.NewCache[proto.Tread]()
@@ -31,6 +32,12 @@ var (
 	tlopenCache   = pool.NewCache[p9l.Tlopen]()
 	tgetattrCache = pool.NewCache[p9l.Tgetattr]()
 	tlcreateCache = pool.NewCache[p9l.Tlcreate]()
+	tremoveCache  = pool.NewCache[proto.Tremove]()
+	tmkdirCache   = pool.NewCache[p9l.Tmkdir]()
+	tsetattrCache = pool.NewCache[p9l.Tsetattr]()
+	trenameCache  = pool.NewCache[p9l.Trename]()
+	tsymlinkCache = pool.NewCache[p9l.Tsymlink]()
+	tmknodCache   = pool.NewCache[p9l.Tmknod]()
 )
 
 // putCachedMsg returns msg to its type-specific cache via a non-blocking
@@ -50,8 +57,8 @@ var (
 // and Phase 13's TestTwalkReuseDoesNotAliasStrings locks that invariant
 // into CI via unsafe.SliceData identity.
 //
-// Tlcreate.Name is a Go string (immutable backing store) — Get-side
-// zero-reset covers it.
+// Tlcreate.Name, Tmkdir.Name, Tremove.Fid etc. are scalar or Go strings
+// (immutable backing store) — Get-side zero-reset covers them.
 func putCachedMsg(msg proto.Message) {
 	switch m := msg.(type) {
 	case *proto.Tread:
@@ -69,5 +76,17 @@ func putCachedMsg(msg proto.Message) {
 		tgetattrCache.Put(m)
 	case *p9l.Tlcreate:
 		tlcreateCache.Put(m)
+	case *proto.Tremove:
+		tremoveCache.Put(m)
+	case *p9l.Tmkdir:
+		tmkdirCache.Put(m)
+	case *p9l.Tsetattr:
+		tsetattrCache.Put(m)
+	case *p9l.Trename:
+		trenameCache.Put(m)
+	case *p9l.Tsymlink:
+		tsymlinkCache.Put(m)
+	case *p9l.Tmknod:
+		tmknodCache.Put(m)
 	}
 }

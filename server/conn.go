@@ -28,6 +28,10 @@ const (
 	protocolNone protocol = iota
 	protocolL             // 9P2000.L
 	protocolU             // 9P2000.u
+
+	// negotiationRateLimit is the minimum time between Tversion requests
+	// from the same connection (Phase 34).
+	negotiationRateLimit = 100 * time.Millisecond
 )
 
 // String returns the version string for the protocol.
@@ -135,6 +139,10 @@ type conn struct {
 	// inflight tracks per-request goroutines for flush cancellation and
 	// drain-on-disconnect.
 	inflight *inflightMap
+
+	// lastNegotiation tracks the UnixNano time of the last Tversion request
+	// for rate-limiting (Phase 34).
+	lastNegotiation atomic.Int64
 
 	// Recv-mutex worker model. A single goroutine type drives the receive
 	// loop: lock recvMu, read one message, decide whether to spawn a
@@ -336,6 +344,7 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 	if err := c.writeRaw(proto.Tag(tag), rver); err != nil {
 		return fmt.Errorf("send rversion: %w", err)
 	}
+	c.lastNegotiation.Store(time.Now().UnixNano())
 
 	if res.selected == protocolNone {
 		return ErrNotNegotiated
@@ -520,11 +529,18 @@ func (c *conn) handleRequest(ctx context.Context) {
 		var unknownType bool
 
 		msg, newMsgErr := c.newMessage(msgType)
-		if newMsgErr != nil {
+		if newMsgErr != nil && msgType != proto.TypeTversion {
 			// Unknown message type. Do NOT touch msg (it is nil).
 			// Release the buf here; do NOT enter any decode branch.
 			unknownType = true
 			bufpool.PutMsgBuf(bufPtr)
+		} else if msgType == proto.TypeTversion {
+			// Tversion is special: handleReVersion decodes its own body
+			// to avoid allocating a msg struct that it immediately
+			// throws away after draining inflight and clunking all fids.
+			//
+			// Keep bufPtr; it will be released in the Tversion block
+			// outside recvMu.
 		} else if tw, ok := msg.(*proto.Twrite); ok {
 			if err := tw.DecodeFromBuf(b[3:]); err != nil {
 				decodeErr = err
@@ -593,6 +609,7 @@ func (c *conn) handleRequest(ctx context.Context) {
 		// normally.
 		if msgType == proto.TypeTversion {
 			c.handleReVersion(ctx, tag, b[3:])
+			bufpool.PutMsgBuf(bufPtr)
 			putCachedMsg(msg)
 			continue
 		}
@@ -685,6 +702,17 @@ func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message
 // 9P spec, Tversion aborts all outstanding I/O and clunks all fids, then
 // re-negotiates the protocol version and msize.
 func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
+	// Rate-limit re-negotiation attempts (Phase 34). Excessive attempts are
+	// dropped without a response to prevent amplification attacks and
+	// unnecessary drain/clunk cycles.
+	now := time.Now().UnixNano()
+	last := c.lastNegotiation.Load()
+	if now-last < int64(negotiationRateLimit) {
+		c.logger.Debug("re-negotiation rate-limited", slog.Int64("tag", int64(tag)))
+		return
+	}
+	c.lastNegotiation.Store(now)
+
 	// Cancel all inflight request contexts first (WR-01), then wait for
 	// handlers to drain with a deadline before mutating connection state
 	// (CR-02). This ensures no handler goroutine reads c.msize, c.protocol,
@@ -763,7 +791,7 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 	case proto.TypeTwrite:
 		return twriteCache.Get(), nil
 	case proto.TypeTremove:
-		return &proto.Tremove{}, nil
+		return tremoveCache.Get(), nil
 
 	// 9P2000.L-specific message types for capability bridge.
 	case proto.TypeTlopen:
@@ -773,17 +801,17 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 	case proto.TypeTgetattr:
 		return tgetattrCache.Get(), nil
 	case proto.TypeTsetattr:
-		return &p9l.Tsetattr{}, nil
+		return tsetattrCache.Get(), nil
 	case proto.TypeTreaddir:
 		return &p9l.Treaddir{}, nil
 	case proto.TypeTmkdir:
-		return &p9l.Tmkdir{}, nil
+		return tmkdirCache.Get(), nil
 	case proto.TypeTsymlink:
-		return &p9l.Tsymlink{}, nil
+		return tsymlinkCache.Get(), nil
 	case proto.TypeTlink:
 		return &p9l.Tlink{}, nil
 	case proto.TypeTmknod:
-		return &p9l.Tmknod{}, nil
+		return tmknodCache.Get(), nil
 	case proto.TypeTreadlink:
 		return &p9l.Treadlink{}, nil
 	case proto.TypeTstatfs:
@@ -795,7 +823,7 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 	case proto.TypeTrenameat:
 		return &p9l.Trenameat{}, nil
 	case proto.TypeTrename:
-		return &p9l.Trename{}, nil
+		return trenameCache.Get(), nil
 	case proto.TypeTlock:
 		return &p9l.Tlock{}, nil
 	case proto.TypeTgetlock:
