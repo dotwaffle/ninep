@@ -84,7 +84,7 @@ func TestClient_Cancellation_Stress(t *testing.T) {
 	closeFired := make(chan struct{})
 	startCount := atomic.Int32{}
 	const closeThreshold = 2500 // Fire close halfway through
-	
+
 	var wg sync.WaitGroup
 	for g := range numG {
 		wg.Add(1)

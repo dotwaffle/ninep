@@ -148,7 +148,6 @@ func TestWriteT_ConcurrentCalls_NoInterleaving(t *testing.T) {
 	// 50 writer goroutines.
 	var wg sync.WaitGroup
 	for i := range N {
-		i := i
 		wg.Go(func() {
 			tw := &proto.Twrite{
 				Fid:    proto.Fid(10 + i),

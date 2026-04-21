@@ -1,8 +1,8 @@
 package server
 
 import (
-	"testing"
 	"github.com/dotwaffle/ninep/proto"
+	"testing"
 )
 
 func BenchmarkMetadataAlloc(b *testing.B) {

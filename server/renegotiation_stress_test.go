@@ -30,7 +30,7 @@ func TestTversion_Stress(t *testing.T) {
 	const iters = 10
 	var wg sync.WaitGroup
 
-	for i := 0; i < numConns; i++ {
+	for i := range numConns {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
@@ -50,7 +50,7 @@ func TestTversion_Stress(t *testing.T) {
 			}
 
 			// Iterative re-negotiation with small delay to respect 100ms limit
-			for j := 0; j < iters; j++ {
+			for j := range iters {
 				time.Sleep(110 * time.Millisecond)
 				if err := stressWriteTversion(c1, proto.Tag(j+1), 8192, "9P2000.L"); err != nil {
 					return
@@ -80,8 +80,7 @@ func TestTversion_RateLimitStress(t *testing.T) {
 
 	c1, c2 := net.Pipe()
 	defer func() { _ = c1.Close() }()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go srv.ServeConn(ctx, c2)
 
 	// Initial negotiation
@@ -93,12 +92,12 @@ func TestTversion_RateLimitStress(t *testing.T) {
 	var receivedCount atomic.Int32
 
 	go func() {
-		for i := 0; i < hammerCount; i++ {
+		for i := range hammerCount {
 			_ = stressWriteTversion(c1, proto.Tag(i+1), 8192, "9P2000.L")
 		}
 	}()
 
-	// Try to read responses with a timeout. 
+	// Try to read responses with a timeout.
 	// We expect only ONE or TWO responses if timing is tight.
 	stop := time.After(500 * time.Millisecond)
 loop:
@@ -131,8 +130,7 @@ func TestTversion_DrainTimeout(t *testing.T) {
 
 	c1, c2 := net.Pipe()
 	defer func() { _ = c1.Close() }()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go srv.ServeConn(ctx, c2)
 
 	// 1. Initial negotiation
@@ -198,7 +196,7 @@ func TestTversion_DrainTimeout(t *testing.T) {
 	time.Sleep(110 * time.Millisecond)
 	start := time.Now()
 	_ = stressWriteTversion(c1, 200, 8192, "9P2000.L") // Tag 200
-	
+
 	// Wait for Rversion. We might see the Rread/Rlerror for tag 100 first.
 	for {
 		tag, mtype, err := stressReadMsg(c1, nil)
@@ -248,14 +246,16 @@ func stressWriteTversion(c net.Conn, tag proto.Tag, msize uint32, version string
 	body := &bytes.Buffer{}
 	_ = tv.EncodeTo(body)
 	size := uint32(proto.HeaderSize) + uint32(body.Len())
-	
+
 	hdr := make([]byte, proto.HeaderSize)
 	binary.LittleEndian.PutUint32(hdr[0:4], size)
 	hdr[4] = uint8(proto.TypeTversion)
 	binary.LittleEndian.PutUint16(hdr[5:7], uint16(tag))
-	
+
 	_, err := c.Write(hdr)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	_, err = c.Write(body.Bytes())
 	return err
 }
@@ -268,13 +268,13 @@ func stressReadMsg(c net.Conn, msg proto.Message) (proto.Tag, proto.MessageType,
 	size := binary.LittleEndian.Uint32(hdr[0:4])
 	mtype := proto.MessageType(hdr[4])
 	tag := proto.Tag(binary.LittleEndian.Uint16(hdr[5:7]))
-	
+
 	bodySize := int64(size) - int64(proto.HeaderSize)
 	if msg != nil && mtype == msg.Type() {
 		err := msg.DecodeFrom(io.LimitReader(c, bodySize))
 		return tag, mtype, err
 	}
-	
+
 	// Skip body
 	_, err := io.CopyN(io.Discard, c, bodySize)
 	return tag, mtype, err
