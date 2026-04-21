@@ -118,6 +118,34 @@ func main() {
 }
 ```
 
+## Mounting with the Linux Kernel
+
+`ninep` servers are fully compatible with the Linux kernel's `v9fs` client. To mount the example server on Linux:
+
+```bash
+# Create a mount point
+mkdir /tmp/9p
+
+# Mount via TCP (run as root or use sudo)
+sudo mount -t 9p -o trans=tcp,port=5640,version=9p2000.L,msize=65536 127.0.0.1 /tmp/9p
+
+# Access the files
+cat /tmp/9p/hello.txt
+```
+
+Recommended mount options:
+- `trans=tcp`: Use TCP transport.
+- `version=9p2000.L`: Use the Linux-optimized protocol extensions.
+- `msize=65536`: Match the server's message size limit for optimal performance.
+
+## Performance at Scale
+
+`ninep` is designed for high-concurrency, low-latency workloads:
+
+- **Zero-Allocation Hot Paths:** Structural message pooling (`internal/pool.Cache`) ensures that standard operations (Read, Write, Walk, Clunk) and metadata updates (Setattr, Mkdir, etc.) occur with zero heap allocations in the steady state.
+- **Concurrent Receive Loop:** The server uses a dynamic worker pool that scales with in-flight requests, ensuring that multiple clients can progress without blocking each other on the receive loop.
+- **Streaming Codecs:** All messages are encoded and decoded directly via `io.Writer` and `io.Reader` interfaces to minimize intermediate buffering.
+
 ## Core Concepts
 
 ### Nodes and Inodes
