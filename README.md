@@ -114,6 +114,13 @@ go test -race ./...
 
 ## Documentation
 
+- [Getting Started Guide](docs/GETTING-STARTED.md)
+- [Architecture & Design](docs/ARCHITECTURE.md)
+- [API Reference](docs/API.md)
+- [Configuration Reference](docs/CONFIGURATION.md)
+- [Development Guide](docs/DEVELOPMENT.md)
+- [Testing Guide](docs/TESTING.md)
+
 Full API documentation is available on
 [pkg.go.dev](https://pkg.go.dev/github.com/dotwaffle/ninep).
 
