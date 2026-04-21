@@ -63,6 +63,54 @@ func main() {
 }
 ```
 
+## Using the Go Client
+
+The `client` package provides a high-level API for interacting with 9P servers. It handles tag allocation, message framing, and session management automatically.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log"
+
+	"github.com/dotwaffle/ninep/client"
+)
+
+func main() {
+	ctx := context.Background()
+
+	// 1. Dial the server.
+	c, err := client.Dial(ctx, "tcp", "localhost:5640")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer c.Close()
+
+	// 2. Attach to the root.
+	s, err := c.Attach(ctx, "me", "")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// 3. Open the file we created earlier.
+	f, err := s.OpenFile(ctx, "hello.txt", 0 /* O_RDONLY */, 0)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+
+	// 4. Read and print the content.
+	content, err := io.ReadAll(f)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Content: %s", string(content))
+}
+```
+
 ## Core Concepts
 
 ### Nodes and Inodes
