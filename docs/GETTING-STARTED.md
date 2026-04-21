@@ -1,31 +1,12 @@
-<!-- generated-by: gsd-doc-writer -->
 # Getting Started with ninep
 
-This guide walks you through building 9P filesystems with ninep, from a
-single static file to a directory tree served over TCP that you can mount
-with the Linux kernel client.
+`ninep` is a Go library for building 9P2000.L and 9P2000.u servers and clients. Its server-side API is "capability-based": you only implement the interfaces for the operations your filesystem supports.
 
-## Prerequisites
+## Building a Minimal Filesystem
 
-- **Go >= 1.26** (the module declares `go 1.26` in `go.mod`; earlier
-  toolchains cannot build the library)
-- **Linux** for mounting with `mount -t 9p` (the library compiles on any
-  OS, but the v9fs mount test requires Linux)
-- A working `$GOPATH` or Go modules environment
+To build a filesystem, you define a struct that embeds `*server.Inode`. By embedding `Inode`, your node automatically returns `ENOSYS` for any operation you don't explicitly implement.
 
-## Installation
-
-```bash
-go get github.com/dotwaffle/ninep@latest
-```
-
-The only runtime dependency is the OpenTelemetry API (`go.opentelemetry.io/otel`).
-No SDK is pulled in -- that is an application-level concern.
-
-## First Filesystem: A Static File
-
-The smallest useful filesystem is a single read-only file. Create a struct
-that embeds `server.Inode` and implement `NodeReader` and `NodeGetattrer`.
+Here is a complete server that serves a single read-only file:
 
 ```go
 package main
@@ -39,453 +20,67 @@ import (
 	"github.com/dotwaffle/ninep/server"
 )
 
-// HelloFile serves a read-only file with static content.
+// HelloFile implements a read-only file.
 type HelloFile struct {
-	server.Inode
+	*server.Inode
 }
 
-func (f *HelloFile) Open(_ context.Context, _ uint32) (server.FileHandle, uint32, error) {
-	return nil, 0, nil
-}
-
-func (f *HelloFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
-	data := []byte("hello world\n")
-	if offset >= uint64(len(data)) {
+// Read implements the NodeReader interface.
+func (h *HelloFile) Read(ctx context.Context, buf []byte, offset uint64) (int, error) {
+	content := "Hello, 9P world!\n"
+	if offset >= uint64(len(content)) {
 		return 0, nil
 	}
-	end := min(offset+uint64(len(buf)), uint64(len(data)))
-	return copy(buf, data[offset:end]), nil
-}
-
-func (f *HelloFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {
-	return proto.Attr{
-		Mode:  0o444,
-		Size:  12,
-		NLink: 1,
-	}, nil
+	n := copy(buf, content[offset:])
+	return n, nil
 }
 
 func main() {
-	var gen server.QIDGenerator
+	// 1. Create a unique QID for our root node.
+	gen := &server.QIDGenerator{}
+	rootQID := gen.Next(proto.QTDIR)
 
-	root := &HelloFile{}
-	root.Init(gen.Next(proto.QTFILE), root)
+	// 2. Create the root directory node.
+	root := &server.Inode{}
+	root.Init(rootQID, root)
 
-	srv := server.New(root)
+	// 3. Create our "hello.txt" file node and add it to the root.
+	helloQID := gen.Next(proto.QTFILE)
+	hello := &HelloFile{Inode: &server.Inode{}}
+	hello.Init(helloQID, hello)
+	root.AddChild("hello.txt", hello.Inode)
 
-	ln, err := net.Listen("tcp", ":5640")
+	// 4. Start the server on TCP port 5640.
+	s := server.New(root)
+	l, err := net.Listen("tcp", "0.0.0.0:5640")
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("serving on %s", ln.Addr())
-	log.Fatal(srv.Serve(context.Background(), ln))
-}
-```
-
-Key points:
-
-- **`server.Inode`** is embedded in every node struct. It provides default
-  ENOSYS responses for every capability interface you do not implement.
-- **`Inode.Init(qid, self)`** must be called once per node to set the QID
-  and the back-reference. Use `QIDGenerator.Next(type)` for monotonically
-  increasing, unique QID paths.
-- **`server.New(root, ...Option)`** creates the server. The root node is
-  what gets returned on `Tattach`.
-- **`Server.Serve(ctx, ln)`** accepts connections and blocks until the
-  context is cancelled or the listener errors.
-- **`NodeReader.Read`** takes a caller-provided buffer: the server sizes
-  `buf` to the Tread count (clamped to `msize`), the implementation fills
-  it, and returns the byte count. Do not allocate a new slice per call.
-
-## Adding a Directory with Children
-
-A directory node implements `NodeLookuper` so the server can resolve walk
-requests. The `Inode` tree manages parent/child relationships via
-`AddChild` and provides a default `Lookup` implementation.
-
-```go
-package main
-
-import (
-	"context"
-	"log"
-	"net"
-
-	"github.com/dotwaffle/ninep/proto"
-	"github.com/dotwaffle/ninep/server"
-)
-
-// Dir is a read-only directory that serves entries from its Inode children.
-type Dir struct {
-	server.Inode
-}
-
-func (d *Dir) Open(_ context.Context, _ uint32) (server.FileHandle, uint32, error) {
-	return nil, 0, nil
-}
-
-func (d *Dir) Readdir(_ context.Context) ([]proto.Dirent, error) {
-	children := d.Children()
-	entries := make([]proto.Dirent, 0, len(children))
-	var offset uint64
-	for name, inode := range children {
-		qid := inode.QID()
-		offset++
-		entries = append(entries, proto.Dirent{
-			QID:    qid,
-			Offset: offset,
-			// Type carries a Linux DT_* dirent value (see proto.DT_DIR/DT_REG/DT_LNK).
-			// Use proto.QIDTypeToDT to derive the correct value from a QID.
-			Type: proto.QIDTypeToDT(qid.Type),
-			Name: name,
-		})
-	}
-	return entries, nil
-}
-
-func (d *Dir) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {
-	children := d.Children()
-	return proto.Attr{
-		Mode:  0o040755,
-		NLink: uint64(2 + len(children)),
-	}, nil
-}
-
-// StaticFile is a read-only file with immutable content.
-type StaticFile struct {
-	server.Inode
-	content []byte
-}
-
-func (f *StaticFile) Open(_ context.Context, _ uint32) (server.FileHandle, uint32, error) {
-	return nil, 0, nil
-}
-
-func (f *StaticFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
-	if offset >= uint64(len(f.content)) {
-		return 0, nil
-	}
-	end := min(offset+uint64(len(buf)), uint64(len(f.content)))
-	return copy(buf, f.content[offset:end]), nil
-}
-
-func (f *StaticFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {
-	return proto.Attr{
-		Mode:  0o444,
-		Size:  uint64(len(f.content)),
-		NLink: 1,
-	}, nil
-}
-
-func main() {
-	var gen server.QIDGenerator
-
-	// Build the tree: root/ -> greeting.txt, info.txt
-	root := &Dir{}
-	root.Init(gen.Next(proto.QTDIR), root)
-
-	greeting := &StaticFile{content: []byte("hello world\n")}
-	greeting.Init(gen.Next(proto.QTFILE), greeting)
-	root.AddChild("greeting.txt", greeting.EmbeddedInode())
-
-	info := &StaticFile{content: []byte("ninep getting started\n")}
-	info.Init(gen.Next(proto.QTFILE), info)
-	root.AddChild("info.txt", info.EmbeddedInode())
-
-	srv := server.New(root)
-	ln, err := net.Listen("tcp", ":5640")
-	if err != nil {
+	log.Printf("Serving 9P on %s", l.Addr())
+	if err := s.Serve(context.Background(), l); err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("serving on %s", ln.Addr())
-	log.Fatal(srv.Serve(context.Background(), ln))
 }
 ```
 
-The `Inode` provides a default `Lookup` implementation that searches its
-children map. You only need to override `Lookup` if your directory needs
-custom resolution logic (lazy loading, external data sources, etc.).
+## Core Concepts
 
-## Serving over TCP
+### Nodes and Inodes
+Every entry in your filesystem is a `Node`. For most use cases, you should embed `*server.Inode` in your node struct. The `Inode` handles:
+- **Default errors**: Returns `ENOSYS` for unimplemented operations.
+- **Tree management**: Provides `AddChild`, `RemoveChild`, and a default `Lookup` implementation.
 
-Both examples above already listen on TCP port 5640, the conventional 9P
-port. You can use any `net.Listener`:
+### Capability Interfaces
+`ninep` defines fine-grained interfaces in `server/node.go` for each 9P operation. Common ones include:
+- `NodeLookuper`: Resolve a child by name (if not using `Inode` tree management).
+- `NodeOpener`: Handle file open flags.
+- `NodeReader` / `NodeWriter`: Data I/O.
+- `NodeGetattrer`: Return file attributes (stat).
 
-```go
-// TCP
-ln, _ := net.Listen("tcp", ":5640")
-
-// Unix socket
-ln, _ := net.Listen("unix", "/tmp/ninep.sock")
-
-// Serve a single connection directly
-conn, _ := ln.Accept()
-srv.ServeConn(ctx, conn)
-```
-
-`Server.Serve(ctx, ln)` spawns a goroutine per connection and blocks until
-the context is cancelled. For single-connection scenarios (e.g., virtio-vsock),
-use `Server.ServeConn(ctx, conn)` directly.
-
-## Testing with the Linux v9fs Client
-
-Once your server is running, mount it on Linux. The default server `msize`
-is 1 MiB (1048576 bytes); for best throughput, pass a matching `msize` to
-the mount command:
-
-```bash
-# Mount the filesystem (as root)
-sudo mount -t 9p -o trans=tcp,port=5640,version=9p2000.L,msize=1048576 \
-    127.0.0.1 /mnt/9p
-
-# List files
-ls /mnt/9p
-
-# Read a file
-cat /mnt/9p/greeting.txt
-
-# Unmount
-sudo umount /mnt/9p
-```
-
-For Unix sockets:
-
-```bash
-sudo mount -t 9p -o trans=unix,version=9p2000.L \
-    /tmp/ninep.sock /mnt/9p
-```
-
-Common mount options:
-
-| Option | Description |
-|--------|-------------|
-| `trans=tcp` | TCP transport (default) |
-| `trans=unix` | Unix domain socket transport |
-| `port=5640` | TCP port (default: 564) |
-| `version=9p2000.L` | Protocol version (9P2000.L or 9P2000.u) |
-| `msize=1048576` | Maximum message size in bytes (match the server's `WithMaxMsize`) |
-| `cache=none` | Disable client-side caching |
-| `access=user` | Per-user access control |
-
-## Using memfs for Quick Prototyping
-
-The `server/memfs` package provides ready-made in-memory node types and a
-fluent builder API. Use it when you want a working filesystem tree without
-implementing custom node types.
-
-### Node Types
-
-| Type | Description |
-|------|-------------|
-| `memfs.MemFile` | Read-write in-memory file (thread-safe) |
-| `memfs.MemDir` | In-memory directory with Create, Mkdir, Unlink |
-| `memfs.StaticFile` | Read-only file with string content |
-
-### Builder API
-
-```go
-package main
-
-import (
-	"context"
-	"log"
-	"net"
-
-	"github.com/dotwaffle/ninep/server"
-	"github.com/dotwaffle/ninep/server/memfs"
-)
-
-func main() {
-	var gen server.QIDGenerator
-
-	root := memfs.NewDir(&gen).
-		AddStaticFile("version", "1.0.0").
-		AddFile("config.json", []byte(`{"debug": true}`)).
-		AddFileWithMode("run.sh", []byte("#!/bin/sh\necho hi"), 0o755).
-		WithDir("data", func(d *memfs.MemDir) {
-			d.AddFile("cache.db", nil).
-				AddStaticFile("readme.txt", "data directory")
-		}).
-		AddSymlink("latest", "data/cache.db")
-
-	srv := server.New(root)
-	ln, err := net.Listen("tcp", ":5640")
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("serving on %s", ln.Addr())
-	log.Fatal(srv.Serve(context.Background(), ln))
-}
-```
-
-Builder methods return the parent directory for chaining:
-
-| Method | Description |
-|--------|-------------|
-| `NewDir(gen)` | Create a root MemDir |
-| `AddFile(name, data)` | Add a read-write file (mode 0644) |
-| `AddFileWithMode(name, data, mode)` | Add a read-write file with custom mode |
-| `AddStaticFile(name, content)` | Add a read-only file (mode 0444) |
-| `AddDir(name)` | Add an empty subdirectory |
-| `WithDir(name, fn)` | Add a subdirectory and populate it via callback |
-| `SubDir(name)` | Retrieve an existing child directory for further construction |
-| `AddSymlink(name, target)` | Add a symbolic link |
-
-### Dynamic Operations
-
-`MemDir` implements `NodeCreater`, `NodeMkdirer`, and `NodeUnlinker`, so
-clients can create files and directories, and remove entries at runtime.
-`MemFile` implements `NodeWriter` and `NodeSetattrer`, so clients can
-write data and modify attributes.
-
-## Using fstest to Validate Your Implementation
-
-The `server/fstest` package provides a protocol-level test harness that
-exercises your filesystem against the 9P2000.L contract. It tests walk
-resolution, read/write operations, directory listing, file creation,
-attribute retrieval, error handling, and concurrent access.
-
-### Required Tree Shape
-
-Your root node must expose the following tree:
-
-```
-root/
-  file.txt       (content: "hello world")
-  empty          (content: "")
-  sub/
-    nested.txt   (content: "nested content")
-```
-
-### Running the Harness
-
-```go
-package myfs_test
-
-import (
-	"testing"
-
-	"github.com/dotwaffle/ninep/server"
-	"github.com/dotwaffle/ninep/server/fstest"
-	"github.com/dotwaffle/ninep/server/memfs"
-)
-
-func TestMyFS(t *testing.T) {
-	var gen server.QIDGenerator
-
-	root := memfs.NewDir(&gen).
-		AddFile("file.txt", []byte("hello world")).
-		AddFile("empty", []byte("")).
-		WithDir("sub", func(d *memfs.MemDir) {
-			d.AddFile("nested.txt", []byte("nested content"))
-		})
-
-	fstest.Check(t, root)
-}
-```
-
-`fstest.Check(t, root)` runs all registered test cases as subtests. The
-test cases include:
-
-| Category | Cases |
-|----------|-------|
-| Walk | root attach, child walk, deep walk, nonexistent, clone |
-| Read/Write | basic read, offset read, past-EOF, basic write |
-| Directory | readdir basic, readdir empty |
-| Create/Mkdir | file creation, directory creation |
-| Attributes | file getattr, directory getattr |
-| Errors | walk from file (ENOTDIR), read on directory |
-| Unlink | file removal |
-| Concurrency | concurrent reads |
-
-### Factory-Based Harness
-
-If your filesystem holds OS-level resources that get cleaned up when the
-server connection closes (like the `passthrough` package), use
-`CheckFactory` to create a fresh root per test case:
-
-```go
-func TestPassthrough(t *testing.T) {
-	fstest.CheckFactory(t, func(t *testing.T) server.Node {
-		root, err := passthrough.NewRoot("/path/to/test/dir")
-		if err != nil {
-			t.Fatal(err)
-		}
-		return root
-	})
-}
-```
-
-### Selective Test Execution
-
-The `fstest.Cases` slice is exported, so you can filter or run individual
-cases:
-
-```go
-func TestWalkOnly(t *testing.T) {
-	var gen server.QIDGenerator
-	root := fstest.NewTestTree(&gen)
-
-	for _, tc := range fstest.Cases {
-		if strings.HasPrefix(tc.Name, "walk/") {
-			t.Run(tc.Name, func(t *testing.T) {
-				tc.Run(t, root)
-			})
-		}
-	}
-}
-```
-
-`fstest.NewTestTree(gen)` is a convenience function that builds the
-required tree shape using internal test node types (no memfs dependency).
-
-## Server Options
-
-`server.New` accepts functional options to configure behavior:
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `WithMaxMsize(n)` | 1048576 (1 MiB) | Maximum message size during version negotiation |
-| `WithMaxInflight(n)` | 64 | Maximum concurrent in-flight requests per connection |
-| `WithMaxConnections(n)` | 0 (unlimited) | Maximum concurrent connections; new ones are rejected when reached |
-| `WithMaxFids(n)` | 0 (unlimited) | Maximum concurrent fids per connection; returns EMFILE when reached |
-| `WithLogger(logger)` | `slog.Default()` with trace correlation | Structured logger (automatically wrapped with `NewTraceHandler`) |
-| `WithIdleTimeout(d)` | 0 (disabled) | Per-connection idle timeout |
-| `WithAnames(map)` | nil | Map of aname strings to root nodes for vhost-style dispatch |
-| `WithAttacher(a)` | nil | Custom attach handler (overrides root and anames) |
-| `WithMiddleware(mw...)` | nil | Request middleware chain |
-| `WithTracer(tp)` | nil | OpenTelemetry TracerProvider for per-operation spans |
-| `WithMeter(mp)` | nil | OpenTelemetry MeterProvider for metrics |
-
-## Common Setup Issues
-
-**Port already in use** -- If port 5640 is taken, choose a different port
-and pass `port=NNNN` to the mount command.
-
-**"version not negotiated" errors** -- Ensure the client sends a `Tversion`
-message before any other operation. The Linux v9fs client does this
-automatically, but custom clients must negotiate first.
-
-**Mount fails with "Protocol not supported"** -- Verify the kernel has 9P
-support: `modprobe 9p && modprobe 9pnet_fd`. Check `version=9p2000.L` in
-the mount options.
-
-**Files appear empty or Getattr returns wrong size** -- Your `Getattr`
-implementation must return the correct `Size` field. The kernel client uses
-this to determine how much data to read.
-
-**ENOSYS on every operation** -- You forgot to call `Init(qid, self)` on
-your node, or your methods are defined on a value receiver instead of a
-pointer receiver, so they do not satisfy the capability interfaces.
-
-**`Read` returns 0 bytes forever** -- The `NodeReader.Read` contract is
-buf-passing: `Read(ctx, buf []byte, offset uint64) (int, error)`. Fill
-`buf` and return the byte count; do not allocate your own slice and
-expect it to be returned. Returning `0, nil` signals EOF.
+### File Handles
+For stateful I/O (like tracking an OS file descriptor), `NodeOpener.Open` can return a `FileHandle`. If the returned handle implements `FileReader` or `FileWriter`, those methods will be used for subsequent I/O on that specific open instance.
 
 ## Next Steps
-
-- [ARCHITECTURE.md](ARCHITECTURE.md) -- System design and component overview
-- [DEVELOPMENT.md](DEVELOPMENT.md) -- Local development setup and build commands
-- [TESTING.md](TESTING.md) -- Test framework details and coverage
-- [pkg.go.dev](https://pkg.go.dev/github.com/dotwaffle/ninep) -- Full API reference
+- Explore the [API Reference](API.md) for a full list of capability interfaces.
+- Check [ARCHITECTURE.md](ARCHITECTURE.md) to understand the server's high-performance concurrent model.
+- See [CONFIGURATION.md](CONFIGURATION.md) for server options like message size limits and OTel integration.
