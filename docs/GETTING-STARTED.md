@@ -75,6 +75,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
+	"os"
 
 	"github.com/dotwaffle/ninep/client"
 )
@@ -82,27 +84,32 @@ import (
 func main() {
 	ctx := context.Background()
 
-	// 1. Dial the server.
-	c, err := client.Dial(ctx, "tcp", "localhost:5640")
+	// 1. Establish a network connection.
+	nc, err := net.Dial("tcp", "localhost:5640")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// 2. Wrap it in a 9P client.
+	c, err := client.Dial(ctx, nc)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer c.Close()
 
-	// 2. Attach to the root.
-	s, err := c.Attach(ctx, "me", "")
-	if err != nil {
+	// 3. Attach to the root.
+	if _, err := c.Attach(ctx, "me", ""); err != nil {
 		log.Fatal(err)
 	}
 
-	// 3. Open the file we created earlier.
-	f, err := s.OpenFile(ctx, "hello.txt", 0 /* O_RDONLY */, 0)
+	// 4. Open the file we created earlier.
+	f, err := c.OpenFile(ctx, "hello.txt", os.O_RDONLY, 0)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer f.Close()
 
-	// 4. Read and print the content.
+	// 5. Read and print the content.
 	content, err := io.ReadAll(f)
 	if err != nil {
 		log.Fatal(err)
