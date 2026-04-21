@@ -29,6 +29,9 @@ func TestHandleReVersion_FatalErrors(t *testing.T) {
 		sendTversion(t, client, 65536, "9P2000.L")
 		_ = readRversion(t, client)
 
+		// Bypass rate limit
+		time.Sleep(110 * time.Millisecond)
+
 		// Send malformed Tversion (too short for msize[4])
 		// size[4] + type[1] + tag[2] + body[1]
 		// size = 4 + 1 + 2 + 1 = 8
@@ -72,6 +75,9 @@ func TestHandleReVersion_FatalErrors(t *testing.T) {
 		// Initial negotiation
 		sendTversion(t, client, 65536, "9P2000.L")
 		_ = readRversion(t, client)
+
+		// Bypass rate limit
+		time.Sleep(110 * time.Millisecond)
 
 		// Mid-conn Tversion with msize < 256
 		sendTversion(t, client, 100, "9P2000.L")
