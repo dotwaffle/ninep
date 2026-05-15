@@ -640,7 +640,23 @@ func (c *conn) handleRequest(ctx context.Context) {
 		// chain AFTER inflight.finish (LIFO ordering — putRequestCtx is
 		// registered first so it executes last). See D-07 / Pitfall 4.
 		rctx := getRequestCtx(ctx)
-		c.inflight.start(tag, rctx)
+		if !c.inflight.start(tag, rctx) {
+			putRequestCtx(rctx)
+			if deferredBufPtr != nil {
+				bufpool.PutMsgBuf(deferredBufPtr)
+			}
+			putCachedMsg(msg)
+
+			c.logger.Warn("duplicate in-flight tag",
+				slog.Uint64("tag", uint64(tag)),
+			)
+			c.recvMu.Lock()
+			c.recvShutdown = true
+			c.recvMu.Unlock()
+			c.signalRecvShutdown()
+			_ = c.nc.Close()
+			return
+		}
 
 		// Dispatch + send response inline (this folds in the work that
 		// was previously the worker's responsibility).
@@ -659,9 +675,17 @@ func (c *conn) handleRequest(ctx context.Context) {
 // buffer; clearing the cache before release would zero Data while it
 // still references the recycled buffer (RESEARCH P10).
 func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message, bufPtr *[]byte) {
-	// LIFO: registered FIRST so it runs LAST — after c.inflight.finish(tag)
-	// in the defer below. Required by D-07 / Pitfall 4: a concurrent Tflush
-	// must be able to look up `tag` in the inflight map until finish()
+	finished := false
+	finish := func() {
+		if !finished {
+			c.inflight.finish(tag)
+			finished = true
+		}
+	}
+
+	// LIFO: registered FIRST so it runs LAST — after finish() removes the
+	// tag from the inflight map. Required by D-07 / Pitfall 4: a concurrent
+	// Tflush must be able to look up `tag` in the inflight map until finish()
 	// removes it; only then is it safe to recycle rctx back to the pool.
 	// Violating this ordering causes Tflush to call flush() on a
 	// pool-recycled requestCtx belonging to an unrelated later request.
@@ -679,9 +703,10 @@ func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message
 				slog.Any("panic", r),
 				slog.String("message_type", msg.Type().String()),
 			)
+			finish()
 			c.sendResponse(tag, c.errorMsg(proto.EIO))
 		}
-		c.inflight.finish(tag)
+		finish()
 	}()
 
 	resp := c.handler(rctx, tag, msg) // *requestCtx satisfies context.Context
@@ -694,6 +719,7 @@ func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message
 		if r, ok := resp.(releaser); ok {
 			release = r
 		}
+		finish()
 		c.sendResponseInline(tag, resp, release)
 	}
 }

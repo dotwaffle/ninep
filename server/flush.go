@@ -32,15 +32,19 @@ func newInflightMap() *inflightMap {
 	return &inflightMap{entries: make(map[proto.Tag]inflightEntry)}
 }
 
-// start registers a new in-flight request. The *requestCtx is stored so
-// that flush can trigger cancellation without an additional indirection
-// through context.CancelFunc. Caller must call finish(tag) when the handler
-// goroutine completes.
-func (im *inflightMap) start(tag proto.Tag, rctx *requestCtx) {
+// start registers a new in-flight request. It returns false if tag is already
+// in use. The *requestCtx is stored so that flush can trigger cancellation
+// without an additional indirection through context.CancelFunc. Caller must
+// call finish(tag) when start returns true and the handler goroutine completes.
+func (im *inflightMap) start(tag proto.Tag, rctx *requestCtx) bool {
 	im.mu.Lock()
 	defer im.mu.Unlock()
+	if _, exists := im.entries[tag]; exists {
+		return false
+	}
 	im.entries[tag] = inflightEntry{rctx: rctx}
 	im.count++
+	return true
 }
 
 // finish removes the tag from the inflight map and signals the drain

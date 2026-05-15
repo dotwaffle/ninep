@@ -34,6 +34,46 @@ func TestInflightMap_StartFinish(t *testing.T) {
 	}
 }
 
+func TestInflightMap_StartRejectsDuplicateTag(t *testing.T) {
+	t.Parallel()
+
+	im := newInflightMap()
+	first := getRequestCtx(t.Context())
+	second := getRequestCtx(t.Context())
+	defer putRequestCtx(first)
+	defer putRequestCtx(second)
+
+	if !im.start(1, first) {
+		t.Fatal("first start returned false")
+	}
+	if im.start(1, second) {
+		t.Fatal("duplicate start returned true")
+	}
+	if im.len() != 1 {
+		t.Fatalf("len after duplicate start = %d, want 1", im.len())
+	}
+
+	firstDone := first.Done()
+	secondDone := second.Done()
+	im.flush(1)
+
+	select {
+	case <-firstDone:
+	default:
+		t.Fatal("flush did not cancel original request context")
+	}
+	select {
+	case <-secondDone:
+		t.Fatal("flush cancelled duplicate request context")
+	default:
+	}
+
+	im.finish(1)
+	if im.len() != 0 {
+		t.Fatalf("len after finish = %d, want 0", im.len())
+	}
+}
+
 func TestInflightMap_FlushCancelsContext(t *testing.T) {
 	t.Parallel()
 
@@ -378,6 +418,39 @@ func TestFlush_TagReuse(t *testing.T) {
 
 	// Now create a NEW blockingNode for a fresh connection pair -- tag reuse
 	// test is primarily about inflight map state, which we've verified above.
+}
+
+func TestDuplicateInflightTagClosesConnection(t *testing.T) {
+	t.Parallel()
+
+	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
+	root := newBlockingNode(rootQID)
+	defer close(root.block)
+
+	cp := newConnPair(t, root)
+	defer cp.close(t)
+
+	cp.attach(t, 1, 0, "user", "")
+
+	sendMessage(t, cp.client, 10, &proto.Twalk{
+		Fid:    0,
+		NewFid: 1,
+		Names:  []string{"slow"},
+	})
+
+	select {
+	case <-root.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not start")
+	}
+
+	sendMessage(t, cp.client, 10, &proto.Tclunk{Fid: 0})
+	if err := cp.client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	if _, _, err := p9l.Decode(cp.client); err == nil {
+		t.Fatal("expected connection close after duplicate in-flight tag")
+	}
 }
 
 func TestPanicRecovery(t *testing.T) {
