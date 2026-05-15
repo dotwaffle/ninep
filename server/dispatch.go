@@ -51,6 +51,8 @@ func (c *conn) dispatch(ctx context.Context, tag proto.Tag, msg proto.Message) p
 		return c.errorMsg(proto.ENOSYS)
 	case *p9l.Tlopen:
 		return c.handleLopen(ctx, m)
+	case *p9u.Topen:
+		return c.handleUOpen(ctx, m)
 	case *proto.Tread:
 		return c.handleRead(ctx, m)
 	case *proto.Twrite:
@@ -63,6 +65,8 @@ func (c *conn) dispatch(ctx context.Context, tag proto.Tag, msg proto.Message) p
 		return c.handleReaddir(ctx, m)
 	case *p9l.Tlcreate:
 		return c.handleLcreate(ctx, m)
+	case *p9u.Tcreate:
+		return c.handleUCreate(ctx, m)
 	case *p9l.Tmkdir:
 		return c.handleMkdir(ctx, m)
 	case *p9l.Tsymlink:
@@ -91,6 +95,10 @@ func (c *conn) dispatch(ctx context.Context, tag proto.Tag, msg proto.Message) p
 		return c.handleXattrwalk(ctx, m)
 	case *p9l.Txattrcreate:
 		return c.handleXattrcreate(ctx, m)
+	case *p9u.Tstat:
+		return c.handleUStat(ctx, m)
+	case *p9u.Twstat:
+		return c.errorMsg(proto.ENOSYS)
 	default:
 		return c.errorMsg(proto.ENOSYS)
 	}

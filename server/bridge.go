@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path"
 
 	"github.com/dotwaffle/ninep/internal/bufpool"
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
+	"github.com/dotwaffle/ninep/proto/p9u"
 )
 
 // pooledRread wraps Rread with a reference to the pooled buffer backing
@@ -75,6 +77,39 @@ func (c *conn) handleLopen(ctx context.Context, m *p9l.Tlopen) proto.Message {
 	}
 
 	return &p9l.Rlopen{QID: qid, IOUnit: c.clampIOUnit(iounitHint)}
+}
+
+// handleUOpen dispatches 9P2000.u Topen to NodeOpener.
+func (c *conn) handleUOpen(ctx context.Context, m *p9u.Topen) proto.Message {
+	flags, ok := openFlagsFromUMode(m.Mode)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	fs := c.fids.get(m.Fid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+	if fs.currentState() != fidAllocated {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	opener, ok := fs.node.(NodeOpener)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	handle, iounitHint, err := opener.Open(ctx, flags)
+	if err != nil {
+		return c.errorMsg(errnoFromError(err))
+	}
+
+	qid := nodeQID(fs.node)
+	if !c.fids.markOpenedWithHandle(m.Fid, handle) {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	return &p9u.Ropen{QID: qid, IOUnit: c.clampIOUnit(iounitHint)}
 }
 
 // clampIOUnit returns the per-fid IOUnit to advertise to the client.
@@ -264,6 +299,28 @@ func (c *conn) handleSetattr(ctx context.Context, m *p9l.Tsetattr) proto.Message
 	return &p9l.Rsetattr{}
 }
 
+// handleUStat dispatches 9P2000.u Tstat through NodeGetattrer and converts
+// the common Attr shape into the legacy .u Stat wire structure.
+func (c *conn) handleUStat(ctx context.Context, m *p9u.Tstat) proto.Message {
+	fs := c.fids.get(m.Fid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+
+	getter, ok := fs.node.(NodeGetattrer)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	attr, err := getter.Getattr(ctx, proto.AttrAll)
+	if err != nil {
+		return c.errorMsg(errnoFromError(err))
+	}
+
+	qid := nodeQID(fs.node)
+	return &p9u.Rstat{Stat: statFromAttr(fs.path, qid, attr)}
+}
+
 // handleReaddir dispatches to raw or simple readdir interfaces with
 // handle-first, node-fallback priority.
 func (c *conn) handleReaddir(ctx context.Context, m *p9l.Treaddir) proto.Message {
@@ -413,6 +470,58 @@ func (c *conn) handleLcreate(ctx context.Context, m *p9l.Tlcreate) proto.Message
 
 	qid := nodeQID(child)
 	return &p9l.Rlcreate{QID: qid, IOUnit: c.clampIOUnit(iounitHint)}
+}
+
+// handleUCreate dispatches 9P2000.u Tcreate for regular files and mutates
+// the fid to the opened child per 9P create semantics.
+func (c *conn) handleUCreate(ctx context.Context, m *p9u.Tcreate) proto.Message {
+	flags, ok := openFlagsFromUMode(m.Mode)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+	if !validUCreatePerm(m.Perm, m.Extension) {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	fs := c.fids.get(m.Fid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+	if fs.currentState() != fidAllocated {
+		return c.errorMsg(proto.EBADF)
+	}
+	if !validName(m.Name) {
+		return c.errorMsg(proto.EINVAL)
+	}
+
+	creator, ok := fs.node.(NodeCreater)
+	if !ok {
+		return c.errorMsg(proto.ENOSYS)
+	}
+
+	parentNode := fs.node
+	child, handle, iounitHint, err := creator.Create(ctx, m.Name, flags, m.Perm, 0)
+	if err != nil {
+		return c.errorMsg(errnoFromError(err))
+	}
+
+	if !c.fids.updateAndOpen(m.Fid, child, handle) {
+		if handle != nil {
+			if rel, ok := handle.(FileReleaser); ok {
+				_ = rel.Release(ctx)
+			}
+		}
+		return c.errorMsg(proto.EBADF)
+	}
+
+	if parentIE, ok := parentNode.(InodeEmbedder); ok {
+		if childIE, ok := child.(InodeEmbedder); ok {
+			parentIE.EmbeddedInode().AddChild(m.Name, childIE.EmbeddedInode())
+		}
+	}
+
+	qid := nodeQID(child)
+	return &p9u.Rcreate{QID: qid, IOUnit: c.clampIOUnit(iounitHint)}
 }
 
 // handleMkdir dispatches to NodeMkdirer. The dirfid is NOT mutated (unlike Tlcreate).
@@ -977,4 +1086,44 @@ func validName(name string) bool {
 		}
 	}
 	return true
+}
+
+func openFlagsFromUMode(mode uint8) (uint32, bool) {
+	switch mode {
+	case 0, 1, 2:
+		return uint32(mode), true
+	default:
+		return 0, false
+	}
+}
+
+func validUCreatePerm(perm proto.FileMode, extension string) bool {
+	const unsupported = proto.DMDIR | p9u.DMSYMLINK | p9u.DMDEVICE | p9u.DMNAMEDPIPE | p9u.DMSOCKET
+	return extension == "" && perm&unsupported == 0
+}
+
+func statFromAttr(fidPath string, qid proto.QID, attr proto.Attr) p9u.Stat {
+	mode := proto.FileMode(attr.Mode & 0o7777)
+	switch qid.Type {
+	case proto.QTDIR:
+		mode |= proto.DMDIR
+	case proto.QTSYMLINK:
+		mode |= p9u.DMSYMLINK
+	}
+
+	name := path.Base(fidPath)
+	if fidPath == "" || fidPath == "/" || name == "." || name == "/" {
+		name = ""
+	}
+
+	return p9u.Stat{
+		QID:    qid,
+		Mode:   mode,
+		Atime:  uint32(attr.ATimeSec),
+		Mtime:  uint32(attr.MTimeSec),
+		Length: attr.Size,
+		Name:   name,
+		NUid:   attr.UID,
+		NGid:   attr.GID,
+	}
 }

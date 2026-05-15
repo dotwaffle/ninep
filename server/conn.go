@@ -785,8 +785,9 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 }
 
 // newMessage returns a zero-value message struct for the given type based on
-// the negotiated protocol. For Phase 2, only lifecycle messages are handled;
-// unknown types return an error.
+// the negotiated protocol. Shared base requests are accepted for every
+// negotiated dialect; dialect-specific requests are accepted only for their
+// dialect.
 func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 	switch t {
 	// Shared base message types handled in all protocols.
@@ -806,8 +807,21 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 		return twriteCache.Get(), nil
 	case proto.TypeTremove:
 		return tremoveCache.Get(), nil
+	}
 
-	// 9P2000.L-specific message types for capability bridge.
+	switch c.protocol {
+	case protocolL:
+		return newLMessage(t)
+	case protocolU:
+		return newUMessage(t)
+	default:
+		return nil, fmt.Errorf("unknown message type %d", t)
+	}
+}
+
+// newLMessage returns a 9P2000.L-specific request message.
+func newLMessage(t proto.MessageType) (proto.Message, error) {
+	switch t {
 	case proto.TypeTlopen:
 		return tlopenCache.Get(), nil
 	case proto.TypeTlcreate:
@@ -846,6 +860,22 @@ func (c *conn) newMessage(t proto.MessageType) (proto.Message, error) {
 		return &p9l.Txattrwalk{}, nil
 	case proto.TypeTxattrcreate:
 		return &p9l.Txattrcreate{}, nil
+	default:
+		return nil, fmt.Errorf("unknown message type %d", t)
+	}
+}
+
+// newUMessage returns a 9P2000.u-specific request message.
+func newUMessage(t proto.MessageType) (proto.Message, error) {
+	switch t {
+	case proto.TypeTopen:
+		return &p9u.Topen{}, nil
+	case proto.TypeTcreate:
+		return &p9u.Tcreate{}, nil
+	case proto.TypeTstat:
+		return &p9u.Tstat{}, nil
+	case proto.TypeTwstat:
+		return &p9u.Twstat{}, nil
 	default:
 		return nil, fmt.Errorf("unknown message type %d", t)
 	}
