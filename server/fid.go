@@ -20,6 +20,12 @@ const (
 )
 
 // fidState holds the server-side state for a single fid.
+//
+// All access to the fidStatus, handle, dirCache, dirCached, and xattr
+// fields must happen with mu held. The fidTable lifecycle methods
+// (markOpened, markOpenedWithHandle, updateAndOpen) nest mu inside
+// ft.mu when mutating state so that bridge readers using mu see a
+// consistent view.
 type fidState struct {
 	mu        sync.Mutex // Protects state transitions, xattr, and dir fields.
 	node      Node
@@ -36,6 +42,14 @@ type fidState struct {
 	xattrSize   uint64      // Declared size from xattrcreate.
 	xattrFlags  uint32      // Flags from xattrcreate (XATTR_CREATE, XATTR_REPLACE).
 	xattrWriter XattrWriter // Non-nil when RawXattrer is in use for writes.
+}
+
+// currentState returns fs.state with proper locking. Callers that already
+// hold fs.mu should read fs.state directly instead.
+func (fs *fidState) currentState() fidStatus {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.state
 }
 
 // fidTable is a concurrent-safe mapping from fid numbers to their state.
@@ -126,11 +140,20 @@ func (ft *fidTable) update(fid proto.Fid, node Node) bool {
 
 // markOpened transitions a fid from fidAllocated to fidOpened. Returns false if
 // the fid is not present or is already opened. Safe for concurrent use.
+//
+// fs.mu is nested inside ft.mu so that the state mutation is visible to
+// bridge handlers that read fs.state under fs.mu. Lock ordering is
+// ft.mu -> fs.mu; callers holding fs.mu must not attempt to acquire ft.mu.
 func (ft *fidTable) markOpened(fid proto.Fid) bool {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
 	fs, ok := ft.fids[fid]
-	if !ok || fs.state != fidAllocated {
+	if !ok {
+		return false
+	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.state != fidAllocated {
 		return false
 	}
 	fs.state = fidOpened
@@ -139,12 +162,17 @@ func (ft *fidTable) markOpened(fid proto.Fid) bool {
 
 // markOpenedWithHandle transitions a fid from fidAllocated to fidOpened and
 // stores the FileHandle. Returns false if the fid is not present or is already
-// opened. Safe for concurrent use.
+// opened. Safe for concurrent use. Lock ordering matches markOpened.
 func (ft *fidTable) markOpenedWithHandle(fid proto.Fid, h FileHandle) bool {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
 	fs, ok := ft.fids[fid]
-	if !ok || fs.state != fidAllocated {
+	if !ok {
+		return false
+	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.state != fidAllocated {
 		return false
 	}
 	fs.state = fidOpened
@@ -154,12 +182,17 @@ func (ft *fidTable) markOpenedWithHandle(fid proto.Fid, h FileHandle) bool {
 
 // updateAndOpen atomically replaces the node, transitions the fid to fidOpened,
 // and stores the FileHandle. Returns false if the fid is not present or is not
-// in fidAllocated state. Safe for concurrent use.
+// in fidAllocated state. Safe for concurrent use. Lock ordering matches markOpened.
 func (ft *fidTable) updateAndOpen(fid proto.Fid, node Node, h FileHandle) bool {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
 	fs, ok := ft.fids[fid]
-	if !ok || fs.state != fidAllocated {
+	if !ok {
+		return false
+	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.state != fidAllocated {
 		return false
 	}
 	fs.node = node

@@ -240,8 +240,12 @@ func (c *conn) handleClunk(ctx context.Context, tc *proto.Tclunk) proto.Message 
 	}
 	c.otelInst.recordFidChange(-1)
 
-	// Handle xattr commit/cleanup before normal clunk logic.
-	if fs.state == fidXattrWrite {
+	// Handle xattr commit/cleanup before normal clunk logic. clunk() has
+	// already removed the fid from the table, so no further handler can
+	// observe a state transition on it; reading under fs.mu still gives
+	// the Go memory model the synchronization it needs against an
+	// xattrcreate handler that may have populated these fields.
+	if fs.currentState() == fidXattrWrite {
 		// RawXattrer path: delegate commit to XattrWriter.
 		if fs.xattrWriter != nil {
 			if err := fs.xattrWriter.Commit(ctx); err != nil {

@@ -53,7 +53,7 @@ func (c *conn) handleLopen(ctx context.Context, m *p9l.Tlopen) proto.Message {
 	if fs == nil {
 		return c.errorMsg(proto.EBADF)
 	}
-	if fs.state != fidAllocated {
+	if fs.currentState() != fidAllocated {
 		return c.errorMsg(proto.EBADF)
 	}
 
@@ -117,9 +117,10 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 		fs.mu.Unlock()
 		return &pooledRread{Rread: proto.Rread{Data: buf}, bufPtr: bufPtr}
 	}
+	state := fs.state
 	fs.mu.Unlock()
 
-	if fs.state != fidOpened {
+	if state != fidOpened {
 		return c.errorMsg(proto.EBADF)
 	}
 
@@ -190,9 +191,10 @@ func (c *conn) handleWrite(ctx context.Context, m *proto.Twrite) proto.Message {
 		fs.mu.Unlock()
 		return &proto.Rwrite{Count: uint32(len(m.Data))}
 	}
+	state := fs.state
 	fs.mu.Unlock()
 
-	if fs.state != fidOpened {
+	if state != fidOpened {
 		return c.errorMsg(proto.EBADF)
 	}
 
@@ -269,7 +271,7 @@ func (c *conn) handleReaddir(ctx context.Context, m *p9l.Treaddir) proto.Message
 	if fs == nil {
 		return c.errorMsg(proto.EBADF)
 	}
-	if fs.state != fidOpened {
+	if fs.currentState() != fidOpened {
 		return c.errorMsg(proto.EBADF)
 	}
 
@@ -366,7 +368,7 @@ func (c *conn) handleLcreate(ctx context.Context, m *p9l.Tlcreate) proto.Message
 	if fs == nil {
 		return c.errorMsg(proto.EBADF)
 	}
-	if fs.state != fidAllocated {
+	if fs.currentState() != fidAllocated {
 		return c.errorMsg(proto.EBADF)
 	}
 
@@ -594,7 +596,7 @@ func (c *conn) handleFsync(ctx context.Context, m *p9l.Tfsync) proto.Message {
 	if fs == nil {
 		return c.errorMsg(proto.EBADF)
 	}
-	if fs.state != fidOpened {
+	if fs.currentState() != fidOpened {
 		return c.errorMsg(proto.EBADF)
 	}
 
@@ -761,7 +763,7 @@ func (c *conn) handleLock(ctx context.Context, m *p9l.Tlock) proto.Message {
 	if fs == nil {
 		return c.errorMsg(proto.EBADF)
 	}
-	if fs.state != fidOpened {
+	if fs.currentState() != fidOpened {
 		return c.errorMsg(proto.EBADF)
 	}
 
@@ -785,7 +787,7 @@ func (c *conn) handleGetlock(ctx context.Context, m *p9l.Tgetlock) proto.Message
 	if fs == nil {
 		return c.errorMsg(proto.EBADF)
 	}
-	if fs.state != fidOpened {
+	if fs.currentState() != fidOpened {
 		return c.errorMsg(proto.EBADF)
 	}
 
