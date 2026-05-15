@@ -1,6 +1,7 @@
 package memfs
 
 import (
+	"errors"
 	"sync"
 	"testing"
 
@@ -124,6 +125,55 @@ func TestMemFileWrite(t *testing.T) {
 			t.Errorf("Data[5] = %d, want %d", f.Data[5], '!')
 		}
 	})
+}
+
+func TestMemFileWriteRejectsOversizedGrowth(t *testing.T) {
+	t.Parallel()
+
+	gen := newGen()
+	f := &MemFile{Data: []byte("hi")}
+	f.Init(gen.Next(proto.QTFILE), f)
+
+	if _, err := f.Write(t.Context(), []byte("!"), uint64(proto.MaxDataSize)); !errors.Is(err, proto.EFBIG) {
+		t.Fatalf("Write err = %v, want EFBIG", err)
+	}
+	if string(f.Data) != "hi" {
+		t.Fatalf("Data = %q, want unchanged %q", f.Data, "hi")
+	}
+}
+
+func TestMemFileWriteRejectsOffsetOverflow(t *testing.T) {
+	t.Parallel()
+
+	gen := newGen()
+	f := &MemFile{Data: []byte("hi")}
+	f.Init(gen.Next(proto.QTFILE), f)
+
+	if _, err := f.Write(t.Context(), []byte("!"), ^uint64(0)); !errors.Is(err, proto.EFBIG) {
+		t.Fatalf("Write err = %v, want EFBIG", err)
+	}
+	if string(f.Data) != "hi" {
+		t.Fatalf("Data = %q, want unchanged %q", f.Data, "hi")
+	}
+}
+
+func TestMemFileSetattrRejectsOversizedSize(t *testing.T) {
+	t.Parallel()
+
+	gen := newGen()
+	f := &MemFile{Data: []byte("hi")}
+	f.Init(gen.Next(proto.QTFILE), f)
+
+	err := f.Setattr(t.Context(), proto.SetAttr{
+		Valid: proto.SetAttrSize,
+		Size:  uint64(proto.MaxDataSize) + 1,
+	})
+	if !errors.Is(err, proto.EFBIG) {
+		t.Fatalf("Setattr err = %v, want EFBIG", err)
+	}
+	if string(f.Data) != "hi" {
+		t.Fatalf("Data = %q, want unchanged %q", f.Data, "hi")
+	}
 }
 
 func TestMemFileGetattr(t *testing.T) {

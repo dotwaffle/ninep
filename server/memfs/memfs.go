@@ -8,8 +8,12 @@ import (
 	"github.com/dotwaffle/ninep/server"
 )
 
-// sIFDIR is the POSIX S_IFDIR bit for directory mode.
-const sIFDIR = 0o040000
+const (
+	// sIFDIR is the POSIX S_IFDIR bit for directory mode.
+	sIFDIR = 0o040000
+
+	maxMemFileSize = uint64(proto.MaxDataSize)
+)
 
 // Compile-time assertions for interface compliance.
 var (
@@ -38,8 +42,8 @@ var (
 // protected by a sync.RWMutex for concurrent access. MemFile implements
 // NodeOpener, NodeReader, NodeWriter, NodeGetattrer, and NodeSetattrer.
 //
-// Note: MemFile does not enforce size limits. Production use should wrap
-// the NodeWriter with size checking if unbounded growth is a concern.
+// MemFile bounds file contents to proto.MaxDataSize to keep sparse writes and
+// truncates from allocating unbounded memory.
 type MemFile struct {
 	server.Inode
 	mu   sync.RWMutex
@@ -75,7 +79,10 @@ func (f *MemFile) Write(_ context.Context, data []byte, offset uint64) (uint32, 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	end := int(offset) + len(data)
+	end, err := checkedSize(offset, len(data))
+	if err != nil {
+		return 0, err
+	}
 	if end > len(f.Data) {
 		newData := make([]byte, end)
 		copy(newData, f.Data)
@@ -120,6 +127,9 @@ func (f *MemFile) Setattr(_ context.Context, attr proto.SetAttr) error {
 		f.GID = attr.GID
 	}
 	if attr.Valid&proto.SetAttrSize != 0 {
+		if attr.Size > maxMemFileSize {
+			return proto.EFBIG
+		}
 		newSize := int(attr.Size)
 		if newSize < len(f.Data) {
 			f.Data = f.Data[:newSize]
@@ -130,6 +140,13 @@ func (f *MemFile) Setattr(_ context.Context, attr proto.SetAttr) error {
 		}
 	}
 	return nil
+}
+
+func checkedSize(offset uint64, count int) (int, error) {
+	if offset > maxMemFileSize || uint64(count) > maxMemFileSize-offset {
+		return 0, proto.EFBIG
+	}
+	return int(offset) + count, nil
 }
 
 // MemDir is an in-memory directory node. It serves directory entries from
