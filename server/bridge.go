@@ -345,18 +345,21 @@ func (c *conn) readdirSimple(ctx context.Context, fs *fidState, m *p9l.Treaddir,
 		fs.dirCached = true
 	}
 
+	// Find starting entry. Offset N means "entries after the one with cookie N",
+	// so start from index N (since cookie = index+1). Snapshot a slice header
+	// onto the cache (24 bytes) and release the lock before encoding. The
+	// underlying dirent array is immutable once assigned (the offset==0 path
+	// above only replaces the whole slice, never mutates entries in place),
+	// so encoding from view outside the lock is safe and avoids holding
+	// fs.mu across O(n) work for large directories.
+	start := min(int(m.Offset), len(fs.dirCache))
+	view := fs.dirCache[start:]
+	fs.mu.Unlock()
+
 	// Borrow buffer from pool; wrapper Release() returns it after encode.
 	bufPtr := bufpool.GetMsgBuf(int(m.Count))
 	buf := (*bufPtr)[:m.Count]
-
-	// Find starting entry. Offset N means "entries after the one with cookie N",
-	// so start from index N (since cookie = index+1).
-	start := min(int(m.Offset), len(fs.dirCache))
-
-	// Encode dirents directly from the cache into the pooled buffer while holding
-	// the lock. EncodeDirentsInto avoids the need for a full snapshot copy.
-	n, _ := EncodeDirentsInto(buf, fs.dirCache[start:])
-	fs.mu.Unlock()
+	n, _ := EncodeDirentsInto(buf, view)
 
 	return &pooledRreaddir{Rreaddir: p9l.Rreaddir{Data: buf[:n]}, bufPtr: bufPtr}
 }
