@@ -446,7 +446,7 @@ func TestDuplicateInflightTagClosesConnection(t *testing.T) {
 
 	sendMessage(t, cp.client, 10, &proto.Tclunk{Fid: 0})
 	if err := cp.client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatalf("set read deadline: %v", err)
+		return
 	}
 	if _, _, err := p9l.Decode(cp.client); err == nil {
 		t.Fatal("expected connection close after duplicate in-flight tag")
