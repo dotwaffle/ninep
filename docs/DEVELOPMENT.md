@@ -139,7 +139,7 @@ Interface naming convention: `Node` + operation name + `er` suffix. Examples fro
 |-----------|--------|--------------|
 | `NodeReader` | `Read(ctx, buf []byte, offset uint64) (int, error)` | Tread |
 | `NodeWriter` | `Write(ctx, data []byte, offset uint64) (uint32, error)` | Twrite |
-| `NodeOpener` | `Open(ctx, flags uint32) (FileHandle, uint32, error)` | Tlopen |
+| `NodeOpener` | `Open(ctx, flags uint32) (FileHandle, uint32, error)` | Tlopen — `uint32` is the IOUnit hint (0 = default, non-zero is clamped to msize − header). |
 | `NodeGetattrer` | `Getattr(ctx, mask proto.AttrMask) (proto.Attr, error)` | Tgetattr |
 | `NodeReaddirer` | `Readdir(ctx) ([]proto.Dirent, error)` | Treaddir (library packs) |
 | `NodeRawReaddirer` | `RawReaddir(ctx, buf []byte, offset uint64) (int, error)` | Treaddir (self-packed) |
@@ -281,6 +281,17 @@ func (n *myNode) Open(ctx context.Context, flags uint32) (server.FileHandle, uin
 ```
 
 The bridge dispatch priority is: FileHandle interface > Node interface > ENOSYS.
+
+#### Footgun: `FileHandle` is `any`
+
+Because `server.FileHandle` is defined as `any`, the compiler cannot tell that a non-nil handle satisfies at least one `File*` interface. A handle that implements none of them is functionally equivalent to nil — the bridge type-asserts each capability, finds none match, and falls through to the Node-level dispatch path silently. Guard against typos and forgotten methods with package-level compile-time assertions next to your handle type:
+
+```go
+var (
+    _ server.FileReader   = (*myHandle)(nil)
+    _ server.FileReleaser = (*myHandle)(nil)
+)
+```
 
 ## Adding a New 9P Operation
 

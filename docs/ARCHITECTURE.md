@@ -157,14 +157,14 @@ Protocol-level conformance test harness. `Check(t, root)` or `CheckFactory(t, ne
 | Interface | Method(s) | Purpose |
 |-----------|-----------|---------|
 | `NodeLookuper` | `Lookup(ctx, name) (Node, error)` | Directory child resolution (walk) |
-| `NodeOpener` | `Open(ctx, flags) (FileHandle, uint32, error)` | Open a file, optionally return per-open state |
+| `NodeOpener` | `Open(ctx, flags) (FileHandle, uint32, error)` | Open a file, optionally return per-open state. The `uint32` is the IOUnit hint advertised in `Rlopen.IOUnit` (0 = server default = msize minus Rread overhead; non-zero is clamped to that default). |
 | `NodeReader` | `Read(ctx, buf, offset) (int, error)` | Read file data into caller buffer |
 | `NodeWriter` | `Write(ctx, data, offset) (uint32, error)` | Write file data |
 | `NodeGetattrer` | `Getattr(ctx, mask) (Attr, error)` | Retrieve file attributes |
 | `NodeSetattrer` | `Setattr(ctx, SetAttr) error` | Modify file attributes |
 | `NodeReaddirer` | `Readdir(ctx) ([]Dirent, error)` | Simple readdir (server manages offsets) |
 | `NodeRawReaddirer` | `RawReaddir(ctx, buf, offset) (int, error)` | Raw readdir into caller buffer (node manages offsets) |
-| `NodeCreater` | `Create(ctx, name, flags, mode, gid) (Node, FileHandle, uint32, error)` | Create + open in one step |
+| `NodeCreater` | `Create(ctx, name, flags, mode, gid) (Node, FileHandle, uint32, error)` | Create + open in one step. Trailing `uint32` is the IOUnit hint for `Rlcreate.IOUnit`, same semantics as `NodeOpener`. |
 | `NodeMkdirer` | `Mkdir(ctx, name, mode, gid) (Node, error)` | Create subdirectory |
 | `NodeSymlinker` | `Symlink(ctx, name, target, gid) (Node, error)` | Create symbolic link |
 | `NodeLinker` | `Link(ctx, target, name) error` | Create hard link |
@@ -215,7 +215,7 @@ A 9P request follows this path from network bytes to filesystem operation:
 3. **Recv-mutex receive loop** -- `handleRequest()` is the single goroutine type that drives reception AND dispatch. It locks `recvMu`, reads one framed message from the wire (4-byte size prefix on a stack-local `hdrBuf`, then body into a buffer borrowed from `bufpool.GetMsgBuf`), decodes the body INSIDE `recvMu` so per-iteration scratch (e.g. `bytes.Reader`) stays safely owned by the lock holder, decides whether to spawn a successor, releases `recvMu`, then dispatches the request and writes the reply inline. The same goroutine that read the bytes is the one that handles the request and writes the response — there is no inter-goroutine handoff between read and dispatch.
 
    Routing inside the loop:
-   - `Tversion` mid-connection triggers `handleReVersion` (drains inflight, clunks all fids, re-negotiates via `writeRaw`). Spawn-replacement is skipped on `Tversion` so the renegotiating goroutine is the sole reader during the codec/msize swap.
+   - `Tversion` mid-connection triggers `handleReVersion` (drains inflight, clunks all fids, re-negotiates via `writeRaw`). Spawn-replacement is skipped on `Tversion` so the renegotiating goroutine is the sole reader during the codec/msize swap. If the inflight drain exceeds `cleanupDeadline` (5 s) — i.e. at least one handler ignored ctx cancellation — the connection is closed instead of continuing, because a late response from a stuck handler could alias against the client's reused tag space after `Rversion` is sent.
    - `Tflush` short-circuits to `handleFlush` AFTER `recvMu` is released (it operates on OTHER tags' inflight state and must not itself create an inflight entry).
    - All other messages are decoded via `newMessage()`. Hot types (`Tread`, `Twrite`, `Twalk`, `Tclunk`, `Tlopen`, `Tgetattr`) are pulled from the `msgcache` bounded channel; cache miss allocates fresh.
 

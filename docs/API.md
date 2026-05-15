@@ -45,7 +45,7 @@ type QIDer interface {
 
 | Interface | Method | Description |
 |-----------|--------|-------------|
-| `NodeOpener` | `Open(ctx context.Context, flags uint32) (FileHandle, uint32, error)` | Open the node with given flags |
+| `NodeOpener` | `Open(ctx context.Context, flags uint32) (FileHandle, uint32, error)` | Open the node with given flags. The `uint32` return is the IOUnit hint advertised to the client in `Rlopen.IOUnit`; return 0 for the server default (msize minus the Rread header overhead). Non-zero values are clamped to that default so a node cannot advertise a payload larger than the wire can carry. |
 | `NodeReader` | `Read(ctx context.Context, buf []byte, offset uint64) (int, error)` | Read into caller buffer at offset; caller sizes buf from Tread count |
 | `NodeWriter` | `Write(ctx context.Context, data []byte, offset uint64) (uint32, error)` | Write bytes at offset |
 | `NodeGetattrer` | `Getattr(ctx context.Context, mask proto.AttrMask) (proto.Attr, error)` | Get file attributes |
@@ -60,7 +60,7 @@ type QIDer interface {
 | `NodeLookuper` | `Lookup(ctx context.Context, name string) (Node, error)` | Resolve child by name during walk |
 | `NodeReaddirer` | `Readdir(ctx context.Context) ([]proto.Dirent, error)` | Return all directory entries (server handles offset tracking and packing) |
 | `NodeRawReaddirer` | `RawReaddir(ctx context.Context, buf []byte, offset uint64) (int, error)` | Read raw dirent bytes into caller buffer at offset (node manages offsets) |
-| `NodeCreater` | `Create(ctx context.Context, name string, flags uint32, mode proto.FileMode, gid uint32) (Node, FileHandle, uint32, error)` | Create a file |
+| `NodeCreater` | `Create(ctx context.Context, name string, flags uint32, mode proto.FileMode, gid uint32) (Node, FileHandle, uint32, error)` | Create + open a file in one step. The trailing `uint32` is the IOUnit hint for `Rlcreate.IOUnit`; same semantics as `NodeOpener.Open` (0 = server default, non-zero is clamped to that default). |
 | `NodeMkdirer` | `Mkdir(ctx context.Context, name string, mode proto.FileMode, gid uint32) (Node, error)` | Create a subdirectory |
 | `NodeSymlinker` | `Symlink(ctx context.Context, name, target string, gid uint32) (Node, error)` | Create a symbolic link |
 | `NodeLinker` | `Link(ctx context.Context, target Node, name string) error` | Create a hard link |
