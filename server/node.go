@@ -32,8 +32,15 @@ type NodeLookuper interface {
 
 // NodeOpener is implemented by nodes that can be opened.
 type NodeOpener interface {
-	// Open opens the node with the given flags and returns a FileHandle,
-	// response flags, and any error.
+	// Open opens the node with the given flags. Returns:
+	//   - the FileHandle for the opened fid (may be nil if the node does
+	//     not need per-handle state; subsequent reads/writes then fall
+	//     back to NodeReader/NodeWriter on the node itself),
+	//   - the IOUnit hint to report to the client in Rlopen.IOUnit.
+	//     Return 0 to let the server use its default (msize minus the
+	//     Rread header overhead). The server clamps non-zero values to
+	//     that default.
+	//   - an error.
 	Open(ctx context.Context, flags uint32) (FileHandle, uint32, error)
 }
 
@@ -83,7 +90,16 @@ type NodeRawReaddirer interface {
 
 // NodeCreater is implemented by directory nodes that can create files.
 type NodeCreater interface {
-	// Create creates a new file in this directory.
+	// Create creates and opens a new file in this directory in a single
+	// step (9P Tlcreate). Returns:
+	//   - the new file's Node (used to populate the parent's child table),
+	//   - an open FileHandle for the new fid (the Tlcreate fid is left
+	//     opened, mirroring Tlopen semantics; may be nil if the node
+	//     does not need per-handle state),
+	//   - the IOUnit hint to report in Rlcreate.IOUnit. Return 0 for the
+	//     server default (msize minus header overhead); non-zero values
+	//     are clamped to that default.
+	//   - an error.
 	Create(ctx context.Context, name string, flags uint32, mode proto.FileMode, gid uint32) (Node, FileHandle, uint32, error)
 }
 

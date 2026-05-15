@@ -62,7 +62,7 @@ func (c *conn) handleLopen(ctx context.Context, m *p9l.Tlopen) proto.Message {
 		return c.errorMsg(proto.ENOSYS)
 	}
 
-	handle, flags, err := opener.Open(ctx, m.Flags)
+	handle, iounitHint, err := opener.Open(ctx, m.Flags)
 	if err != nil {
 		return c.errorMsg(errnoFromError(err))
 	}
@@ -74,12 +74,20 @@ func (c *conn) handleLopen(ctx context.Context, m *p9l.Tlopen) proto.Message {
 		return c.errorMsg(proto.EBADF)
 	}
 
-	// IOUnit: max data that fits in one Rread response.
-	// 4 bytes for the Rread data count prefix.
-	iounit := c.msize - proto.HeaderSize - 4
+	return &p9l.Rlopen{QID: qid, IOUnit: c.clampIOUnit(iounitHint)}
+}
 
-	_ = flags // Response flags from Open are passed through in IOUnit field position.
-	return &p9l.Rlopen{QID: qid, IOUnit: iounit}
+// clampIOUnit returns the per-fid IOUnit to advertise to the client.
+// hint==0 means "use server default" (msize minus the Rread/Rwrite header
+// overhead, the largest payload that fits in a single response). Non-zero
+// hints are clamped to that ceiling so a node cannot advertise a value
+// the wire can't carry.
+func (c *conn) clampIOUnit(hint uint32) uint32 {
+	max := c.msize - proto.HeaderSize - 4
+	if hint == 0 || hint > max {
+		return max
+	}
+	return hint
 }
 
 // handleRead dispatches to FileReader (handle-first) then NodeReader (fallback).
@@ -374,7 +382,7 @@ func (c *conn) handleLcreate(ctx context.Context, m *p9l.Tlcreate) proto.Message
 	// Save parent node reference before updateAndOpen mutates fs.node.
 	parentNode := fs.node
 
-	child, handle, _, err := creator.Create(ctx, m.Name, m.Flags, m.Mode, m.GID)
+	child, handle, iounitHint, err := creator.Create(ctx, m.Name, m.Flags, m.Mode, m.GID)
 	if err != nil {
 		return c.errorMsg(errnoFromError(err))
 	}
@@ -399,9 +407,7 @@ func (c *conn) handleLcreate(ctx context.Context, m *p9l.Tlcreate) proto.Message
 	}
 
 	qid := nodeQID(child)
-	iounit := c.msize - proto.HeaderSize - 4
-
-	return &p9l.Rlcreate{QID: qid, IOUnit: iounit}
+	return &p9l.Rlcreate{QID: qid, IOUnit: c.clampIOUnit(iounitHint)}
 }
 
 // handleMkdir dispatches to NodeMkdirer. The dirfid is NOT mutated (unlike Tlcreate).
