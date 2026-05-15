@@ -721,9 +721,17 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), cleanupDeadline)
 	defer drainCancel()
 	if err := c.inflight.waitWithDeadline(drainCtx); err != nil {
-		c.logger.Warn("re-negotiation: timed out waiting for inflight drain",
+		// Drain failed: at least one handler ignored ctx cancellation.
+		// The 9P spec requires Tversion to abort all outstanding I/O; if
+		// we cannot, continuing would let the late handler write a stale
+		// response into the new tag space (tag-reuse aliasing) or read
+		// c.msize/c.protocol/c.codec mid-mutation. Close the connection
+		// instead and let the client reconnect cleanly.
+		c.logger.Warn("re-negotiation: inflight drain timed out; closing connection",
 			slog.Int("remaining", c.inflight.len()),
 		)
+		_ = c.nc.Close() // D-02: Fatal error policy
+		return
 	}
 
 	// Clunk all fids and release handles/closers (matching cleanup pattern).

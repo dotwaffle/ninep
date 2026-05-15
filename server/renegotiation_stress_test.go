@@ -195,30 +195,32 @@ func TestTversion_DrainTimeout(t *testing.T) {
 	// Ensure we exceed the 100ms rate limit from the initial negotiation.
 	time.Sleep(110 * time.Millisecond)
 	start := time.Now()
-	_ = stressWriteTversion(c1, 200, 8192, "9P2000.L") // Tag 200
+	if err := stressWriteTversion(c1, 200, 8192, "9P2000.L"); err != nil {
+		t.Fatalf("write Tversion: %v", err)
+	}
 
-	// Wait for Rversion. We might see the Rread/Rlerror for tag 100 first.
+	// Drain times out at cleanupDeadline (5s) because the slow read
+	// handler ignores ctx.Done. The server then closes the connection
+	// rather than continuing into a state where stale tag-N responses
+	// could alias against a reused tag space. Reads should fail (EOF or
+	// pipe-closed) shortly after cleanupDeadline; we should not see an
+	// Rversion for tag 200.
 	for {
-		tag, mtype, err := stressReadMsg(c1, nil)
+		_, mtype, err := stressReadMsg(c1, nil)
 		if err != nil {
-			t.Fatalf("read msg: %v", err)
-		}
-		if tag == 200 {
-			if mtype != proto.TypeRversion {
-				t.Errorf("expected Rversion, got %v", mtype)
-			}
 			break
+		}
+		if mtype == proto.TypeRversion {
+			t.Fatalf("Rversion arrived after drain timeout; connection should have closed")
 		}
 	}
 	elapsed := time.Since(start)
 
-	// cleanupDeadline is 5s. If the drain timeout works, we should get the
-	// response around 5s, not wait for the 10s sleep to finish.
 	if elapsed < 4*time.Second {
-		t.Errorf("Rversion arrived too early: %v", elapsed)
+		t.Errorf("connection closed too early: %v", elapsed)
 	}
 	if elapsed > 8*time.Second {
-		t.Errorf("Rversion arrived too late (drain timeout failed?): %v", elapsed)
+		t.Errorf("connection closed too late (drain timeout failed?): %v", elapsed)
 	}
 }
 
