@@ -177,6 +177,10 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 				bufpool.PutMsgBuf(bufPtr)
 				return c.errorMsg(errnoFromError(err))
 			}
+			if !validReadCount(n, len(buf)) {
+				bufpool.PutMsgBuf(bufPtr)
+				return c.errorMsg(proto.EIO)
+			}
 			return &pooledRread{Rread: proto.Rread{Data: buf[:n]}, bufPtr: bufPtr}
 		}
 	}
@@ -192,6 +196,10 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 	if err != nil {
 		bufpool.PutMsgBuf(bufPtr)
 		return c.errorMsg(errnoFromError(err))
+	}
+	if !validReadCount(n, len(buf)) {
+		bufpool.PutMsgBuf(bufPtr)
+		return c.errorMsg(proto.EIO)
 	}
 	return &pooledRread{Rread: proto.Rread{Data: buf[:n]}, bufPtr: bufPtr}
 }
@@ -350,6 +358,10 @@ func (c *conn) handleReaddir(ctx context.Context, m *p9l.Treaddir) proto.Message
 				bufpool.PutMsgBuf(bufPtr)
 				return c.errorMsg(errnoFromError(err))
 			}
+			if !validReadCount(n, len(buf)) {
+				bufpool.PutMsgBuf(bufPtr)
+				return c.errorMsg(proto.EIO)
+			}
 			return &pooledRreaddir{Rreaddir: p9l.Rreaddir{Data: buf[:n]}, bufPtr: bufPtr}
 		}
 		if rd, ok := fs.handle.(FileReaddirer); ok {
@@ -365,6 +377,10 @@ func (c *conn) handleReaddir(ctx context.Context, m *p9l.Treaddir) proto.Message
 		if err != nil {
 			bufpool.PutMsgBuf(bufPtr)
 			return c.errorMsg(errnoFromError(err))
+		}
+		if !validReadCount(n, len(buf)) {
+			bufpool.PutMsgBuf(bufPtr)
+			return c.errorMsg(proto.EIO)
 		}
 		return &pooledRreaddir{Rreaddir: p9l.Rreaddir{Data: buf[:n]}, bufPtr: bufPtr}
 	}
@@ -1100,6 +1116,10 @@ func openFlagsFromUMode(mode uint8) (uint32, bool) {
 func validUCreatePerm(perm proto.FileMode, extension string) bool {
 	const unsupported = proto.DMDIR | p9u.DMSYMLINK | p9u.DMDEVICE | p9u.DMNAMEDPIPE | p9u.DMSOCKET
 	return extension == "" && perm&unsupported == 0
+}
+
+func validReadCount(n, size int) bool {
+	return n >= 0 && n <= size
 }
 
 func statFromAttr(fidPath string, qid proto.QID, attr proto.Attr) p9u.Stat {

@@ -145,6 +145,24 @@ func (f *readOnlyTestFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.A
 	return proto.Attr{Mode: f.mode, Size: uint64(len(f.content))}, nil
 }
 
+type invalidReadFile struct {
+	Inode
+	n int
+}
+
+func (f *invalidReadFile) Read(_ context.Context, _ []byte, _ uint64) (int, error) {
+	return f.n, nil
+}
+
+type invalidRawDir struct {
+	Inode
+	n int
+}
+
+func (d *invalidRawDir) RawReaddir(_ context.Context, _ []byte, _ uint64) (int, error) {
+	return d.n, nil
+}
+
 // Compile-time checks for bridge test types.
 var (
 	_ NodeOpener    = (*bridgeFile)(nil)
@@ -171,6 +189,9 @@ var (
 	_ NodeReader    = (*readOnlyTestFile)(nil)
 	_ NodeGetattrer = (*readOnlyTestFile)(nil)
 	_ InodeEmbedder = (*readOnlyTestFile)(nil)
+
+	_ NodeReader       = (*invalidReadFile)(nil)
+	_ NodeRawReaddirer = (*invalidRawDir)(nil)
 )
 
 // --- Phase 4 test node types ---
@@ -585,6 +606,46 @@ func TestBridge_OpenRead(t *testing.T) {
 	}
 }
 
+func TestBridge_ReadRejectsInvalidReaderCount(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		n    int
+	}{
+		{"negative", -1},
+		{"oversized", 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			file := &invalidReadFile{n: tt.n}
+			file.Init(proto.QID{Type: proto.QTFILE, Path: 10}, file)
+			c := &conn{fids: newFidTable(), msize: 1024}
+			if err := c.fids.add(1, &fidState{node: file, state: fidOpened}, 0); err != nil {
+				t.Fatalf("add fid: %v", err)
+			}
+
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("handleRead panicked: %v", r)
+				}
+			}()
+
+			msg := c.handleRead(t.Context(), &proto.Tread{Fid: 1, Count: 4})
+			rlerr, ok := msg.(*p9l.Rlerror)
+			if !ok {
+				t.Fatalf("handleRead returned %T, want Rlerror", msg)
+			}
+			if rlerr.Ecode != proto.EIO {
+				t.Fatalf("ecode = %v, want EIO", rlerr.Ecode)
+			}
+		})
+	}
+}
+
 func TestBridge_Write(t *testing.T) {
 	t.Parallel()
 
@@ -729,6 +790,46 @@ func TestBridge_Readdir(t *testing.T) {
 	}
 	if !names["alpha"] || !names["beta"] {
 		t.Errorf("dirent names = %v, want {alpha, beta}", names)
+	}
+}
+
+func TestBridge_ReaddirRejectsInvalidRawCount(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		n    int
+	}{
+		{"negative", -1},
+		{"oversized", 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := &invalidRawDir{n: tt.n}
+			dir.Init(proto.QID{Type: proto.QTDIR, Path: 10}, dir)
+			c := &conn{fids: newFidTable(), msize: 1024}
+			if err := c.fids.add(1, &fidState{node: dir, state: fidOpened}, 0); err != nil {
+				t.Fatalf("add fid: %v", err)
+			}
+
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("handleReaddir panicked: %v", r)
+				}
+			}()
+
+			msg := c.handleReaddir(t.Context(), &p9l.Treaddir{Fid: 1, Count: 4})
+			rlerr, ok := msg.(*p9l.Rlerror)
+			if !ok {
+				t.Fatalf("handleReaddir returned %T, want Rlerror", msg)
+			}
+			if rlerr.Ecode != proto.EIO {
+				t.Fatalf("ecode = %v, want EIO", rlerr.Ecode)
+			}
+		})
 	}
 }
 
