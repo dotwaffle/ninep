@@ -9,10 +9,18 @@ import (
 
 // inflightMap tracks in-flight request goroutines by tag.
 // It provides flush cancellation and drain-on-disconnect.
+//
+// The drained-counter pattern (instead of sync.WaitGroup) lets
+// waitWithDeadline return on context cancellation without leaking a
+// helper goroutine that parks indefinitely on wg.Wait. The drained
+// channel is created lazily on first wait and closed-and-cleared when
+// the inflight count returns to zero; subsequent waits allocate a new
+// channel.
 type inflightMap struct {
 	mu      sync.Mutex
 	entries map[proto.Tag]inflightEntry
-	wg      sync.WaitGroup
+	count   int
+	drained chan struct{}
 }
 
 type inflightEntry struct {
@@ -32,16 +40,32 @@ func (im *inflightMap) start(tag proto.Tag, rctx *requestCtx) {
 	im.mu.Lock()
 	defer im.mu.Unlock()
 	im.entries[tag] = inflightEntry{rctx: rctx}
-	im.wg.Add(1)
+	im.count++
 }
 
-// finish removes the tag from the inflight map and signals the WaitGroup.
-// Must be called exactly once per start call.
+// finish removes the tag from the inflight map and signals the drain
+// channel if no requests remain. Must be called exactly once per start call.
 func (im *inflightMap) finish(tag proto.Tag) {
 	im.mu.Lock()
 	defer im.mu.Unlock()
 	delete(im.entries, tag)
-	im.wg.Done()
+	im.count--
+	if im.count == 0 && im.drained != nil {
+		close(im.drained)
+		im.drained = nil
+	}
+}
+
+// drainChan returns a channel that is closed when count reaches zero, or
+// nil if count is already zero. Caller must hold im.mu.
+func (im *inflightMap) drainChan() chan struct{} {
+	if im.count == 0 {
+		return nil
+	}
+	if im.drained == nil {
+		im.drained = make(chan struct{})
+	}
+	return im.drained
 }
 
 // flush cancels the context of the request with the given tag. It does NOT
@@ -67,23 +91,28 @@ func (im *inflightMap) cancelAll() {
 
 // wait blocks until all in-flight handler goroutines have called finish.
 func (im *inflightMap) wait() {
-	im.wg.Wait()
+	im.mu.Lock()
+	ch := im.drainChan()
+	im.mu.Unlock()
+	if ch == nil {
+		return
+	}
+	<-ch
 }
 
 // waitWithDeadline blocks until all in-flight handlers finish or the context
 // deadline expires. Returns the context error if the deadline is exceeded.
 //
-// Note: the goroutine spawned here will leak if wg never reaches zero and the
-// deadline expires. This is acceptable in the cleanup and re-negotiation paths
-// because the connection is being torn down and the goroutine will exit once
-// all handler goroutines eventually finish and call wg.Done.
+// On deadline expiry no helper goroutine is left running: the drain channel
+// is closed by finish() when count reaches zero, so multiple callers can
+// share it and there is nothing parked on a WaitGroup.
 func (im *inflightMap) waitWithDeadline(ctx context.Context) error {
-	ch := make(chan struct{})
-	go func() {
-		im.wg.Wait()
-		close(ch)
-	}()
-
+	im.mu.Lock()
+	ch := im.drainChan()
+	im.mu.Unlock()
+	if ch == nil {
+		return nil
+	}
 	select {
 	case <-ch:
 		return nil
