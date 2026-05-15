@@ -1,10 +1,15 @@
 package proto
 
-// MaxDataSize is the hard upper bound on data allocations from untrusted wire
-// input (e.g. Rread, Twrite, Rreaddir count fields). It is intentionally
-// larger than the typical negotiated msize (4 MiB) to avoid rejecting valid
-// messages, but small enough to prevent a crafted uint32 count from triggering
-// a multi-gigabyte allocation and OOM.
+// MaxDataSize is a defence-in-depth backstop on data allocations from
+// untrusted wire input (e.g. Rread, Twrite, Rreaddir count fields). The
+// primary bound is the connection's negotiated msize, enforced at the
+// framing layer (server/conn.go and client/read_loop.go both reject
+// frames whose declared size exceeds c.msize). This constant only
+// matters for callers that decode message bodies without going through
+// framing -- it is intentionally larger than the typical negotiated
+// msize (4 MiB) so that valid messages on connections with a large
+// msize are not rejected, while still bounding any crafted uint32
+// count well below the address-space limit.
 const MaxDataSize = 1 << 24 // 16 MiB
 
 // Version represents a 9P protocol version string.
