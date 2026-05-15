@@ -227,6 +227,12 @@ func GetStringBuf(n int) *[]byte {
 	}
 	b := stringBufBuckets[idx].Get().(*[]byte)
 	if cap(*b) < n {
+		// Bucket invariant violated: a buffer whose cap is below the
+		// bucket's size class was somehow returned to the pool. Return
+		// it to its real bucket (if it matches another size class) so
+		// the pool is not silently drained, then allocate fresh.
+		atomic.AddUint64(&stringBufMisses, 1)
+		PutStringBuf(b)
 		nb := make([]byte, 0, n)
 		return &nb
 	}
