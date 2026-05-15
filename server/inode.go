@@ -52,13 +52,22 @@ var (
 
 // Init initializes the Inode with a QID and a back-reference to the
 // embedding node. If node is nil, the Inode references itself.
+//
+// The back-reference must also implement Node. This is satisfied
+// automatically when the embedder embeds *Inode (which promotes the
+// QID() method). Init panics if node is non-nil and does not
+// implement Node so that the misuse surfaces at construction time
+// rather than later from Lookup.
 func (i *Inode) Init(qid proto.QID, node InodeEmbedder) {
 	i.qid = qid
 	if node == nil {
 		i.node = i
-	} else {
-		i.node = node
+		return
 	}
+	if _, ok := node.(Node); !ok {
+		panic("server.Inode.Init: node argument must implement Node (typically by embedding *Inode)")
+	}
+	i.node = node
 }
 
 // EmbeddedInode returns a pointer to the embedded Inode. Satisfies
@@ -121,7 +130,15 @@ func (i *Inode) Lookup(_ context.Context, name string) (Node, error) {
 	if !ok {
 		return nil, proto.ENOENT
 	}
-	return child.node.(Node), nil
+	n, ok := child.node.(Node)
+	if !ok {
+		// Init enforces this at construction; an Inode reaching the
+		// tree without satisfying Node is a server-side bug, not a
+		// missing path. Treat it as "not found" rather than panicking
+		// inside dispatch.
+		return nil, proto.ENOENT
+	}
+	return n, nil
 }
 
 // Open returns (nil, 0, proto.ENOSYS). Override by implementing NodeOpener.
