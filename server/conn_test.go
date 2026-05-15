@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -280,6 +281,31 @@ func newDirNode(qid proto.QID) *dirNode {
 	return n
 }
 
+type blockingListener struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newBlockingListener() *blockingListener {
+	return &blockingListener{closed: make(chan struct{})}
+}
+
+func (l *blockingListener) Accept() (net.Conn, error) {
+	<-l.closed
+	return nil, net.ErrClosed
+}
+
+func (l *blockingListener) Close() error {
+	l.once.Do(func() {
+		close(l.closed)
+	})
+	return nil
+}
+
+func (l *blockingListener) Addr() net.Addr {
+	return &net.TCPAddr{}
+}
+
 func TestServeConn(t *testing.T) {
 	t.Parallel()
 
@@ -340,6 +366,31 @@ func TestServeConn(t *testing.T) {
 	_ = client.Close()
 	<-done
 	cancel()
+}
+
+func TestServeReturnsOnContextCancel(t *testing.T) {
+	t.Parallel()
+
+	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
+	srv := New(root, WithMaxMsize(65536))
+	ln := newBlockingListener()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Serve(ctx, ln)
+	}()
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != context.Canceled {
+			t.Fatalf("Serve err = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		_ = ln.Close()
+		t.Fatal("Serve did not return after context cancellation")
+	}
 }
 
 func TestServeListener(t *testing.T) {

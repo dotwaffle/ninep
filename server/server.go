@@ -81,7 +81,18 @@ func New(root Node, opts ...Option) *Server {
 // It blocks until the context is cancelled or the listener returns an error.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	var wg sync.WaitGroup
-	defer wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = ln.Close()
+		case <-done:
+		}
+	}()
+	defer func() {
+		close(done)
+		wg.Wait()
+	}()
 
 	for {
 		nc, err := ln.Accept()
