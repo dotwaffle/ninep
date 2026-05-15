@@ -24,7 +24,7 @@ func (n *Node) chmodResolved(mode uint32) error {
 	if err != nil {
 		return err
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	return unix.Fchmod(fd, mode)
 }
 
@@ -38,7 +38,7 @@ func (n *Node) truncateResolved(size uint64) error {
 	if err != nil {
 		return err
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	return unix.Ftruncate(fd, int64(size))
 }
 
