@@ -334,6 +334,12 @@ func (c *Conn) Read(ctx context.Context, fid proto.Fid, offset uint64, count uin
 		putCachedRMsg(resp)
 		return nil, err
 	}
+	if uint64(len(r.Data)) > uint64(count) {
+		err := fmt.Errorf("client: Rread count %d exceeds requested count %d", len(r.Data), count)
+		putCachedRMsg(resp)
+		c.signalShutdown()
+		return nil, err
+	}
 	// Copy Data out of the pooled Rread. putCachedRMsg nil's Data before
 	// returning to the cache (aliasing invariant), so the backing buffer is
 	// reusable by the next Rread borrower immediately.
@@ -494,6 +500,12 @@ func (c *Conn) Write(ctx context.Context, fid proto.Fid, offset uint64, data []b
 		return 0, err
 	}
 	count := r.Count
+	if uint64(count) > uint64(len(data)) {
+		err := fmt.Errorf("client: Rwrite count %d exceeds write size %d", count, len(data))
+		putCachedRMsg(resp)
+		c.signalShutdown()
+		return 0, err
+	}
 	putCachedRMsg(resp)
 	return count, nil
 }

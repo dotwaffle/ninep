@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,6 +179,70 @@ func TestRoundTrip_RerrorTranslatedByCaller(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("roundTrip did not return in time")
+	}
+}
+
+func TestConnReadRejectsOversizedRread(t *testing.T) {
+	t.Parallel()
+
+	c, srvNC := newTestConn(t)
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := c.Read(context.Background(), 1, 0, 4)
+		resultCh <- err
+	}()
+
+	tag := srvDrainOne(t, srvNC)
+	c.inflight.deliver(tag, &proto.Rread{Data: []byte("12345")})
+
+	select {
+	case err := <-resultCh:
+		if err == nil {
+			t.Fatal("Read returned nil error")
+		}
+		if !strings.Contains(err.Error(), "Rread") {
+			t.Fatalf("Read err = %v, want Rread protocol error", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Read did not return")
+	}
+
+	select {
+	case <-c.closeCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Conn did not shut down after oversized Rread")
+	}
+}
+
+func TestConnWriteRejectsOversizedRwriteCount(t *testing.T) {
+	t.Parallel()
+
+	c, srvNC := newTestConn(t)
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := c.Write(context.Background(), 1, 0, []byte("abc"))
+		resultCh <- err
+	}()
+
+	tag := srvDrainOne(t, srvNC)
+	c.inflight.deliver(tag, &proto.Rwrite{Count: 4})
+
+	select {
+	case err := <-resultCh:
+		if err == nil {
+			t.Fatal("Write returned nil error")
+		}
+		if !strings.Contains(err.Error(), "Rwrite") {
+			t.Fatalf("Write err = %v, want Rwrite protocol error", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Write did not return")
+	}
+
+	select {
+	case <-c.closeCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Conn did not shut down after oversized Rwrite count")
 	}
 }
 
