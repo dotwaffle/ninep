@@ -12,8 +12,8 @@ import (
 // other files, the fd is opened with oPath|O_NOFOLLOW.
 //
 // parentFd and name are stored for nodes that need parent-anchored *at calls
-// (Readlink, Link, Setattr Lchown/UtimesNanoAt) so the Linux /proc/self/fd
-// trick can be replaced with portable *at syscalls.
+// (Readlink, Link, Setattr Lchown/UtimesNanoAt) and for platforms that cannot
+// reopen a file from the held descriptor.
 type Node struct {
 	server.Inode
 	fd       int

@@ -81,7 +81,7 @@ func (n *Node) Create(_ context.Context, name string, flags uint32, mode proto.F
 		return nil, nil, 0, toProtoErr(err)
 	}
 
-	child := &Node{fd: pathFd, root: n.root}
+	child := &Node{fd: pathFd, root: n.root, parentFd: n.fd, name: name}
 	child.Init(statToQID(&st), child)
 
 	return child, &fileHandle{fd: fd}, 0, nil
@@ -108,7 +108,7 @@ func (n *Node) Mkdir(_ context.Context, name string, mode proto.FileMode, _ uint
 		return nil, toProtoErr(err)
 	}
 
-	child := &Node{fd: fd, root: n.root}
+	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
 	child.Init(statToQID(&st), child)
 
 	return child, nil

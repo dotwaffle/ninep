@@ -64,28 +64,14 @@ var (
 )
 
 // Open opens the node. For directories, returns nil (readdir uses the
-// NodeReaddirer interface). For non-directories, opens a fresh fd via the
-// parent directory's fd (Openat(parentFd, name, flags, 0)) -- replaces the
-// Linux /proc/self/fd reopen so the same code path works on FreeBSD.
-//
-// Root nodes (parentFd == 0, empty name) re-open via the host path stored
-// on Root.
+// NodeReaddirer interface). For non-directories, opens a fresh fd from the
+// resolved node reference so a later directory-entry replacement cannot
+// redirect the open.
 func (n *Node) Open(_ context.Context, flags uint32) (server.FileHandle, uint32, error) {
 	if n.QID().Type == proto.QTDIR {
 		return nil, 0, nil
 	}
-	if n.parentFd == 0 && n.name == "" {
-		// Root or root-equivalent: re-open via stored host path.
-		if n.root == nil || n.root.hostPath == "" {
-			return nil, 0, proto.EINVAL
-		}
-		fd, err := unix.Open(n.root.hostPath, int(flags)&^unix.O_NOFOLLOW, 0)
-		if err != nil {
-			return nil, 0, toProtoErr(err)
-		}
-		return &fileHandle{fd: fd}, 0, nil
-	}
-	fd, err := unix.Openat(n.parentFd, n.name, int(flags)&^unix.O_NOFOLLOW, 0)
+	fd, err := n.openResolved(flags)
 	if err != nil {
 		return nil, 0, toProtoErr(err)
 	}
@@ -108,7 +94,7 @@ func (n *Node) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) 
 // fall back to operations on the held fd or the stored host path.
 func (n *Node) Setattr(_ context.Context, attr proto.SetAttr) error {
 	if attr.Valid&proto.SetAttrMode != 0 {
-		if err := unix.Fchmod(n.fd, attr.Mode); err != nil {
+		if err := n.chmodResolved(attr.Mode); err != nil {
 			return toProtoErr(err)
 		}
 	}
@@ -135,7 +121,7 @@ func (n *Node) Setattr(_ context.Context, attr proto.SetAttr) error {
 		}
 	}
 	if attr.Valid&proto.SetAttrSize != 0 {
-		if err := unix.Ftruncate(n.fd, int64(attr.Size)); err != nil {
+		if err := n.truncateResolved(attr.Size); err != nil {
 			return toProtoErr(err)
 		}
 	}

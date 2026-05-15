@@ -441,6 +441,97 @@ func TestRoot_Setattr_Size(t *testing.T) {
 	_ = syscall.Close(fd)
 }
 
+func TestLookupOpen_UsesResolvedFD(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	rootDir := filepath.Join(parent, "root")
+	if err := os.Mkdir(rootDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(rootDir, "victim")
+	if err := os.WriteFile(path, []byte("safe"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(parent, "outside")
+	if err := os.WriteFile(outside, []byte("outside"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := NewRoot(rootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close(t.Context()) })
+
+	ctx := t.Context()
+	child, err := root.Lookup(ctx, "victim")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	t.Cleanup(func() { _ = child.(*Node).Close(t.Context()) })
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, path); err != nil {
+		t.Fatal(err)
+	}
+
+	fh, _, err := child.(*Node).Open(ctx, unix.O_RDONLY)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = fh.(server.FileReleaser).Release(t.Context()) })
+
+	buf := make([]byte, len("outside"))
+	n, err := fh.(server.FileReader).Read(ctx, buf, 0)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got := string(buf[:n]); got != "safe" {
+		t.Fatalf("Read = %q, want pinned content %q", got, "safe")
+	}
+}
+
+func TestLookupSetattr_SizeUsesResolvedFD(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "testfile")
+	if err := os.WriteFile(path, []byte("hello world"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := NewRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close(t.Context()) })
+
+	ctx := t.Context()
+	child, err := root.Lookup(ctx, "testfile")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	t.Cleanup(func() { _ = child.(*Node).Close(t.Context()) })
+
+	if err := child.(*Node).Setattr(ctx, proto.SetAttr{
+		Valid: proto.SetAttrSize,
+		Size:  5,
+	}); err != nil {
+		t.Fatalf("Setattr(Size): %v", err)
+	}
+
+	var st syscall.Stat_t
+	if err := syscall.Stat(path, &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.Size != 5 {
+		t.Fatalf("size after Setattr = %d, want 5", st.Size)
+	}
+}
+
 func TestRoot_Close(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
