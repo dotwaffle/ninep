@@ -11,8 +11,8 @@ import (
 
 // TestRequestCtxTflushCancel verifies that after flush() on a borrowed
 // requestCtx, Done() returns a closed channel AND Err() returns
-// context.Canceled — behavioral parity with the prior context.WithCancel
-// implementation (CONTEXT D-05, RESEARCH OQ-2).
+// context.Canceled - behavioral parity with the prior
+// context.WithCancel implementation.
 func TestRequestCtxTflushCancel(t *testing.T) {
 	t.Parallel()
 
@@ -42,9 +42,9 @@ func TestRequestCtxTflushCancel(t *testing.T) {
 	}
 }
 
-// TestRequestCtxTflushCancelBeforeDone verifies the flush-then-Done ordering:
-// if flush() runs before Done() is ever called, the next Done() call must
-// return an already-closed channel. Guards Pitfall 2 (RESEARCH).
+// TestRequestCtxTflushCancelBeforeDone verifies the flush-then-Done
+// ordering: if flush() runs before Done() is ever called, the next
+// Done() call must return an already-closed channel.
 func TestRequestCtxTflushCancelBeforeDone(t *testing.T) {
 	t.Parallel()
 
@@ -59,17 +59,18 @@ func TestRequestCtxTflushCancelBeforeDone(t *testing.T) {
 	done := r.Done()
 	select {
 	case <-done:
-		// expected — Done() lazy-allocated and closed the channel because
+		// expected - Done() lazy-allocated and closed the channel because
 		// flushed was already true.
 	default:
 		t.Fatal("Done() returned open channel after prior flush()")
 	}
 }
 
-// TestRequestCtxPoolReuseNoPhantomCancel is the regression guard for D-08 /
-// Pitfall 1. Request A borrows, observes Done(), is flushed, and returns to
-// the pool. Request B borrows and MUST observe Err()==nil and a non-closed
-// Done() channel. synctest gives deterministic scheduling.
+// TestRequestCtxPoolReuseNoPhantomCancel is the regression guard for
+// pool-reuse phantom cancellation. Request A borrows, observes
+// Done(), is flushed, and returns to the pool. Request B borrows and
+// MUST observe Err()==nil and a non-closed Done() channel. synctest
+// gives deterministic scheduling.
 func TestRequestCtxPoolReuseNoPhantomCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		// Request A: borrow, observe Done(), flush, return to pool.
@@ -106,7 +107,7 @@ func TestRequestCtxPoolReuseNoPhantomCancel(t *testing.T) {
 }
 
 // TestRequestCtxFlushIdempotent asserts flush() is idempotent and the
-// closeOnce guard prevents double-close panic. Covers Pitfall 3 (RESEARCH).
+// closeOnce guard prevents double-close panic.
 func TestRequestCtxFlushIdempotent(t *testing.T) {
 	t.Parallel()
 
@@ -120,7 +121,7 @@ func TestRequestCtxFlushIdempotent(t *testing.T) {
 	if err := r.Err(); err != context.Canceled {
 		t.Fatalf("Err() after double flush = %v, want context.Canceled", err)
 	}
-	// Receive from closed channel returns zero value, non-blocking — two
+	// Receive from closed channel returns zero value, non-blocking - two
 	// recv ops both succeed on a channel closed exactly once.
 	select {
 	case <-done:
@@ -130,9 +131,9 @@ func TestRequestCtxFlushIdempotent(t *testing.T) {
 }
 
 // TestRequestCtxAllocs asserts 0 allocs/op at steady state (pool hit) and
-// ≤1 alloc/op on cold pool (pool miss). PERF-08.2.
+// <=1 alloc/op on cold pool (pool miss).
 func TestRequestCtxAllocs(t *testing.T) {
-	// Do not run t.Parallel — testing.AllocsPerRun demands a steady
+	// Do not run t.Parallel -- testing.AllocsPerRun demands a steady
 	// allocator and parallel tests may perturb the sync.Pool.
 
 	parent := context.Background()

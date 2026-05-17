@@ -16,8 +16,8 @@ import (
 // # Concurrency
 //
 // Raw methods are safe for concurrent use by multiple goroutines -- they
-// delegate to Conn, which is goroutine-safe (database/sql.DB model per
-// Phase 19 D-07). The Conn serializes wire emission via its write
+// delegate to Conn, which is goroutine-safe (database/sql.DB model).
+// The Conn serializes wire emission via its write
 // mutex, and the read loop routes responses by tag. This means N
 // concurrent Raw.Write calls on the same fid dispatch N Twrite frames
 // sequentially on the wire; the wins over sequential round-trips come
@@ -28,8 +28,8 @@ import (
 // Raw does not call the fid allocator. Callers that want to bypass the
 // *File handle and manage fid lifecycle explicitly must supply fid
 // values from their own pool (e.g. a port of an existing 9P client
-// that tracks fids in a parallel structure). Plan 20-03 will expose
-// AcquireFid/ReleaseFid to integrate with the Conn's allocator.
+// that tracks fids in a parallel structure). The AcquireFid /
+// ReleaseFid methods integrate with the Conn's allocator.
 type Raw struct {
 	c *Conn
 }
@@ -44,8 +44,8 @@ func (c *Conn) Raw() *Raw {
 
 // Attach mirrors the low-level [Conn.AttachFid]. Caller supplies fid.
 // Kept at the "Attach" name on Raw because Raw's contract is explicit
-// fid lifecycle; the high-level *File-returning Attach lives on *Conn
-// as of Phase 20.
+// fid lifecycle; the high-level *File-returning Attach lives on
+// *Conn.
 func (r *Raw) Attach(ctx context.Context, fid proto.Fid, uname, aname string) (proto.QID, error) {
 	return r.c.AttachFid(ctx, fid, uname, aname)
 }
@@ -58,8 +58,8 @@ func (r *Raw) Walk(ctx context.Context, fid, newFid proto.Fid, names []string) (
 
 // Clunk mirrors [Conn.Clunk]. Releases the server-side fid binding;
 // callers that allocated the fid from the Conn's allocator remain
-// responsible for returning it to the allocator (Plan 20-03 wires
-// this).
+// responsible for returning it to the allocator (via
+// [Raw.ReleaseFid]).
 func (r *Raw) Clunk(ctx context.Context, fid proto.Fid) error {
 	return r.c.Clunk(ctx, fid)
 }
@@ -100,7 +100,7 @@ func (r *Raw) Open(ctx context.Context, fid proto.Fid, mode uint8) (proto.QID, u
 
 // Create mirrors the low-level [Conn.CreateFid] (9P2000.u create-and-
 // open wire op). Requires a .u-negotiated Conn. The high-level
-// path-taking Create lives on *Conn as of Phase 20.
+// path-taking Create lives on *Conn.
 func (r *Raw) Create(ctx context.Context, fid proto.Fid, name string, perm proto.FileMode, mode uint8, extension string) (proto.QID, uint32, error) {
 	return r.c.CreateFid(ctx, fid, name, perm, mode, extension)
 }
@@ -121,8 +121,9 @@ func (r *Raw) AcquireFid() (proto.Fid, error) {
 // touch the wire; pair with [Raw.Clunk] when the fid is server-bound.
 //
 // Ordering: when fid IS server-bound, callers MUST wait for the
-// corresponding Rclunk to be received BEFORE calling ReleaseFid. See
-// 20-RESEARCH.md §9 Pitfall 6.
+// corresponding Rclunk to be received BEFORE calling ReleaseFid - a
+// released-then-reused fid before the Rclunk lands races with the
+// next Twalk on the same fid number.
 func (r *Raw) ReleaseFid(fid proto.Fid) {
 	r.c.fids.release(fid)
 }

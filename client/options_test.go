@@ -109,8 +109,7 @@ func TestWithLogger_NilIsNoOp(t *testing.T) {
 }
 
 // TestWithRequestTimeout_Default verifies the default config carries a zero
-// requestTimeout value — "infinite wait / Linux v9fs parity" per D-22 /
-// Pitfall 9.
+// requestTimeout value - "infinite wait / Linux v9fs parity".
 func TestWithRequestTimeout_Default(t *testing.T) {
 	t.Parallel()
 	c := newConfig()
@@ -158,7 +157,7 @@ func TestWithRequestTimeout_Negative(t *testing.T) {
 }
 
 // TestConn_OpCtx_DefaultInfinite verifies opCtx returns the parent ctx
-// unchanged when requestTimeout is zero — no hidden allocation, no hidden
+// unchanged when requestTimeout is zero -- no hidden allocation, no hidden
 // deadline, caller gets what they passed in.
 func TestConn_OpCtx_DefaultInfinite(t *testing.T) {
 	t.Parallel()

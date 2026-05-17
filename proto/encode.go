@@ -12,12 +12,12 @@ import (
 // or a *ByteCounter.
 //
 // Rationale: a straightforward `var buf [N]byte; w.Write(buf[:])` escapes
-// to the heap because `w` is an interface — escape analysis cannot prove
+// to the heap because `w` is an interface -- escape analysis cannot prove
 // that w.Write does not retain the slice. On the concrete *bytes.Buffer
 // path we instead use buf.AvailableBuffer() + binary.LittleEndian.AppendUint*
 // to append directly into the buffer's spare capacity with zero allocations.
 // On *ByteCounter we add the field width to the counter and never touch
-// bytes at all — used by observability middleware to measure wire size
+// bytes at all -- used by observability middleware to measure wire size
 // without materialising a buffer.
 //
 // Fallback semantics are unchanged: bytes written are bit-identical on

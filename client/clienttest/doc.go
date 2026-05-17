@@ -4,15 +4,15 @@
 // The primary entry point is [Pair], which returns a live
 // (*server.Server, *client.Conn) pair with teardown registered via
 // [testing.TB.Cleanup]. [MemfsPair] is sugar for the common case where
-// the server root is a [memfs] tree — it allocates a fresh
+// the server root is a [memfs] tree -- it allocates a fresh
 // *server.QIDGenerator, builds an empty *memfs.MemDir, and hands the
 // root to a caller-supplied build callback before pairing.
 //
 // The package mirrors [net/http/httptest] in shape and ergonomics.
-// External consumers — projects that depend on ninep and want to build
+// External consumers -- projects that depend on ninep and want to build
 // integration tests against paired server+client halves without hand-
 // wiring net.Pipe, server.New, server.ServeConn, client.Dial, and
-// cleanup themselves — import this package directly.
+// cleanup themselves -- import this package directly.
 //
 // # Stability
 //

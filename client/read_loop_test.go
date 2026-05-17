@@ -62,8 +62,8 @@ func dialPairL(t *testing.T) (*client.Conn, net.Conn) {
 // registered respCh receives it. Because the client's inflight is
 // unexported, we exercise this indirectly via a round-trip test harness
 // that uses the public interface: the pair helper is already exercising
-// this end-to-end through Dial. For Task 3 we add low-level probes that
-// drive the wire directly.
+// this end-to-end through Dial. Low-level probes here drive the wire
+// directly.
 //
 // Placed in client_test package so it can only use exported surface;
 // but since inflight is unexported, we validate via observable side
@@ -150,7 +150,7 @@ func TestReadLoop_SmallerThanHeader(t *testing.T) {
 }
 
 // TestReadLoop_UnknownMessageType: send a frame with type=99 (unknown).
-// readLoop logs + shuts down (per plan's recommendation — wire stream is
+// readLoop logs + shuts down (per plan's recommendation -- wire stream is
 // now misaligned).
 func TestReadLoop_UnknownMessageType(t *testing.T) {
 	t.Parallel()
@@ -175,14 +175,14 @@ func TestReadLoop_UnknownMessageType(t *testing.T) {
 	}
 }
 
-// TestReadLoop_DecodeError: send a frame whose body is truncated — the
-// R-message decoder will error. readLoop shuts down (Pitfall 10-B).
+// TestReadLoop_DecodeError: send a frame whose body is truncated - the
+// R-message decoder will error and readLoop shuts down.
 func TestReadLoop_DecodeError(t *testing.T) {
 	t.Parallel()
 	cli, srvNC := dialPairL(t)
 
 	// Claim a 20-byte Rread (which expects count[4] + data[count]) but
-	// only write size=9 (7 header + 2 body bytes — too short for count).
+	// only write size=9 (7 header + 2 body bytes -- too short for count).
 	var hdr [7]byte
 	binary.LittleEndian.PutUint32(hdr[0:4], 9)
 	hdr[4] = uint8(proto.TypeRread)
@@ -220,7 +220,7 @@ func TestReadLoop_DeliversRlerror(t *testing.T) {
 	// Give the read loop a moment to process.
 	time.Sleep(50 * time.Millisecond)
 
-	// Close server — readLoop should exit via normal shutdown path.
+	// Close server -- readLoop should exit via normal shutdown path.
 	_ = srvNC.Close()
 	done := make(chan struct{})
 	go func() {
@@ -235,13 +235,13 @@ func TestReadLoop_DeliversRlerror(t *testing.T) {
 }
 
 // TestReadLoop_DeliversMultipleRmessages exercises the dispatch loop over
-// several R-messages in a row — verifies the framing + per-frame
+// several R-messages in a row -- verifies the framing + per-frame
 // bytes.Reader.Reset loop works across iterations.
 func TestReadLoop_DeliversMultipleRmessages(t *testing.T) {
 	t.Parallel()
 	cli, srvNC := dialPairL(t)
 
-	// Send three Rclunk frames on tags 1, 2, 3 (unregistered — silently
+	// Send three Rclunk frames on tags 1, 2, 3 (unregistered -- silently
 	// dropped but the wire stream advances correctly).
 	for _, tag := range []proto.Tag{1, 2, 3} {
 		if err := p9l.Encode(srvNC, tag, &proto.Rclunk{}); err != nil {
@@ -251,7 +251,7 @@ func TestReadLoop_DeliversMultipleRmessages(t *testing.T) {
 
 	// If the per-iteration framing advanced correctly, Close after
 	// peer-close is clean. If the second frame trashed the stream,
-	// readLoop exited after Rclunk#1 and Close returned immediately —
+	// readLoop exited after Rclunk#1 and Close returned immediately --
 	// we cannot distinguish from this level, but TestReadLoop_ExitsOnNetClose
 	// + TestReadLoop_DecodeError already gate the "must not exit" path.
 	time.Sleep(100 * time.Millisecond)

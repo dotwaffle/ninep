@@ -12,7 +12,7 @@ unsupported operations.
 ## Features
 
 - 9P2000.L (Linux v9fs compatible) and 9P2000.u protocol support
-- Capability-based API -- implement only the interfaces you need
+- Capability-based API: implement only the interfaces you need
 - Automatic ENOSYS for unimplemented operations via Inode embedding
 - OpenTelemetry traces and metrics (API only, no SDK dependency)
 - Structured logging via slog with trace correlation
@@ -81,8 +81,8 @@ func main() {
 
 ## Platform support
 
-The library — `proto/`, `server/`, `server/memfs/`, `server/fstest/`,
-`internal/bufpool/` — builds and runs on every platform Go supports.
+The library (`proto/`, `server/`, `server/memfs/`, `server/fstest/`,
+`internal/bufpool/`) builds and runs on every platform Go supports.
 
 The reference `server/passthrough/` filesystem is **Linux-only**: it uses
 `O_PATH`, the `*at` syscall family, and the Linux `Lgetxattr` xattr API

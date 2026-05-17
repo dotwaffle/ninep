@@ -164,8 +164,8 @@ func TestFileReadAt_NegativeOffset(t *testing.T) {
 // data race. Each goroutine verifies its observed bytes match the
 // file content at the requested offset.
 //
-// Per D-12 ReadAt serializes under f.mu; this test primarily proves
-// "no race, correct serialization," not parallel performance.
+// ReadAt serializes under f.mu; this test primarily proves "no race,
+// correct serialization," not parallel performance.
 func TestFileReadAt_Concurrent_Race(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))

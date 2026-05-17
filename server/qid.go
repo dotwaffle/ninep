@@ -44,7 +44,7 @@ func PathQID(t proto.QIDType, path string) proto.QID {
 // nodeQID resolves the QID for a node using the following priority:
 //  1. QIDer interface (node provides its own QID)
 //  2. InodeEmbedder (use the embedded Inode's QID)
-//  3. Node.QID() fallback (Phase 2 compatibility)
+//  3. Node.QID() fallback
 func nodeQID(node Node) proto.QID {
 	if q, ok := node.(QIDer); ok {
 		return q.QID()

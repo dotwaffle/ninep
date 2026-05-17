@@ -125,7 +125,7 @@ func TestClient_Stat_Consistency_LvsU(t *testing.T) {
 }
 
 // TestClient_Getattr_LFields asserts .L Getattr surfaces rich fields
-// attrToStat drops (NLink specifically — memfs does not populate
+// attrToStat drops (NLink specifically -- memfs does not populate
 // Blocks/BTime/Gen/DataVersion, so NLink is the observable fingerprint).
 func TestClient_Getattr_LFields(t *testing.T) {
 	t.Parallel()
@@ -200,7 +200,7 @@ func TestClient_Stat_PropagatesRlerror(t *testing.T) {
 	f, err := cli.OpenFile(ctx, "broken.txt", 0, 0)
 	if err != nil {
 		// Some open paths run Getattr through the bridge; if Open already
-		// surfaced ENOENT, that's also a valid pass path for the test — the
+		// surfaced ENOENT, that's also a valid pass path for the test -- the
 		// critical assertion is that the error is a wrapped *Error.
 		var ce *client.Error
 		if !errors.As(err, &ce) || !errors.Is(err, proto.ENOENT) {

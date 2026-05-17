@@ -61,7 +61,7 @@ func New(root Node, opts ...Option) *Server {
 	// nil, skip the probe entirely -- tracerRecording and meterEnabled stay
 	// false and newConn's gate is false, so the middleware is never installed.
 	// When either is non-nil, fill the other with a noop default (matching
-	// the prior conn.go install-gate pattern, moved up here per D-04) and run
+	// the prior conn.go install-gate pattern, moved up here) and run
 	// the probe against the real (possibly noop) providers.
 	if s.tracerProvider != nil || s.meterProvider != nil {
 		if s.tracerProvider == nil {

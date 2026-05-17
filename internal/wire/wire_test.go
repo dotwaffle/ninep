@@ -142,7 +142,7 @@ func TestReadBody(t *testing.T) {
 }
 
 // TestReadBody_PreservesSliceLenCap locks the bucket-pool invariant. ReadBody
-// must NOT resize the slice it receives — callers (server/conn.go) source buf
+// must NOT resize the slice it receives -- callers (server/conn.go) source buf
 // from bufpool.GetMsgBuf which returns a bucket-sized buffer sliced to the
 // requested length. If ReadBody resized via append, PutMsgBuf would fail to
 // match the bucket cap and drop the buffer to GC.
@@ -176,7 +176,7 @@ func TestReadBody_PreservesSliceLenCap(t *testing.T) {
 // allocates exactly 1×[4]byte per call, matching what handleRequest's
 // per-iteration `var hdrBuf [4]byte` already costs.
 //
-// This assertion locks the "no NEW allocations" invariant — if someone later
+// This assertion locks the "no NEW allocations" invariant -- if someone later
 // adds an allocation (e.g., constructs an error with %v instead of %w), this
 // test catches it.
 func TestReadSize_AllocBudget(t *testing.T) {
@@ -190,7 +190,7 @@ func TestReadSize_AllocBudget(t *testing.T) {
 		}
 	})
 	// Budget: 1 alloc (the [4]byte hdr escaping through io.Reader). Allow
-	// exactly this count — more would be a regression.
+	// exactly this count -- more would be a regression.
 	if allocs > 1 {
 		t.Fatalf("ReadSize allocs/op = %v, want <= 1 (matches pre-extraction hdrBuf escape)", allocs)
 	}
@@ -198,7 +198,7 @@ func TestReadSize_AllocBudget(t *testing.T) {
 
 // TestReadBody_ZeroAlloc asserts ReadBody allocates nothing when the caller
 // provides a reusable reader and buffer. Unlike ReadSize, ReadBody does NOT
-// declare any locals — it's a thin io.ReadFull wrapper. The buf argument
+// declare any locals -- it's a thin io.ReadFull wrapper. The buf argument
 // comes from the caller's pool so nothing escapes inside the helper.
 func TestReadBody_ZeroAlloc(t *testing.T) {
 	body := make([]byte, 64)
@@ -282,7 +282,7 @@ func TestWriteFramesLocked_ConsumesBufs(t *testing.T) {
 	}
 
 	// v.consume zeroes both length AND capacity on full consumption. This is
-	// the footgun documented on WriteFramesLocked — callers must re-slice
+	// the footgun documented on WriteFramesLocked -- callers must re-slice
 	// from a conn-resident backing array on every call.
 	if got := len(bufs); got != 0 {
 		t.Fatalf("post-call len(bufs) = %d, want 0 (v.consume semantic)", got)
@@ -312,7 +312,7 @@ func TestWriteFramesLocked_LockingIsCallersJob(t *testing.T) {
 
 	// Each goroutine writes a distinct 4-byte marker while holding mu. If
 	// the mutex contract is honoured, the reader sees exactly one complete
-	// 4-byte marker followed by another — never interleaved halves.
+	// 4-byte marker followed by another -- never interleaved halves.
 	writeMsg := func(payload []byte) {
 		defer wg.Done()
 		mu.Lock()
@@ -337,7 +337,7 @@ func TestWriteFramesLocked_LockingIsCallersJob(t *testing.T) {
 	wg.Wait()
 
 	// The two 4-byte halves must each equal one of the markers and the two
-	// halves must differ — interleaving would produce mixed bytes.
+	// halves must differ -- interleaving would produce mixed bytes.
 	first := got[:4]
 	second := got[4:]
 	okFirst := bytes.Equal(first, msgA) || bytes.Equal(first, msgB)

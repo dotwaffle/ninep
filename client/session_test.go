@@ -21,8 +21,7 @@ func sessionTestCtx(t *testing.T) (context.Context, context.CancelFunc) {
 
 // newClientServerPairLopenReject returns a client.Conn whose server
 // fails every Tlopen with ECONNREFUSED via middleware. Used to
-// exercise OpenFile's post-Walk Lopen-failure fid cleanup path
-// (Pitfall 3).
+// exercise OpenFile's post-Walk Lopen-failure fid cleanup path.
 func newClientServerPairLopenReject(tb testing.TB, root server.Node) (*client.Conn, func()) {
 	tb.Helper()
 
@@ -148,7 +147,7 @@ func TestConnOpenFile_L(t *testing.T) {
 }
 
 // TestConnOpenFile_WalkFailure_ReleasesFid: OpenFile on a nonexistent
-// path returns an error and leaks no fid (Pitfall 2).
+// path returns an error and leaks no fid.
 func TestConnOpenFile_WalkFailure_ReleasesFid(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
@@ -174,9 +173,9 @@ func TestConnOpenFile_WalkFailure_ReleasesFid(t *testing.T) {
 }
 
 // TestConnOpenFile_LopenFailure_ClunksAndReleases: when Walk succeeds
-// but Lopen fails, the walked-to fid must be Tclunked AND released
-// (Pitfall 3 in 20-RESEARCH.md §9). We provoke Lopen failure via a
-// server-side middleware that replies with Rlerror for every Tlopen.
+// but Lopen fails, the walked-to fid must be Tclunked AND released.
+// We provoke Lopen failure via a server-side middleware that replies
+// with Rlerror for every Tlopen.
 func TestConnOpenFile_LopenFailure_ClunksAndReleases(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPairLopenReject(t, buildTestRoot(t))

@@ -210,9 +210,9 @@ func TestClient_XattrSet_Happy(t *testing.T) {
 	}
 }
 
-// TestClient_XattrSet_CloneIsolation proves Pitfall 1: the caller's
-// *File f is NOT invalidated by XattrSet. Two consecutive XattrSets on
-// the same *File must both succeed (each Set clones internally).
+// TestClient_XattrSet_CloneIsolation proves the caller's *File f is NOT
+// invalidated by XattrSet. Two consecutive XattrSets on the same *File
+// must both succeed (each Set clones internally).
 func TestClient_XattrSet_CloneIsolation(t *testing.T) {
 	t.Parallel()
 	root, _ := xattrRoot(t, "x", map[string][]byte{})

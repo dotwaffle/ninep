@@ -149,8 +149,8 @@ The harness includes 20 test cases organized into categories:
 
 Extended conformance suites also exist alongside `Check` and `CheckFactory`:
 
-- `fstest.CheckLock(t, newRoot)` — exercises Tlock / Tgetlock semantics (`server/fstest/fstest_lock.go`).
-- `fstest.CheckXattr(t, newRoot)` — exercises Txattrwalk / Txattrcreate and the two-phase xattr fid lifecycle (`server/fstest/fstest_xattr.go`).
+- `fstest.CheckLock(t, newRoot)` -- exercises Tlock / Tgetlock semantics (`server/fstest/fstest_lock.go`).
+- `fstest.CheckXattr(t, newRoot)` -- exercises Txattrwalk / Txattrcreate and the two-phase xattr fid lifecycle (`server/fstest/fstest_xattr.go`).
 
 Both take the factory form because locks and xattr fids attach mutable state to the filesystem.
 
@@ -171,7 +171,7 @@ for _, tc := range fstest.Cases {
 
 ### Writing new fstest cases
 
-`fstest.Cases` is a package-level `[]TestCase` populated by `init()` in `server/fstest/cases.go`. A test case is just a `{Name string; Run func(t *testing.T, root server.Node)}`. Cases receive a fully-negotiated `testConn` via the internal `newTestConn` helper — they only need to drive the wire protocol and assert on responses. Preserve the `category/case` naming convention (`walk/root_attach`, `read/offset`) so callers can filter by prefix.
+`fstest.Cases` is a package-level `[]TestCase` populated by `init()` in `server/fstest/cases.go`. A test case is just a `{Name string; Run func(t *testing.T, root server.Node)}`. Cases receive a fully-negotiated `testConn` via the internal `newTestConn` helper -- they only need to drive the wire protocol and assert on responses. Preserve the `category/case` naming convention (`walk/root_attach`, `read/offset`) so callers can filter by prefix.
 
 ## Fuzz testing
 
@@ -236,7 +236,7 @@ These tests require:
 
 The `mountV9FS` helper starts a passthrough server on a Unix socket, mounts it with `mount -t 9p`, and registers cleanup (unmount, server shutdown) via `t.Cleanup`.
 
-CI compiles the integration tests every build (`go test -tags integration -run ^$ ./...`) but does not execute them — the kernel mount machinery is exercised locally or on dedicated runners.
+CI compiles the integration tests every build (`go test -tags integration -run ^$ ./...`) but does not execute them -- the kernel mount machinery is exercised locally or on dedicated runners.
 
 ## Writing new tests
 

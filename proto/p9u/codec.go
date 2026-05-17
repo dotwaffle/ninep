@@ -15,7 +15,7 @@ import (
 // defer. Passing the pooled *bytes.Buffer into msg.EncodeTo lets the
 // proto.Write* helpers take their zero-alloc *bytes.Buffer fast path
 // (established in plan 08-02). Put-after-Write is safe: w.Write(body.Bytes())
-// returns synchronously — both bytes.Buffer and net.Conn copy input before
+// returns synchronously -- both bytes.Buffer and net.Conn copy input before
 // returning, so the pooled buffer is no longer referenced when PutBuf runs.
 func Encode(w io.Writer, tag proto.Tag, msg proto.Message) error {
 	body := bufpool.GetBuf()

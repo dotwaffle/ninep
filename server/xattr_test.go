@@ -51,7 +51,7 @@ func (f *bothXattrFile) Open(_ context.Context, _ uint32) (FileHandle, uint32, e
 	return nil, 0, nil
 }
 
-// RawXattrer — returns distinctive data so the test can distinguish the path.
+// RawXattrer -- returns distinctive data so the test can distinguish the path.
 func (f *bothXattrFile) HandleXattrwalk(_ context.Context, _ string) ([]byte, error) {
 	return []byte("from-raw"), nil
 }
@@ -60,7 +60,7 @@ func (f *bothXattrFile) HandleXattrcreate(_ context.Context, name string, _ uint
 	return &bothXattrWriter{file: f, name: name}, nil
 }
 
-// Simple interfaces — record misrouting. If these are ever called when
+// Simple interfaces -- record misrouting. If these are ever called when
 // RawXattrer is present, TestXattr_Priority fails.
 func (f *bothXattrFile) GetXattr(_ context.Context, name string) ([]byte, error) {
 	f.simpleCalls = append(f.simpleCalls, "Get:"+name)
@@ -123,9 +123,9 @@ var (
 	_ XattrWriter = (*bothXattrWriter)(nil)
 )
 
-// --- Relocated tests (Task 1: from TestBridge_Xattr, TestBridge_RawXattr,
-// TestBridge_XattrSizeMismatch). Logic is preserved verbatim -- the behaviour
-// under test IS the regression surface. ---
+// --- Relocated tests from TestBridge_Xattr, TestBridge_RawXattr,
+// TestBridge_XattrSizeMismatch. Logic is preserved verbatim - the
+// behaviour under test IS the regression surface. ---
 
 // TestXattr_Get verifies simple NodeXattrGetter flow: Txattrwalk followed by
 // Tread returns the attribute value; Rxattrwalk reports the correct size.
@@ -289,8 +289,8 @@ func TestXattr_Set(t *testing.T) {
 	cp.clunk(t, 36, 13)
 }
 
-// TestXattr_SizeMismatch verifies Pitfall 2 (RESEARCH.md): writing fewer bytes
-// than Txattrcreate's declared AttrSize succeeds on each Twrite, but the
+// TestXattr_SizeMismatch verifies that writing fewer bytes than
+// Txattrcreate's declared AttrSize succeeds on each Twrite, but the
 // mismatch surfaces as EIO on Tclunk (dispatch.go:232).
 func TestXattr_SizeMismatch(t *testing.T) {
 	t.Parallel()
@@ -376,7 +376,7 @@ func TestXattr_Raw_Get(t *testing.T) {
 
 // TestXattr_Raw_Set verifies RawXattrer.HandleXattrcreate + XattrWriter.Commit
 // receive the complete write payload on Tclunk. Unlike the simple-interface
-// path, RawXattrer bypasses the bridge's size-mismatch check (Pitfall 3).
+// path, RawXattrer bypasses the bridge's size-mismatch check.
 func TestXattr_Raw_Set(t *testing.T) {
 	t.Parallel()
 
@@ -430,14 +430,14 @@ func TestXattr_Raw_Set(t *testing.T) {
 	}
 }
 
-// --- Negative-path tests (Task 2). Cover Pitfall 6 (ENODATA vs ENOSYS),
-// msize clamp, ENOSPC overflow, and ENOSYS for mixed-capability nodes. ---
+// --- Negative-path tests. Cover ENODATA vs ENOSYS, msize clamp,
+// ENOSPC overflow, and ENOSYS for mixed-capability nodes. ---
 
 // TestXattr_Missing_ENODATA verifies that when a node implements
 // NodeXattrGetter but the requested key is absent, the bridge surfaces the
 // node's proto.ENODATA sentinel as Rlerror{ENODATA} on the wire. Contrasts
 // with TestXattr_ENOSYS_NoCapability where the node does not implement the
-// interface at all (Pitfall 6).
+// interface at all.
 func TestXattr_Missing_ENODATA(t *testing.T) {
 	t.Parallel()
 
@@ -465,7 +465,7 @@ func TestXattr_Missing_ENODATA(t *testing.T) {
 // originates from the default method bodies (inode.go:223-240) and is
 // forwarded via errnoFromError. For Txattrwalk this surfaces on the request
 // itself; for Txattrcreate it surfaces on Tclunk (the simple-interface commit
-// calls SetXattr / RemoveXattr from dispatch.go:224/239). Covers Pitfall 6.
+// calls SetXattr / RemoveXattr from dispatch.go:224/239).
 func TestXattr_ENOSYS_NoCapability(t *testing.T) {
 	t.Parallel()
 
@@ -475,13 +475,13 @@ func TestXattr_ENOSYS_NoCapability(t *testing.T) {
 	cp := setupBridgeConn(t, root)
 	defer cp.close(t)
 
-	// Txattrwalk for a specific name → Inode.GetXattr returns ENOSYS,
+	// Txattrwalk for a specific name -> Inode.GetXattr returns ENOSYS,
 	// surfaced on the Rxattrwalk path itself.
 	sendMessage(t, cp.client, 2, &p9l.Txattrwalk{Fid: 0, NewFid: 10, Name: "user.foo"})
 	_, msg := readResponse(t, cp.client)
 	isError(t, msg, proto.ENOSYS)
 
-	// Txattrwalk in list mode → Inode.ListXattrs returns ENOSYS.
+	// Txattrwalk in list mode -> Inode.ListXattrs returns ENOSYS.
 	sendMessage(t, cp.client, 3, &p9l.Txattrwalk{Fid: 0, NewFid: 11, Name: ""})
 	_, msg = readResponse(t, cp.client)
 	isError(t, msg, proto.ENOSYS)
@@ -632,7 +632,7 @@ func TestXattr_Overwrite_ENOSPC(t *testing.T) {
 	isError(t, msg, proto.EIO)
 }
 
-// --- Positive-path + priority tests (Task 3). ---
+// --- Positive-path + priority tests. ---
 
 // TestXattr_Remove verifies the simple-interface remove flow: Txattrcreate
 // with AttrSize=0 followed by Tclunk (no intermediate Twrite) invokes
@@ -662,7 +662,7 @@ func TestXattr_Remove(t *testing.T) {
 		t.Fatalf("expected Rxattrcreate, got %T: %+v", msg, msg)
 	}
 
-	// No Twrite — clunk triggers RemoveXattr on the simple interface.
+	// No Twrite -- clunk triggers RemoveXattr on the simple interface.
 	msg = cp.clunk(t, 5, 3)
 	if _, ok := msg.(*proto.Rclunk); !ok {
 		t.Fatalf("expected Rclunk, got %T: %+v", msg, msg)
@@ -704,7 +704,7 @@ func TestXattr_EmptyList(t *testing.T) {
 		t.Errorf("empty-list Rxattrwalk.Size = %d, want 0", rxw.Size)
 	}
 
-	// Read from the fid — expect empty payload, not an error.
+	// Read from the fid -- expect empty payload, not an error.
 	msg = cp.read(t, 4, 10, 0, 1024)
 	rr, ok := msg.(*proto.Rread)
 	if !ok {
@@ -722,7 +722,7 @@ func TestXattr_EmptyList(t *testing.T) {
 // TestXattr_Priority verifies the precedence rule at bridge.go:758 and :849:
 // when a node satisfies BOTH RawXattrer and the simple NodeXattr* interfaces,
 // Txattrwalk and Txattrcreate MUST route through the RawXattrer methods. The
-// simple interfaces must never be invoked — bothXattrFile records any such
+// simple interfaces must never be invoked -- bothXattrFile records any such
 // invocation in simpleCalls, so len(simpleCalls) == 0 after the full flow
 // proves the routing is exclusive. Covers T-11-01-02 (Information Disclosure
 // via priority-dispatch regression).
@@ -741,7 +741,7 @@ func TestXattr_Priority(t *testing.T) {
 
 	cp.walk(t, 2, 0, 2, "both")
 
-	// Txattrwalk — RawXattrer.HandleXattrwalk returns "from-raw" (8 bytes).
+	// Txattrwalk -- RawXattrer.HandleXattrwalk returns "from-raw" (8 bytes).
 	// If priority were broken, GetXattr would run and return "from-simple".
 	sendMessage(t, cp.client, 3, &p9l.Txattrwalk{Fid: 2, NewFid: 10, Name: "probe"})
 	_, msg := readResponse(t, cp.client)
@@ -762,7 +762,7 @@ func TestXattr_Priority(t *testing.T) {
 	}
 	cp.clunk(t, 5, 10)
 
-	// Txattrcreate + Twrite + Tclunk — RawXattrer.HandleXattrcreate returns
+	// Txattrcreate + Twrite + Tclunk -- RawXattrer.HandleXattrcreate returns
 	// a bothXattrWriter. Commit writes back to bxf.lastWriteName/lastWriteData.
 	// If priority were broken, SetXattr would be called on clunk instead.
 	cp.walk(t, 6, 2, 3) // clone
@@ -788,7 +788,7 @@ func TestXattr_Priority(t *testing.T) {
 
 	// The critical priority assertion: no simple-interface method was ever
 	// called. Any entry here means the bridge dispatched to the simple
-	// path despite RawXattrer being present — a regression of the precedence
+	// path despite RawXattrer being present -- a regression of the precedence
 	// rule that would leak state via whichever simple method got called.
 	if len(bxf.simpleCalls) != 0 {
 		t.Errorf("simple interfaces called despite RawXattrer: %v", bxf.simpleCalls)

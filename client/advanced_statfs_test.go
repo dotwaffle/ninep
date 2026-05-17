@@ -65,9 +65,9 @@ func TestClient_Statfs_NotSupportedOnU(t *testing.T) {
 	}
 }
 
-// TestClient_Statfs_ReturnsByValue: compile-time + runtime evidence that
-// File.Statfs returns proto.FSStat by VALUE, not *proto.FSStat (Pitfall
-// 8). The `var _ proto.FSStat = fs` line below would refuse to compile
+// TestClient_Statfs_ReturnsByValue: compile-time + runtime evidence
+// that File.Statfs returns proto.FSStat by VALUE, not *proto.FSStat.
+// The `var _ proto.FSStat = fs` line below would refuse to compile
 // if the signature ever regressed to a pointer return. Runtime check
 // verifies the value is populated (not zero-value) in the happy path.
 func TestClient_Statfs_ReturnsByValue(t *testing.T) {

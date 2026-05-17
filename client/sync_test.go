@@ -48,9 +48,8 @@ func TestFileSync_PopulatesCachedSize(t *testing.T) {
 }
 
 // TestFileSync_SeekEndAfterSync: after Sync, Seek(0, io.SeekEnd) returns
-// the file's actual size. Regression test for the "Phase 20 stub left
-// SeekEnd returning 0" gap — Phase 21's real Sync makes SeekEnd
-// produce the true size without requiring the SetCachedSize test hook.
+// the file's actual size, without requiring the SetCachedSize test
+// hook.
 func TestFileSync_SeekEndAfterSync(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))

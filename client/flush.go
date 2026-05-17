@@ -10,8 +10,8 @@ import (
 
 // flushAndWait is called from [Conn.roundTrip] when the caller's ctx
 // cancels mid-request. It sends Tflush(oldTag) and blocks until the
-// FIRST of (original R, Rflush, closeCh) arrives — discarding the
-// late-arriving second frame per D-06.
+// FIRST of (original R, Rflush, closeCh) arrives - discarding the
+// late-arriving second frame.
 //
 // Preconditions (enforced by the caller [Conn.roundTrip]):
 //
@@ -24,48 +24,47 @@ import (
 //
 // Postconditions (ALL branches, enforced by deferred cleanup):
 //
-//   - oldTag is unregister()'d BEFORE release()'d (Pitfall 2).
+//   - oldTag is unregister()'d BEFORE release()'d.
 //
-//   - flushTag (if acquired) is unregister()'d BEFORE release()'d
-//     (Pitfall 2).
+//   - flushTag (if acquired) is unregister()'d BEFORE release()'d.
 //
 //   - The returned error chain satisfies [errors.Is] for the
-//     appropriate sentinels per D-05:
+//     appropriate sentinels:
 //
 //     R-first: fmt.Errorf("9p: flushed tag %d: %w", oldTag, ctx.Err())
 //     Rflush-first: wraps errors.Join(ctx.Err(), ErrFlushed)
-//     closeCh: returns ErrClosed unwrapped (Pitfall 5 says losing the
-//     ctx cause on the close race is acceptable).
+//     closeCh: returns ErrClosed unwrapped (losing the ctx cause on
+//     the close race is acceptable).
 //
 // Defer ordering: oldTag's cleanup defer is registered FIRST (outer);
 // flushTag's cleanup defer is registered SECOND (inner). Because
 // defers run LIFO, flushTag is released before oldTag. This is
-// intentional — the newer tag (flushTag) returns to the allocator
+// intentional - the newer tag (flushTag) returns to the allocator
 // first so there's no window where a recycled oldTag could collide
 // with a still-registered flushTag.
 //
 // Anti-patterns (documented here because they have bitten similar
-// helpers elsewhere; see .planning/phases/22/22-RESEARCH.md §Pitfalls):
+// helpers elsewhere):
 //
 //   - Do NOT call [Conn.Flush] (the public wire-op wrapper). It goes
 //     through [Conn.roundTrip], which re-enters the ctx.Done arm on
-//     an already-Done ctx and would recurse (Pitfall 1).
+//     an already-Done ctx and would recurse.
 //   - Do NOT pass ctx to [tagAllocator.acquire]. ctx is already Done
-//     here — acquire would return ctx.Err immediately without ever
-//     handing out a tag (Pitfall 3b). Use [context.Background] with
-//     c.closeCh as the abort channel.
+//     here - acquire would return ctx.Err immediately without ever
+//     handing out a tag. Use [context.Background] with c.closeCh as
+//     the abort channel.
 //   - Do NOT add a ctx.Done arm to the inner select. ctx is already
-//     Done; re-selecting on it is a dead branch (Pitfall 6).
+//     Done; re-selecting on it is a dead branch.
 //   - The late-arriving second frame is NOT drained by a separate
 //     goroutine. [inflightMap.deliver] finds the unregistered tag and
-//     drops via [putCachedRMsg] (Pitfall 7 — designed behaviour).
+//     drops via [putCachedRMsg] (designed behaviour).
 func (c *Conn) flushAndWait(
 	ctx context.Context,
 	oldTag proto.Tag,
 	origCh chan proto.Message,
 ) (proto.Message, error) {
 	// Deferred cleanup for oldTag. Registered FIRST, runs LAST.
-	// Unregister BEFORE release — Pitfall 2.
+	// Unregister BEFORE release.
 	defer func() {
 		c.inflight.unregister(oldTag)
 		c.tags.release(oldTag)
@@ -77,8 +76,8 @@ func (c *Conn) flushAndWait(
 	//
 	// ctx parent is context.Background, NOT the caller's ctx: the
 	// caller's ctx is ALREADY Done and acquire's select would return
-	// ctx.Err immediately before handing out a tag (Pitfall 3b).
-	// closeCh remains the only abort path — if the Conn is shutting
+	// ctx.Err immediately before handing out a tag. closeCh remains
+	// the only abort path - if the Conn is shutting
 	// down during flush setup, acquire returns ErrClosed.
 	flushTag, err := c.tags.acquire(context.Background(), c.closeCh)
 	if err != nil {
@@ -115,10 +114,10 @@ func (c *Conn) flushAndWait(
 	// Wait for the first frame. The late-arriving second frame lands
 	// in [inflightMap.deliver]; because our defers have already run
 	// (on the return path below), the second frame's tag is
-	// unregistered and deliver drops it via putCachedRMsg (Pitfall 7).
+	// unregistered and deliver drops it via putCachedRMsg.
 	//
-	// Buffered-race note (WR-01): origCh and flushCh are both cap-1
-	// buffered. If the read loop delivers BOTH frames before this
+	// Buffered-race note: origCh and flushCh are both cap-1 buffered.
+	// If the read loop delivers BOTH frames before this
 	// select fires, Go picks the winning arm uniformly at random; the
 	// OTHER frame is already buffered and cannot be salvaged by
 	// deliver's unregistered-tag drop path (that path only catches
@@ -133,9 +132,8 @@ func (c *Conn) flushAndWait(
 			// cancelAll closed origCh during shutdown race.
 			return nil, ErrClosed
 		}
-		// Original R arrived first (D-05 R-first path). Caller wanted
-		// out — discard the data (D-07) but reclaim the pooled
-		// R-message slot (Q1 resolution, Phase 19 WR-03 pattern).
+		// Original R arrived first (R-first path). Caller wanted out -
+		// discard the data but reclaim the pooled R-message slot.
 		// putCachedRMsg is a no-op for types not in the cache set.
 		putCachedRMsg(r)
 		// Non-blocking drain of flushCh: Rflush is uncached today
@@ -157,7 +155,7 @@ func (c *Conn) flushAndWait(
 		if !ok {
 			return nil, ErrClosed
 		}
-		// Rflush arrived first (D-05 Rflush-first path). Reclaim the
+		// Rflush arrived first (Rflush-first path). Reclaim the
 		// Rflush struct (putCachedRMsg is a no-op for Rflush per
 		// msgcache.go but the call keeps the return path uniform with
 		// the origCh arm).
@@ -180,9 +178,9 @@ func (c *Conn) flushAndWait(
 		)
 
 	case <-c.closeCh:
-		// Pitfall 5: closeCh wins the race. Returning ErrClosed
-		// unwrapped is acceptable — callers MUST match on ErrClosed
-		// when they care about conn-level shutdown.
+		// closeCh wins the race. Returning ErrClosed unwrapped is
+		// acceptable - callers MUST match on ErrClosed when they care
+		// about conn-level shutdown.
 		return nil, ErrClosed
 	}
 }

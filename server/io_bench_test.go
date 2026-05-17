@@ -123,8 +123,8 @@ func newConnPairMsize(tb testing.TB, root Node, msize uint32, opts ...Option) *c
 
 // benchWalkOpen walks from fid to name, allocating newFid, then opens newFid.
 // Returns the IOUnit from Rlopen. Must be called before the measurement loop.
-// Accepts testing.TB so the Phase 14 strace helper test (plan 14-03) can
-// reuse the prelude from a *testing.T context.
+// Accepts testing.TB so the strace helper test can reuse the prelude
+// from a *testing.T context.
 func benchWalkOpen(tb testing.TB, cp *connPair, fid, newFid proto.Fid, name string) uint32 {
 	tb.Helper()
 
@@ -141,7 +141,7 @@ func benchWalkOpen(tb testing.TB, cp *connPair, fid, newFid proto.Fid, name stri
 		tb.Fatalf("walk drain: %v", err)
 	}
 
-	// Open — need to decode the response to get IOUnit.
+	// Open - need to decode the response to get IOUnit.
 	openFrame := mustEncode(tb, proto.Tag(11), &p9l.Tlopen{
 		Fid:   newFid,
 		Flags: 0,
@@ -175,8 +175,8 @@ const (
 
 // newBenchTree creates a directory with a single 128MiB file named "data" for
 // benchmarking. The file is pre-filled with deterministic random bytes.
-// Accepts testing.TB so the Phase 14 strace helper test (plan 14-03) can
-// reuse the same fixture from a *testing.T context.
+// Accepts testing.TB so the strace helper test can reuse the same
+// fixture from a *testing.T context.
 func newBenchTree(tb testing.TB) *benchDir {
 	tb.Helper()
 	var gen QIDGenerator
@@ -201,23 +201,23 @@ func newBenchTree(tb testing.TB) *benchDir {
 // so *nonPayloaderRread does not satisfy proto.Payloader (EncodeFixed/Payload
 // are NOT method-promoted because inner is a field, not an embedded type).
 // This forces sendResponseInline to take the EncodeTo fallback branch
-// (server/conn.go:833) — the pre-v1.1.18 copy path.
+// (server/conn.go:833) - the pre-v1.1.18 copy path.
 //
-// Used by BenchmarkServerRead_{4K,1M}/encode=copy subtests to reconstruct a
-// same-binary copy-path baseline per phase 14 D-01 (no git-checkout baselines
-// per D-02). The bufPtr field carries ownership of the pooled buffer backing
-// the original Rread.Data slice; Release returns it to bufpool after the
-// writev completes, preserving the same payload-lifetime contract as
-// pooledRread in server/bridge.go.
+// Used by BenchmarkServerRead_{4K,1M}/encode=copy subtests to
+// reconstruct a same-binary copy-path baseline (no git-checkout
+// baselines). The bufPtr field carries ownership of the pooled buffer
+// backing the original Rread.Data slice; Release returns it to
+// bufpool after the writev completes, preserving the same
+// payload-lifetime contract as pooledRread in server/bridge.go.
 type nonPayloaderRread struct {
-	inner  proto.Rread // NOTE: field, NOT embedded — prevents Payloader method promotion
+	inner  proto.Rread // NOTE: field, NOT embedded - prevents Payloader method promotion
 	bufPtr *[]byte
 }
 
 // Type delegates to the inner Rread.
 func (r *nonPayloaderRread) Type() proto.MessageType { return r.inner.Type() }
 
-// EncodeTo delegates to the inner Rread — this writes count[4] + data[count]
+// EncodeTo delegates to the inner Rread - this writes count[4] + data[count]
 // into the body buffer, which is exactly the pre-Payloader copy path.
 func (r *nonPayloaderRread) EncodeTo(w io.Writer) error { return r.inner.EncodeTo(w) }
 
@@ -231,7 +231,7 @@ func (r *nonPayloaderRread) Release() { bufpool.PutMsgBuf(r.bufPtr) }
 
 // Compile-time guards: MUST be a proto.Message and a releaser, MUST NOT
 // be a proto.Payloader. The absence of the Payloader guard line is
-// intentional — see nonPayloaderRread godoc and the
+// intentional - see nonPayloaderRread godoc and the
 // TestNonPayloaderRread_DoesNotSatisfyPayloader runtime assertion.
 var _ proto.Message = (*nonPayloaderRread)(nil)
 var _ releaser = (*nonPayloaderRread)(nil)
@@ -240,7 +240,7 @@ var _ releaser = (*nonPayloaderRread)(nil)
 // *nonPayloaderRread with the same bufPtr, preserving the Release contract
 // while forcing the EncodeTo fallback path in sendResponseInline. Used by
 // BenchmarkServerRead_{4K,1M}/encode=copy subtests to produce a same-binary
-// A/B against the production Payloader path (phase 14 D-01, PERF-07.1/.2).
+// A/B against the production Payloader path.
 //
 // Non-pooledRread responses pass through unchanged so this middleware is
 // safe to install on any bench harness that touches other message types
@@ -260,7 +260,7 @@ var forceCopyMiddleware Middleware = func(next Handler) Handler {
 // Wire layout: size[4] + type[1] + tag[2] + fid[4] = 11 bytes before offset[8].
 const treadOffsetPos = 4 + 1 + 2 + 4
 
-// twriteOffsetPos is the same — Twrite has identical header layout before offset.
+// twriteOffsetPos is the same -- Twrite has identical header layout before offset.
 const twriteOffsetPos = treadOffsetPos
 
 func BenchmarkRead(b *testing.B) {
@@ -472,20 +472,20 @@ func BenchmarkWrite(b *testing.B) {
 	}
 }
 
-// BenchmarkServerRead4K_UnderGC reproduces the Q-side seq_read_4k variance
-// workload over unix domain socket: 4 KiB sequential reads with runtime.GC()
-// fired every 1000 iterations INSIDE the hot loop (D-03). The handoff's
-// Target G acceptance (PERF-04.3) is stddev/mean <= 10% over 10 independent
-// runs, measured via `benchstat` on the MB/s column. This bench is the
-// producer of that measurement — the 10-run aggregation lives in the
-// phase summary, not here.
+// BenchmarkServerRead4K_UnderGC reproduces the Q-side seq_read_4k
+// variance workload over unix domain socket: 4 KiB sequential reads
+// with runtime.GC() fired every 1000 iterations INSIDE the hot loop.
+// Target acceptance is stddev/mean <= 10% over 10 independent runs,
+// measured via `benchstat` on the MB/s column. This bench is the
+// producer of that measurement - the 10-run aggregation lives in the
+// summary, not here.
 //
-// Transport is hard-coded to "unix" because net.Pipe hides writev-related
-// variance: the Payloader path (proto.Payloader, v1.1.18) emits a single
-// writev(header + payload) on unix, sequential Write(header); Write(payload)
-// on pipe. The variance this bench measures is the bufpool drain-feedback
-// interaction with writev batching — absent writev, there's no signal.
-// See CLAUDE.md §Performance and 13-RESEARCH.md Anti-Pattern 2.
+// Transport is hard-coded to "unix" because net.Pipe hides
+// writev-related variance: the Payloader path (proto.Payloader)
+// emits a single writev(header + payload) on unix, sequential
+// Write(header); Write(payload) on pipe. The variance this bench
+// measures is the bufpool drain-feedback interaction with writev
+// batching - absent writev, there's no signal.
 //
 // Wrapped in a transport=unix subtest so future comparison with pipe can
 // be added by expanding the slice without restructuring the bench.
@@ -536,35 +536,34 @@ func BenchmarkServerRead4K_UnderGC(b *testing.B) {
 	}
 }
 
-// BenchmarkServerRead_{4K,1M} is the phase-14 A/B harness for PERF-07.1 and
-// PERF-07.2. The encode axis selects between the production Payloader path
-// (encode=payloader: sendResponseInline detects proto.Payloader on the
-// response and emits hdr + fixedBody[count] + payload as 3 iovecs via
-// net.Buffers.WriteTo) and a test-only copy-path baseline (encode=copy:
-// forceCopyMiddleware swaps *pooledRread for *nonPayloaderRread so
-// sendResponseInline takes the EncodeTo fallback branch, serialising count
-// + data into the body buffer and writev'ing hdr + body as 2 iovecs with
-// a memcpy of the payload through the pooled body slice).
+// BenchmarkServerRead_{4K,1M} is the writev A/B harness. The encode
+// axis selects between the production Payloader path
+// (encode=payloader: sendResponseInline detects proto.Payloader on
+// the response and emits hdr + fixedBody[count] + payload as 3
+// iovecs via net.Buffers.WriteTo) and a test-only copy-path baseline
+// (encode=copy: forceCopyMiddleware swaps *pooledRread for
+// *nonPayloaderRread so sendResponseInline takes the EncodeTo
+// fallback branch, serialising count + data into the body buffer and
+// writev'ing hdr + body as 2 iovecs with a memcpy of the payload
+// through the pooled body slice).
 //
-// Acceptance (to be confirmed by human at the plan 14-01 checkpoint via
-// benchstat -col encode):
-//   - transport=unix/encode=payloader MB/s >= 1.10 * transport=unix/encode=copy (PERF-07.1, 4K)
-//   - transport=unix/encode=payloader MB/s >= 1.05 * transport=unix/encode=copy (PERF-07.2, 1M)
+// Acceptance (confirmed via benchstat -col encode):
+//   - transport=unix/encode=payloader MB/s >= 1.10 * transport=unix/encode=copy (4K)
+//   - transport=unix/encode=payloader MB/s >= 1.05 * transport=unix/encode=copy (1M)
 //
-// The transport=pipe subtests exist for correctness A/B (plan 14-02) and
-// are NOT the PERF acceptance signal: net.Pipe does not implement the
-// buffersWriter type-assertion path in net.Buffers.WriteTo, so writev is
-// never emitted on pipe regardless of payload shape. See phase 14 RESEARCH
-// Pitfall 5.
+// The transport=pipe subtests exist for correctness A/B and are NOT
+// the perf acceptance signal: net.Pipe does not implement the
+// buffersWriter type-assertion path in net.Buffers.WriteTo, so writev
+// is never emitted on pipe regardless of payload shape.
 
 // BenchmarkServerRead_4K measures server-side Rread throughput at 4 KiB
-// reads over the default 64 KiB msize (D-07). Subtests: transport={unix,
-// pipe} x encode={payloader,copy}. The encode=copy arm installs
-// forceCopyMiddleware via WithMiddleware to force the pre-Payloader copy
-// path (D-01).
+// reads over the default 64 KiB msize. Subtests:
+// transport={unix, pipe} x encode={payloader,copy}. The encode=copy
+// arm installs forceCopyMiddleware via WithMiddleware to force the
+// pre-Payloader copy path.
 func BenchmarkServerRead_4K(b *testing.B) {
 	const readSize uint32 = 4096
-	const msize uint32 = 65536 // D-07: default msize — 4K reads fit trivially
+	const msize uint32 = 65536 // default msize - 4K reads fit trivially
 
 	for _, transport := range []string{"unix", "pipe"} {
 		b.Run("transport="+transport, func(b *testing.B) {
@@ -616,14 +615,15 @@ func BenchmarkServerRead_4K(b *testing.B) {
 	}
 }
 
-// BenchmarkServerRead_1M measures server-side Rread throughput at 1 MiB
-// reads over a negotiated 1 MiB msize (D-06). Subtests: transport={unix,
-// pipe} x encode={payloader,copy}. Same shape as BenchmarkServerRead_4K
-// but exercises the large-payload path where the Payloader writev lift
-// should be smaller in percentage terms (PERF-07.2 threshold >= 5%).
+// BenchmarkServerRead_1M measures server-side Rread throughput at 1
+// MiB reads over a negotiated 1 MiB msize. Subtests:
+// transport={unix, pipe} x encode={payloader,copy}. Same shape as
+// BenchmarkServerRead_4K but exercises the large-payload path where
+// the Payloader writev lift should be smaller in percentage terms
+// (threshold >= 5%).
 func BenchmarkServerRead_1M(b *testing.B) {
-	const readSize uint32 = 1 << 20 // D-06: 1 MiB
-	const msize uint32 = 1 << 20    // D-06: 1 MiB negotiated msize to fit the read
+	const readSize uint32 = 1 << 20 // 1 MiB
+	const msize uint32 = 1 << 20    // 1 MiB negotiated msize to fit the read
 
 	for _, transport := range []string{"unix", "pipe"} {
 		b.Run("transport="+transport, func(b *testing.B) {

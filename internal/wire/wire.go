@@ -1,7 +1,7 @@
 // Package wire provides the 4-byte size-prefix framing and net.Buffers
 // writev glue for 9P wire messages. It is extracted from server/conn.go's
-// handleRequest read path and sendResponseInline write path so the client
-// library (Phase 19+) can share a single implementation.
+// handleRequest read path and sendResponseInline write path so the
+// client library can share a single implementation.
 //
 // # Shape
 //
@@ -10,10 +10,10 @@
 // and write deadlines. Deadlines are NOT threaded through these helpers;
 // callers set them on the net.Conn directly before calling in.
 //
-// A Framer struct was rejected during Phase 18 planning (D-07) because the
-// 1%-of-sec-op benchmark gate is tight enough that an extra indirection
-// could move the measurement. Stay close to the inline shape — pass args,
-// return errors, nothing else.
+// A Framer struct was rejected because the 1%-of-sec-op benchmark
+// gate is tight enough that an extra indirection could move the
+// measurement. Stay close to the inline shape - pass args, return
+// errors, nothing else.
 //
 // # Read path
 //
@@ -39,8 +39,8 @@
 // zero. Callers MUST re-slice the net.Buffers value from a conn-resident
 // backing array on every call. WriteFramesLocked accepts *net.Buffers
 // (pointer) rather than net.Buffers (value) to surface this semantic at the
-// call signature — the reader of a call site can see the bufs will be
-// mutated. See ninep CLAUDE.md §Performance.
+// call signature -- the reader of a call site can see the bufs will be
+// mutated.
 package wire
 
 import (
@@ -119,8 +119,8 @@ func ReadBody(r io.Reader, buf []byte) error {
 // prior call will silently write zero bytes on the next call.
 //
 // The server's sendResponseInline re-slices c.encBufsArr[:n] on every
-// response; the client will do the analogous thing on its outbound Tread /
-// Twrite path in Phase 19.
+// response; the client does the analogous thing on its outbound Tread
+// / Twrite path.
 func WriteFramesLocked(w io.Writer, bufs *net.Buffers) error {
 	if _, err := bufs.WriteTo(w); err != nil {
 		return fmt.Errorf("wire: writev: %w", err)

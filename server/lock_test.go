@@ -30,7 +30,7 @@ var (
 // contentionLockFile tracks a single held POSIX record lock keyed by ClientID.
 // Lock returns Blocked when another client holds a conflicting lock; GetLock
 // returns the holder's parameters when there is a conflict. Internal state is
-// sync.Mutex-guarded per Pitfall 4 -- the bridge does not serialize NodeLocker
+// sync.Mutex-guarded - the bridge does not serialize NodeLocker
 // calls (per-connection handler goroutines race on shared Node state), so the
 // mock must.
 //

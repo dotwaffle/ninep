@@ -129,7 +129,7 @@ func TestClient_Readlink(t *testing.T) {
 	_ = rootF
 
 	// Use File.Walk to reach the symlink without opening it (9P has no
-	// "open a symlink" — the fid is stat-only).
+	// "open a symlink" -- the fid is stat-only).
 	f, err := rootF.Walk(ctx, []string{"sym"})
 	if err != nil {
 		t.Fatalf("Walk to sym: %v", err)

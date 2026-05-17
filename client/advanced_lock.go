@@ -33,9 +33,9 @@ const (
 	LockUnlock LockType = LockType(proto.LockTypeUnlck)
 )
 
-// defaultLockBackoff is the exponential poll cadence for File.Lock per
-// D-09. Chosen to cover uncontended acquisition in the first pair of
-// polls (10+20ms) while capping the worst-case wake latency at 500ms.
+// defaultLockBackoff is the exponential poll cadence for File.Lock.
+// Chosen to cover uncontended acquisition in the first pair of polls
+// (10+20ms) while capping the worst-case wake latency at 500ms.
 // After reaching the cap the cadence stays at 500ms indefinitely; the
 // caller's ctx controls the upper bound on total wait time.
 //
@@ -52,7 +52,7 @@ var defaultLockBackoff = []time.Duration{
 
 // backoffFor returns the sleep duration for iteration i from schedule.
 // After len(schedule)-1, returns the last entry (cap). Panics on an
-// empty schedule — callers must guarantee len(schedule) >= 1.
+// empty schedule -- callers must guarantee len(schedule) >= 1.
 func backoffFor(schedule []time.Duration, i int) time.Duration {
 	if i >= len(schedule) {
 		return schedule[len(schedule)-1]
@@ -76,7 +76,7 @@ func (c *Conn) lockSchedule() []time.Duration {
 // whose lock conflicts with the proposed request.
 type Lock struct {
 	// Type is the conflicting holder's lock type (LockRead or LockWrite;
-	// LockUnlock is never surfaced — it is the server's "no conflict"
+	// LockUnlock is never surfaced -- it is the server's "no conflict"
 	// signal translated into a nil return).
 	Type LockType
 
@@ -108,21 +108,20 @@ type Lock struct {
 // On ctx cancellation, Lock unconditionally emits a Tlock(LockUnlock)
 // cleanup using a fresh background context (with a short deadline) to
 // release any lock the server may have granted between our Tlock send and
-// ctx firing — Pitfall 6 in 21-RESEARCH.md. This belt-and-braces cleanup
-// keeps server state aligned with client state even without Phase 22's
-// ctx-driven Tflush wiring.
+// ctx firing. This belt-and-braces cleanup keeps server state aligned
+// with client state even without ctx-driven Tflush wiring.
 //
 // The fid MUST be opened (via [Conn.OpenFile] or [Conn.Create]); calling
 // Lock on a walked-but-unopened fid returns a *Error with the server's
-// errno (typically EBADF — server bridge enforces fidOpened state).
+// errno (typically EBADF -- server bridge enforces fidOpened state).
 //
 // Concurrency constraint: Lock and [File.Close] are NOT safe to call
 // concurrently on the same *File. Close deliberately bypasses f.mu to
-// keep the shutdown path wait-free (Phase 20 D-12), which means a Close
+// keep the shutdown path wait-free, which means a Close
 // racing against a blocked Lock (parked in the backoff select) can
 // release f.fid to the allocator before unlockCleanup fires. The
 // allocator may then re-issue that numeric fid to an unrelated *File,
-// and the cleanup Tlock(UNLCK) will land on the wrong fid — at best
+// and the cleanup Tlock(UNLCK) will land on the wrong fid -- at best
 // EBADF, at worst releasing a lock held by another caller. The same
 // race exists on the in-flight-Tlock ctx-cancel branch. Callers who
 // need to cancel a blocked Lock MUST cancel ctx and wait for Lock to
@@ -146,7 +145,7 @@ func (f *File) Lock(ctx context.Context, lt LockType) error {
 			0, 0, procID, "")
 		if err != nil {
 			// Ctx cancel observed during transmission: emit the
-			// belt-and-braces UNLCK (Pitfall 6) and surface ctx.Err().
+			// belt-and-braces UNLCK and surface ctx.Err().
 			if ctx.Err() != nil {
 				f.unlockCleanup(procID)
 				return ctx.Err()
@@ -179,7 +178,7 @@ func (f *File) Lock(ctx context.Context, lt LockType) error {
 
 // unlockCleanup runs a Tlock(UNLCK) on a fresh background context with
 // the drain deadline. Used exclusively by Lock's ctx-cancel paths.
-// Swallows errors — the caller's ctx.Err() is the meaningful signal.
+// Swallows errors -- the caller's ctx.Err() is the meaningful signal.
 func (f *File) unlockCleanup(procID uint32) {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupDeadline)
 	defer cancel()
@@ -188,7 +187,7 @@ func (f *File) unlockCleanup(procID uint32) {
 }
 
 // Unlock releases any lock held on this File's fid via Tlock(LockUnlock).
-// Idempotent — the server accepts UNLCK on a region with no outstanding
+// Idempotent -- the server accepts UNLCK on a region with no outstanding
 // lock and returns OK.
 //
 // Requires 9P2000.L; returns a wrapped [ErrNotSupported] on a .u Conn.
@@ -206,7 +205,7 @@ func (f *File) Unlock(ctx context.Context) error {
 // lock (server returned BLOCKED or GRACE), or (false, err) on protocol
 // error.
 //
-// Issues a single Tlock WITHOUT [proto.LockFlagBlock] — TryLock never
+// Issues a single Tlock WITHOUT [proto.LockFlagBlock] -- TryLock never
 // retries. Callers wanting bounded-retry semantics should compose Lock
 // with a ctx deadline instead.
 //

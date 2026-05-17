@@ -9,7 +9,7 @@ import (
 )
 
 // lockCall captures the arguments observed by a single Lock() invocation
-// on testLockerNode. Used by advanced_lock_test.go to assert the Pitfall-6
+// on testLockerNode. Used by advanced_lock_test.go to assert the
 // belt-and-braces UNLCK fires after a ctx-cancel in File.Lock.
 type lockCall struct {
 	LockType proto.LockType
@@ -25,7 +25,7 @@ type lockCall struct {
 // empty, returns LockStatusOK. GetLock() reports the currently-held lock
 // state when isHeld is true, LockTypeUnlck otherwise.
 //
-// Prefix "test" distinguishes from 21-01's minimal rawTestLockerNode.
+// Prefix "test" distinguishes from the minimal rawTestLockerNode.
 type testLockerNode struct {
 	server.Inode
 
@@ -116,9 +116,10 @@ func (n *testLockerNode) recordedCalls() []lockCall {
 	return append([]lockCall(nil), n.calls...)
 }
 
-// hasUnlock reports whether any Lock() call with LockType=Unlck has been
-// recorded. Used by TestClient_Lock_CtxCancel_SendsUnlock for the
-// Pitfall-6 assertion without racing against the cleanup goroutine.
+// hasUnlock reports whether any Lock() call with LockType=Unlck has
+// been recorded. Used by TestClient_Lock_CtxCancel_SendsUnlock to
+// assert the cleanup UNLCK fires without racing against the cleanup
+// goroutine.
 func (n *testLockerNode) hasUnlock() bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()

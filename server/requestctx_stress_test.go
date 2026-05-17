@@ -16,14 +16,15 @@ import (
 // (TestRequestCtxPoolReuseNoPhantomCancel) by running real goroutines on real
 // cores with the race detector active. Gated by //go:build stress so the
 // default `go test -race -count=1 ./...` does not run it; CI has a dedicated
-// job per CONTEXT D-11.
+// job.
 //
 // Invariants verified:
 //  1. No data races detected by the race runtime.
-//  2. No panic (notably `close of closed channel` — RESEARCH Pitfall 3 / OQ-3).
-//  3. shouldFlush==true goroutines, after joining the flush goroutine, MUST
-//     observe Done() closed AND Err()==context.Canceled (post-flush state is
-//     monotonic — once flush has returned, it stays flushed for this rctx).
+//  2. No panic (notably `close of closed channel`).
+//  3. shouldFlush==true goroutines, after joining the flush goroutine,
+//     MUST observe Done() closed AND Err()==context.Canceled
+//     (post-flush state is monotonic - once flush has returned, it
+//     stays flushed for this rctx).
 //  4. shouldFlush==false goroutines MUST observe Done() open and Err()==nil
 //     for the entire pre-put lifetime of the rctx (no concurrent flush exists
 //     for this rctx).

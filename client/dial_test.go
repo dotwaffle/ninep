@@ -48,9 +48,9 @@ func runMockVersionServer(tb testing.TB, srvNC net.Conn, resp proto.Rversion) {
 			return
 		}
 
-		// Keep srvNC open and sink any further writes from the client (the
-		// real readLoop Task 3 replaces will exercise this path). Block in
-		// a read — t.Cleanup closes srvNC, unblocking us with an error.
+		// Keep srvNC open and sink any further writes from the client.
+		// Block in a read - t.Cleanup closes srvNC, unblocking us with
+		// an error.
 		sink := make([]byte, 4096)
 		for {
 			if _, err := srvNC.Read(sink); err != nil {
@@ -102,15 +102,13 @@ func TestDial_MsizeCap(t *testing.T) {
 	if cli == nil {
 		t.Fatal("Dial returned nil Conn without error")
 	}
-	// The negotiated msize is not directly queryable on the public API in
-	// this plan — but the fact Dial succeeded and the subsequent read
-	// loop spawned is asserted by the pair helper cleanup working. We
-	// can't do an introspection check without a getter, which is out of
-	// scope for Plan 19-03.
+	// The negotiated msize is not directly queryable on the public API -
+	// but the fact Dial succeeded and the subsequent read loop spawned
+	// is asserted by the pair helper cleanup working.
 }
 
-// TestDial_DialectAccept_BareU: D-09 Linux v9fs bare-alias path. Server
-// responds "9P2000" (bare) — Dial must accept as .u dialect.
+// TestDial_DialectAccept_BareU: Linux v9fs bare-alias path. Server
+// responds "9P2000" (bare) - Dial must accept as .u dialect.
 func TestDial_DialectAccept_BareU(t *testing.T) {
 	t.Parallel()
 	cliNC, srvNC := net.Pipe()
@@ -128,7 +126,7 @@ func TestDial_DialectAccept_BareU(t *testing.T) {
 	_ = cli.Close()
 }
 
-// TestDial_DialectAccept_U: server responds "9P2000.u" — Dial accepts as .u.
+// TestDial_DialectAccept_U: server responds "9P2000.u" -- Dial accepts as .u.
 func TestDial_DialectAccept_U(t *testing.T) {
 	t.Parallel()
 	cliNC, srvNC := net.Pipe()
@@ -321,7 +319,7 @@ func TestDial_SpawnsReadGoroutine(t *testing.T) {
 
 	// If readLoop was spawned, Close's readerWG.Wait must observe the
 	// goroutine exit. If it wasn't spawned, readerWG.Wait returns
-	// immediately and Close returns nil — so we detect the deadlock-risk
+	// immediately and Close returns nil -- so we detect the deadlock-risk
 	// path by calling Close within a timeout.
 	done := make(chan struct{})
 	go func() {
@@ -330,7 +328,7 @@ func TestDial_SpawnsReadGoroutine(t *testing.T) {
 	}()
 	select {
 	case <-done:
-		// Good — Close returned (readLoop exited cleanly).
+		// Good -- Close returned (readLoop exited cleanly).
 	case <-time.After(2 * time.Second):
 		t.Fatal("Close blocked > 2s; readLoop likely never exits")
 	}

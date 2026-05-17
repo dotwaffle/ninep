@@ -262,7 +262,7 @@ func (n *Node) Readdir(_ context.Context) ([]proto.Dirent, error) {
 // Skips "." and ".." entries.
 //
 // linux_dirent64 is laid out as: d_ino[8] d_off[8] d_reclen[2] d_type[1] d_name[...].
-// encoding/binary handles alignment — Linux getdents64 buffers guarantee
+// encoding/binary handles alignment -- Linux getdents64 buffers guarantee
 // little-endian but not struct alignment, so binary.LittleEndian.Uint*
 // reads directly from the []byte slice (shift-and-OR) with no alignment
 // requirement on the source.

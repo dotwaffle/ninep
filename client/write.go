@@ -11,7 +11,7 @@ import (
 )
 
 // writeT encodes msg and writes the framed T-message under writeMu.
-// Caller owns tag acquisition/release and inflight.register — writeT
+// Caller owns tag acquisition/release and inflight.register -- writeT
 // only does encode + writev.
 //
 // Pattern A (2-entry): Header + Pooled Body. Used for small control
@@ -19,14 +19,13 @@ import (
 //
 // Pattern B (3-entry): Header + Pooled Fixed Fields + Uncopied Payload.
 // Used for large writes (Twrite) when msg implements [proto.Payloader].
-// This eliminates copying large user buffers into the pooled buffer
-// (SC-4 mirror optimization).
+// This eliminates copying large user buffers into the pooled buffer.
 //
-// Per Pitfall 7 + research §8 invariant 2: the net.Buffers slice is
-// re-sliced from c.encBufsArr on EVERY call because
-// net.Buffers.WriteTo's v.consume mutates both length AND capacity of
-// the receiver on full consumption. Passing a hoisted net.Buffers field
-// would silently write zero bytes after the first call.
+// The net.Buffers slice is re-sliced from c.encBufsArr on EVERY call
+// because net.Buffers.WriteTo's v.consume mutates both length AND
+// capacity of the receiver on full consumption. Passing a hoisted
+// net.Buffers field would silently write zero bytes after the first
+// call.
 func (c *Conn) writeT(tag proto.Tag, msg proto.Message) error {
 	if c.isClosed() {
 		return fmt.Errorf("client: writeT: %w", ErrClosed)

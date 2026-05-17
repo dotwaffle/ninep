@@ -86,16 +86,15 @@ func TestError_Is_NotSupportedDistinct(t *testing.T) {
 	}
 }
 
-// TestError_Is_SyscallBridge asserts the status of Assumption A1 from
-// 19-RESEARCH.md: does errors.Is(proto.Errno, syscall.Errno) bridge the
-// two types on Linux?
+// TestError_Is_SyscallBridge asserts whether errors.Is(proto.Errno,
+// syscall.Errno) bridges the two types on Linux.
 //
-// Empirical probe (performed during Task 3 execution):
+// Empirical probe:
 //
 //	errors.Is(proto.ENOENT, syscall.ENOENT) == false
 //
 // Even though both values are numerically 2, proto.Errno.Is only matches
-// against other proto.Errno values. The bridge is NOT available — callers
+// against other proto.Errno values. The bridge is NOT available - callers
 // must use proto.Errno constants with errors.Is, not syscall.Errno.
 //
 // This test pins that behavior so any future change (e.g. adding a
@@ -105,16 +104,16 @@ func TestError_Is_SyscallBridge(t *testing.T) {
 
 	// Sanity: the raw proto.Errno has no syscall bridge.
 	if errors.Is(proto.ENOENT, syscall.ENOENT) {
-		t.Fatalf("A1 changed: errors.Is(proto.ENOENT, syscall.ENOENT) is now true; update godoc")
+		t.Fatalf("syscall bridge changed: errors.Is(proto.ENOENT, syscall.ENOENT) is now true; update godoc")
 	}
 
 	// *Error delegates to proto.Errno.Is, so the same non-bridge applies.
 	e := &Error{Errno: proto.ENOENT}
 	if errors.Is(e, syscall.ENOENT) {
-		t.Fatalf("A1 changed: errors.Is(&Error{ENOENT}, syscall.ENOENT) is now true; update godoc")
+		t.Fatalf("syscall bridge changed: errors.Is(&Error{ENOENT}, syscall.ENOENT) is now true; update godoc")
 	}
 
-	// But proto.Errno form works — this is what callers must use.
+	// But proto.Errno form works - this is what callers must use.
 	if !errors.Is(e, proto.ENOENT) {
 		t.Fatalf("errors.Is(&Error{ENOENT}, proto.ENOENT) = false")
 	}
@@ -137,19 +136,19 @@ func TestError_SentinelsAreFourDistinctValues(t *testing.T) {
 	}
 }
 
-// TestErrorChain_FlushAndCtx_Canceled verifies RESEARCH Assumption A1: a
-// fmt.Errorf("...: %w", errors.Join(a, b)) chain satisfies errors.Is for BOTH
-// joined children. Plan 22-02's flushAndWait depends on this semantic to
-// compose the Rflush-first error chain per D-05/D-08.
+// TestErrorChain_FlushAndCtx_Canceled verifies that a
+// fmt.Errorf("...: %w", errors.Join(a, b)) chain satisfies errors.Is for
+// BOTH joined children. flushAndWait depends on this semantic to
+// compose the Rflush-first error chain.
 func TestErrorChain_FlushAndCtx_Canceled(t *testing.T) {
 	t.Parallel()
 	err := fmt.Errorf("9p: flushed tag 1: %w",
 		errors.Join(context.Canceled, ErrFlushed))
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("errors.Is(err, context.Canceled) = false, want true (A1 broken)")
+		t.Fatalf("errors.Is(err, context.Canceled) = false, want true")
 	}
 	if !errors.Is(err, ErrFlushed) {
-		t.Fatalf("errors.Is(err, ErrFlushed) = false, want true (A1 broken)")
+		t.Fatalf("errors.Is(err, ErrFlushed) = false, want true")
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("errors.Is(err, context.DeadlineExceeded) = true, want false")
@@ -157,27 +156,28 @@ func TestErrorChain_FlushAndCtx_Canceled(t *testing.T) {
 }
 
 // TestErrorChain_FlushAndCtx_DeadlineExceeded is the deadline variant of the
-// composite-chain check — same semantics, with context.DeadlineExceeded in
+// composite-chain check - same semantics, with context.DeadlineExceeded in
 // place of context.Canceled.
 func TestErrorChain_FlushAndCtx_DeadlineExceeded(t *testing.T) {
 	t.Parallel()
 	err := fmt.Errorf("9p: flushed tag 1: %w",
 		errors.Join(context.DeadlineExceeded, ErrFlushed))
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("errors.Is(err, context.DeadlineExceeded) = false, want true (A1 broken)")
+		t.Fatalf("errors.Is(err, context.DeadlineExceeded) = false, want true")
 	}
 	if !errors.Is(err, ErrFlushed) {
-		t.Fatalf("errors.Is(err, ErrFlushed) = false, want true (A1 broken)")
+		t.Fatalf("errors.Is(err, ErrFlushed) = false, want true")
 	}
 	if errors.Is(err, context.Canceled) {
 		t.Fatalf("errors.Is(err, context.Canceled) = true, want false")
 	}
 }
 
-// TestErrorChain_FlushOnly_NoCtx covers the R-first path analog per D-05:
-// if the original R arrives before Rflush, ErrFlushed is NOT in the chain —
-// only ctx.Err() is wrapped. Callers discriminate on ErrFlushed to detect
-// "server acked my Tflush" vs "I cancelled but the response beat the flush".
+// TestErrorChain_FlushOnly_NoCtx covers the R-first path analog: if the
+// original R arrives before Rflush, ErrFlushed is NOT in the chain -
+// only ctx.Err() is wrapped. Callers discriminate on ErrFlushed to
+// detect "server acked my Tflush" vs "I cancelled but the response
+// beat the flush".
 func TestErrorChain_FlushOnly_NoCtx(t *testing.T) {
 	t.Parallel()
 	err := fmt.Errorf("9p: flushed tag 1: %w", context.Canceled)
@@ -189,7 +189,7 @@ func TestErrorChain_FlushOnly_NoCtx(t *testing.T) {
 	}
 }
 
-// TestErrFlushed_Distinct_From_ErrClosed pins D-11: ErrFlushed and ErrClosed
+// TestErrFlushed_Distinct_From_ErrClosed pins that ErrFlushed and ErrClosed
 // are operationally meaningful as distinct states ("server acked my flush"
 // vs "connection is gone"). Callers must be able to discriminate.
 func TestErrFlushed_Distinct_From_ErrClosed(t *testing.T) {

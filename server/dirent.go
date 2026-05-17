@@ -16,7 +16,7 @@ import (
 //
 // where name[s] = len[2] + name_bytes.
 //
-// The returned []byte is a freshly-allocated copy-out — safe to retain past
+// The returned []byte is a freshly-allocated copy-out -- safe to retain past
 // the call boundary.
 func EncodeDirents(dirents []proto.Dirent, maxBytes uint32) ([]byte, int) {
 	if len(dirents) == 0 {
@@ -28,7 +28,7 @@ func EncodeDirents(dirents []proto.Dirent, maxBytes uint32) ([]byte, int) {
 
 	n, count := EncodeDirentsInto((*bufPtr)[:maxBytes], dirents)
 
-	// Copy-out — the pooled buffer returns to the pool via defer AFTER
+	// Copy-out -- the pooled buffer returns to the pool via defer AFTER
 	// this function returns, at which point the caller holds only the
 	// fresh `out` slice. No aliasing; safe even though the response
 	// encoder runs later than this PutMsgBuf.

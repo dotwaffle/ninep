@@ -181,7 +181,7 @@ func TestWriteT_ConcurrentCalls_NoInterleaving(t *testing.T) {
 		if gotType != proto.TypeTwrite {
 			t.Errorf("frame type = %v, want Twrite", gotType)
 		}
-		// Decode the body — if interleaving happened, decode fails.
+		// Decode the body -- if interleaving happened, decode fails.
 		var parsed proto.Twrite
 		if err := parsed.DecodeFrom(bytes.NewReader(frame[7:])); err != nil {
 			t.Errorf("decode Twrite: %v", err)
@@ -210,16 +210,17 @@ func TestWriteT_AfterClose(t *testing.T) {
 }
 
 // TestWriteT_NetBuffersReslice: call writeT 100 times in sequence;
-// confirm every frame reaches the server side non-zero bytes (Pitfall 7
-// — without re-slicing encBufsArr per call, subsequent writes ship 0
-// bytes because net.Buffers.WriteTo's v.consume zeros both len and cap).
+// confirm every frame reaches the server side with non-zero bytes -
+// without re-slicing encBufsArr per call, subsequent writes ship 0
+// bytes because net.Buffers.WriteTo's v.consume zeros both len and cap.
 func TestWriteT_NetBuffersReslice(t *testing.T) {
 	t.Parallel()
 	cli, srvNC := dialPairWriteT(t, 65536)
 
 	const N = 100
-	// Reader collects each frame's size as the primary signal; Pitfall 7
-	// would manifest as subsequent reads blocking (zero bytes written).
+	// Reader collects each frame's size as the primary signal; a
+	// missing re-slice would manifest as subsequent reads blocking
+	// (zero bytes written).
 	sizes := make(chan uint32, N)
 	readerDone := make(chan struct{})
 	go func() {
@@ -248,14 +249,14 @@ func TestWriteT_NetBuffersReslice(t *testing.T) {
 	select {
 	case <-readerDone:
 	case <-time.After(5 * time.Second):
-		t.Fatalf("reader goroutine stuck; %d/%d frames received (Pitfall 7)", len(sizes), N)
+		t.Fatalf("reader goroutine stuck; %d/%d frames received", len(sizes), N)
 	}
 
 	close(sizes)
 	count := 0
 	for size := range sizes {
 		if size == 0 {
-			t.Errorf("frame size = 0 (Pitfall 7 — v.consume zeroed bufs)")
+			t.Errorf("frame size = 0 (v.consume zeroed bufs)")
 		}
 		count++
 	}

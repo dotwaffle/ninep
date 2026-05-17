@@ -120,7 +120,7 @@ func TestClient_Remove_NotSupportedOnU(t *testing.T) {
 }
 
 // TestClient_Remove_NoFidLeak: after 50 create/remove iterations the fid
-// reuse cache stays bounded — all transient fids are returned to the
+// reuse cache stays bounded -- all transient fids are returned to the
 // allocator, none leak into the "monotonically growing next" pool.
 func TestClient_Remove_NoFidLeak(t *testing.T) {
 	t.Parallel()
@@ -153,7 +153,7 @@ func TestClient_Remove_NoFidLeak(t *testing.T) {
 	}
 	// Leak-detection heuristic: the reuse cache should be bounded below
 	// reuseCacheSize (1024). A true leak would show up as a counter
-	// growth, which the allocator exposes only indirectly — the reuse
+	// growth, which the allocator exposes only indirectly -- the reuse
 	// cache depth staying sensible is the proxy signal.
 	if got := client.FidReuseLen(cli); got > 1024 {
 		t.Errorf("FidReuseLen = %d, want <= 1024", got)

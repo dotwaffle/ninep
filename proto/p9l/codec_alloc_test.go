@@ -8,20 +8,20 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9l"
 )
 
-// TestEncode_ZeroAllocs pins the post-08-03 allocation budget for p9l.Encode.
+// TestEncode_ZeroAllocs pins the allocation budget for p9l.Encode.
 //
-// After Phase 8:
-//   - Plan 08-02 removed per-field escape by giving proto.Write* a concrete
+// Foundations:
+//   - Per-field escape was removed by giving proto.Write* a concrete
 //     *bytes.Buffer fast path.
-//   - Plan 08-03 pooled the body buffer itself (var body bytes.Buffer →
-//     bufpool.GetBuf/defer PutBuf).
+//   - The body buffer is pooled (var body bytes.Buffer ->
+//     bufpool.GetBuf / defer PutBuf).
 //
 // Combined, the alloc budget for Encode depends only on the message's own
 // encoding needs. For fixed-size payloads (Tversion, Twalk nwname=0, Tclunk)
 // the budget is 0. For payloads that allocate internally (e.g., Rgetattr
 // populates several fields through reflection-free paths), the residual is
 // measured empirically against a small ceiling. Rread_{4k,64k} are excluded
-// — the payload is caller-owned, not allocated in Encode.
+// -- the payload is caller-owned, not allocated in Encode.
 func TestEncode_ZeroAllocs(t *testing.T) {
 	cases := []struct {
 		name     string

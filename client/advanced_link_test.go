@@ -19,7 +19,7 @@ func linkTestCtx(t *testing.T) (context.Context, context.CancelFunc) {
 
 // TestClient_Link: Conn.Link creates a hard link. The new name appears
 // in the parent directory; reading it returns the same content as the
-// source (hard-link semantics — both names refer to one inode).
+// source (hard-link semantics -- both names refer to one inode).
 func TestClient_Link(t *testing.T) {
 	t.Parallel()
 	root := newTestRUDir(t)

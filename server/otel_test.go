@@ -614,7 +614,7 @@ func TestWithTracerAndWithMeterOptions(t *testing.T) {
 
 // TestServerNoopDetection verifies probeOTelProviders correctly populates
 // s.tracerRecording and s.meterEnabled across the matrix of configurations
-// the server may encounter. Covers PERF-06 SC-1.
+// the server may encounter.
 func TestServerNoopDetection(t *testing.T) {
 	t.Parallel()
 
@@ -693,7 +693,7 @@ func TestServerNoopDetection(t *testing.T) {
 
 // TestOTelNoopShortCircuit verifies the short-circuit path: when both
 // providers are noop, no OTel middleware is installed on a new conn's
-// handler chain and c.otelInst stays nil. Covers PERF-06 SC-4 and D-04.
+// handler chain and c.otelInst stays nil.
 func TestOTelNoopShortCircuit(t *testing.T) {
 	t.Parallel()
 
@@ -730,8 +730,8 @@ func TestOTelNoopShortCircuit(t *testing.T) {
 
 // TestOTelPartialNoopInstalls verifies the partially-noop install path:
 // when EITHER a real tracer OR a real meter is configured (but not both),
-// the OTel middleware MUST still be installed per D-06. The install
-// predicate is OR, not AND. Covers PERF-06 SC-6.
+// the OTel middleware MUST still be installed. The install predicate
+// is OR, not AND.
 func TestOTelPartialNoopInstalls(t *testing.T) {
 	t.Parallel()
 
@@ -774,7 +774,7 @@ func TestOTelPartialNoopInstalls(t *testing.T) {
 			})
 			c := newConn(srv, server)
 			if c.otelInst == nil {
-				t.Errorf("c.otelInst = nil, want non-nil (partial config MUST install middleware per D-06)")
+				t.Errorf("c.otelInst = nil, want non-nil (partial config MUST install middleware)")
 			}
 		})
 	}

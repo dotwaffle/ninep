@@ -258,10 +258,10 @@ func TestStringBufCycle_ZeroAllocs(t *testing.T) {
 // Pattern anchor: analogous to TestMsgBufCycle_ZeroAllocs (bufpool_test.go:147-162)
 // but uses b.Loop() instead of AllocsPerRun because the acceptance bar is
 // per-benchstat steady-state allocs/op, not a hard AllocsPerRun assertion.
-// Pattern: 13-PATTERNS.md §"internal/bufpool/bufpool_test.go".
+// per-benchstat steady-state.
 func BenchmarkGetMsgBuf_SmallUnderGC(b *testing.B) {
 	sizes := []int{11, 23, 4096}
-	// Warm every bucket used by the mix — first-use path hits sync.Pool.New
+	// Warm every bucket used by the mix -- first-use path hits sync.Pool.New
 	// which would register as an allocation and skew early iterations.
 	for range 100 {
 		for _, sz := range sizes {
@@ -280,10 +280,10 @@ func BenchmarkGetMsgBuf_SmallUnderGC(b *testing.B) {
 	}
 }
 
-// BenchmarkGetMsgBuf_4KSteady measures steady-state 4 KiB bucket cycling
-// without GC pressure. The MB/s column is what "at or above the pre-size-class
-// baseline" (PERF-04.2) refers to; allocs/op is the correctness gate (0).
-// Pattern anchor: TestMsgBufCycle_ZeroAllocs (bufpool_test.go:147-162).
+// BenchmarkGetMsgBuf_4KSteady measures steady-state 4 KiB bucket
+// cycling without GC pressure. The MB/s column is the throughput
+// signal; allocs/op is the correctness gate (0). Pattern anchor:
+// TestMsgBufCycle_ZeroAllocs.
 func BenchmarkGetMsgBuf_4KSteady(b *testing.B) {
 	// Warm the 4 KiB bucket (msgBucketSizes[1]) to prime sync.Pool.New.
 	for range 100 {

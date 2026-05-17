@@ -7,15 +7,17 @@ import (
 	"github.com/dotwaffle/ninep/proto"
 )
 
-// TestEncodeDirents_ZeroAllocs pins the post-08-03 allocation budget for
-// EncodeDirents. With the internal bufpool + copy-out pattern, exactly one
-// allocation remains per call (the returned []byte). The Phase 7 baseline
-// was 4011 allocs/op at n=1000 — dominated by bytes.Buffer grow-doubling
-// as the per-dirent field writes expanded the backing slice.
+// TestEncodeDirents_ZeroAllocs pins the allocation budget for
+// EncodeDirents. With the internal bufpool + copy-out pattern,
+// exactly one allocation remains per call (the returned []byte). A
+// pre-pool baseline was 4011 allocs/op at n=1000 - dominated by
+// bytes.Buffer grow-doubling as the per-dirent field writes expanded
+// the backing slice.
 //
-// The pool's pre-grown capacity (PoolMaxBufSize = 128KB) absorbs the entire
-// pack loop without a single grow, and the proto.Write* fast path (plan
-// 08-02) drives per-field allocs to zero. Only the copy-out slice remains.
+// The pool's pre-grown capacity (PoolMaxBufSize = 128KB) absorbs the
+// entire pack loop without a single grow, and the proto.Write* fast
+// path drives per-field allocs to zero. Only the copy-out slice
+// remains.
 func TestEncodeDirents_ZeroAllocs(t *testing.T) {
 	dirents := make([]proto.Dirent, 100)
 	for i := range dirents {
@@ -27,7 +29,7 @@ func TestEncodeDirents_ZeroAllocs(t *testing.T) {
 		}
 	}
 
-	// Warm the pool — first-use path takes the pool's New func.
+	// Warm the pool -- first-use path takes the pool's New func.
 	for range 10 {
 		_, _ = EncodeDirents(dirents, 64*1024)
 	}

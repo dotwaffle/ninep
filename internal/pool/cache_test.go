@@ -55,7 +55,7 @@ func TestCache_PutThenGetReuses(t *testing.T) {
 }
 
 // TestCache_PutOnFullDropsToGC asserts that putting more pointers than Cap
-// silently drops overflow — the cache channel length reaches Cap and stays
+// silently drops overflow -- the cache channel length reaches Cap and stays
 // there. The fourth pointer must be dropped (not block, not panic).
 func TestCache_PutOnFullDropsToGC(t *testing.T) {
 	t.Parallel()
@@ -73,7 +73,7 @@ func TestCache_PutOnFullDropsToGC(t *testing.T) {
 	}
 
 	// Drain the cache and verify we get Cap pointers back (one of the
-	// original four was dropped). We don't assert which one — FIFO channel
+	// original four was dropped). We don't assert which one -- FIFO channel
 	// order just means the first Cap-sized Puts stayed; the last was lost.
 	seen := make(map[*proto.Tread]bool)
 	for range Cap {
@@ -123,14 +123,15 @@ func TestCache_ConcurrentGetPut(t *testing.T) {
 	}
 }
 
-// TestCache_CapConstant locks the D-05 invariant into CI: Cap == 3. Changing
-// this constant requires re-running the BenchmarkWalkClunk comparison per
-// the package doc; this test ensures a silent regression (Cap=1 or Cap=7)
-// cannot sneak in without an explicit update here.
+// TestCache_CapConstant locks the cache-cap invariant into CI: Cap ==
+// 3. Changing this constant requires re-running the BenchmarkWalkClunk
+// comparison per the package doc; this test ensures a silent
+// regression (Cap=1 or Cap=7) cannot sneak in without an explicit
+// update here.
 func TestCache_CapConstant(t *testing.T) {
 	t.Parallel()
 	if Cap != 3 {
-		t.Fatalf("Cap = %d, want 3 (D-05 invariant)", Cap)
+		t.Fatalf("Cap = %d, want 3", Cap)
 	}
 
 	// Channel capacity must match the Cap constant. If NewCache ever

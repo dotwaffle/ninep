@@ -150,8 +150,8 @@ func TestFileReadDir_EmptyDir(t *testing.T) {
 
 // TestFileReadDir_DirEntryInterface: verifies returned entries
 // implement the os.DirEntry contract (Name, IsDir, Type, Info) and
-// that Info() returns ErrNotSupported per Phase 20's defer to Phase 21
-// Tgetattr wiring.
+// that Info() returns ErrNotSupported (Tgetattr not wired through
+// directory entries).
 func TestFileReadDir_DirEntryInterface(t *testing.T) {
 	t.Parallel()
 	gen := &server.QIDGenerator{}
@@ -207,10 +207,10 @@ func TestFileReadDir_DirEntryInterface(t *testing.T) {
 			}
 			sawFile = true
 		}
-		// Info() must return ErrNotSupported in Phase 20.
+		// Info() must return ErrNotSupported.
 		info, ierr := e.Info()
 		if info != nil {
-			t.Errorf("Info() = %v, want nil in Phase 20", info)
+			t.Errorf("Info() = %v, want nil", info)
 		}
 		if !errors.Is(ierr, client.ErrNotSupported) {
 			t.Errorf("Info() err=%v, want ErrNotSupported", ierr)

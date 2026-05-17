@@ -30,12 +30,13 @@ func TestRecvPath_PoolReusesBuffer(t *testing.T) {
 		_, _, _ = p9l.Decode(bytes.NewReader(raw))
 	})
 
-	// Phase 7 baseline BenchmarkReadDecode was 11 allocs/op. Task 2 pooled
-	// ReadString (saves ~1 per string field). Task 3 pools the recv-path
-	// msg-body buffer (saves 1 in BenchmarkReadDecode via a separate path;
-	// this test measures only Decode, so the gain is driven by ReadString).
-	// Target: < 10 allocs/op for a message with a single string field.
+	// Pre-pool baseline BenchmarkReadDecode was 11 allocs/op. A
+	// pooled ReadString saves ~1 per string field. A pooled recv-path
+	// msg-body buffer saves 1 in BenchmarkReadDecode via a separate
+	// path; this test measures only Decode, so the gain is driven by
+	// ReadString. Target: < 10 allocs/op for a message with a single
+	// string field.
 	if allocs > 10 {
-		t.Errorf("p9l.Decode allocs/op: got %v, want < 10 after 08-04 ReadString pool", allocs)
+		t.Errorf("p9l.Decode allocs/op: got %v, want < 10 (ReadString pool)", allocs)
 	}
 }

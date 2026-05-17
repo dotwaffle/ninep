@@ -22,12 +22,12 @@ const minMsize = 256
 // The client proposes 9P2000.L with WithMsize's value (default 1 MiB; see
 // client/options.go).
 //
-// Per D-09 (.planning/phases/19/19-CONTEXT.md), the server's Rversion is
-// accepted when it carries one of three strings:
+// The server's Rversion is accepted when it carries one of three
+// strings:
 //
-//   - "9P2000.L" — full .L codec + message set.
-//   - "9P2000.u" — .u codec + .u message set (Unix extensions explicit).
-//   - "9P2000"   — bare. Linux v9fs treats this as a .u-compatible alias
+//   - "9P2000.L" - full .L codec + message set.
+//   - "9P2000.u" - .u codec + .u message set (Unix extensions explicit).
+//   - "9P2000"   - bare. Linux v9fs treats this as a .u-compatible alias
 //     (the kernel client proposes .u and the server may echo the bare
 //     string). Dial maps this to the .u codec to match that convention.
 //
@@ -35,10 +35,10 @@ const minMsize = 256
 // is min(client proposal, server Rversion.Msize); a result below minMsize
 // (256) yields ErrMsizeTooSmall.
 //
-// The supplied ctx is honored only during the Tversion round-trip — its
-// deadline is applied to nc via SetDeadline and cleared before Dial returns
-// on success. For request-level cancellation (Phase 22) use per-op contexts
-// on the returned *Conn.
+// The supplied ctx is honored only during the Tversion round-trip - its
+// deadline is applied to nc via SetDeadline and cleared before Dial
+// returns on success. For request-level cancellation use per-op
+// contexts on the returned *Conn.
 //
 // On any error Dial leaves nc in whatever state the caller provided: it
 // does NOT close nc on its own, so a caller may reuse the connection
@@ -63,7 +63,7 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
 		}
 	}
 
-	// 1. Encode Tversion body into a cold-path buffer. No bufpool — this
+	// 1. Encode Tversion body into a cold-path buffer. No bufpool -- this
 	//    runs once per Conn and keeping allocation explicit simplifies the
 	//    error-unwind paths that follow.
 	proposedVersion := "9P2000.L"
@@ -92,7 +92,7 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
 	// 3. Read Rversion via the wire.ReadSize + wire.ReadBody split.
 	//    msize validation sits between the two reads so a malicious 4 GiB
 	//    size field cannot coerce a body allocation before policy is
-	//    consulted (research §Open Question 2 + Pitfall 10-B).
+	//    consulted (oversize frame guard).
 	rsize, err := wire.ReadSize(nc)
 	if err != nil {
 		return nil, fmt.Errorf("client.Dial: read Rversion size: %w", err)
@@ -124,8 +124,8 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
 		return nil, fmt.Errorf("client.Dial: decode Rversion: %w", err)
 	}
 
-	// 5. Select codec + dialect per D-09. Bare "9P2000" maps to .u (Linux
-	//    v9fs kernel convention); "9P2000.u" maps to .u; "9P2000.L" maps to
+	// 5. Select codec + dialect. Bare "9P2000" maps to .u (Linux v9fs
+	//    kernel convention); "9P2000.u" maps to .u; "9P2000.L" maps to
 	//    .L; anything else is ErrVersionMismatch.
 	if cfg.version != "" && rver.Version != string(cfg.version) {
 		return nil, fmt.Errorf("%w: exact version match failed (requested %q, server returned %q)", ErrVersionMismatch, cfg.version, rver.Version)
@@ -138,8 +138,8 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
 		dialect = protocolL
 		cc = codecL
 	case "9P2000.u", "9P2000":
-		// "9P2000.u" — explicit Unix-extensions advertisement.
-		// "9P2000"   — bare 9P2000; Linux v9fs treats this as .u-alias.
+		// "9P2000.u" -- explicit Unix-extensions advertisement.
+		// "9P2000"   -- bare 9P2000; Linux v9fs treats this as .u-alias.
 		// Both paths use the p9u codec and the .u R-message factory.
 		dialect = protocolU
 		cc = codecU
@@ -154,8 +154,8 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
 	}
 
 	// 7. Clear the negotiation deadline. A live Conn has no implicit
-	//    deadline; per-op contexts drive per-request cancellation
-	//    (Phase 22). Passing the zero time.Time disables the deadline.
+	//    deadline; per-op contexts drive per-request cancellation.
+	//    Passing the zero time.Time disables the deadline.
 	if err := nc.SetDeadline(time.Time{}); err != nil {
 		return nil, fmt.Errorf("client.Dial: clear deadline: %w", err)
 	}

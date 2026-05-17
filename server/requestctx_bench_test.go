@@ -9,10 +9,10 @@ import (
 // BenchmarkRequestContext measures the pooled requestCtx get+put cycle.
 //
 // Subtests:
-//   - /hit  — steady-state measurement; the pool is pre-warmed so every
-//     iteration measures the sync.Pool fast path. PERF-08.1 binds this
-//     subtest to 0 allocs/op.
-//   - /miss — forced pool miss via runtime.GC() before each get. sync.Pool
+//   - /hit  - steady-state measurement; the pool is pre-warmed so every
+//     iteration measures the sync.Pool fast path. This subtest is
+//     bound to 0 allocs/op.
+//   - /miss -- forced pool miss via runtime.GC() before each get. sync.Pool
 //     drains its per-P caches on GC; the subsequent Get either re-hits
 //     whatever the New function returned from a drained pool or allocates.
 //     The requestCtx-attributable cost is 1 alloc/op (the struct); any
@@ -24,7 +24,7 @@ import (
 // package) and b.ReportAllocs() so the allocs/op column is populated.
 //
 // The /miss body wraps runtime.GC() in b.StopTimer/b.StartTimer so GC cost
-// does not pollute the ns/op column — only the get+put cycle is measured.
+// does not pollute the ns/op column -- only the get+put cycle is measured.
 //
 // See also: TestRequestCtxAllocs in requestctx_test.go, which asserts the
 // alloc budget as a hard test gate via testing.AllocsPerRun. This benchmark
@@ -58,7 +58,7 @@ func BenchmarkRequestContext(b *testing.B) {
 		// Note on the reported allocs/op count: per-iteration runtime.GC
 		// also drains sync.Pool's per-P local array, so the next Pool.Get
 		// hits sync.Pool.pinSlow which allocates the per-P array anew.
-		// That is infrastructure overhead, not requestCtx overhead — it
+		// That is infrastructure overhead, not requestCtx overhead -- it
 		// adds ~1 alloc/op on top of the fresh *requestCtx from New().
 		// The load-bearing alloc gate for the miss path is
 		// TestRequestCtxAllocs (AllocsPerRun after two forced GCs),

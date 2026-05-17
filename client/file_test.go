@@ -57,9 +57,9 @@ func TestFile_QidAccessor(t *testing.T) {
 	}
 }
 
-// TestFile_CloseIdempotent: a second Close is a no-op and returns nil
-// (D-06). The first Close issues exactly one Tclunk; the second path
-// through sync.Once skips the wire entirely.
+// TestFile_CloseIdempotent: a second Close is a no-op and returns nil.
+// The first Close issues exactly one Tclunk; the second path through
+// sync.Once skips the wire entirely.
 func TestFile_CloseIdempotent(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
@@ -74,20 +74,19 @@ func TestFile_CloseIdempotent(t *testing.T) {
 	if err := root.Close(); err != nil {
 		t.Fatalf("first Close: %v", err)
 	}
-	// Second Close must return nil per D-06 — even though the fid was
-	// already clunked server-side, the sync.Once short-circuits the
-	// wire op.
+	// Second Close must return nil - even though the fid was already
+	// clunked server-side, the sync.Once short-circuits the wire op.
 	if err := root.Close(); err != nil {
-		t.Errorf("second Close: %v, want nil (idempotent per D-06)", err)
+		t.Errorf("second Close: %v, want nil (idempotent)", err)
 	}
 }
 
 // TestFile_CloseIdempotent_FirstErrorThenNil: when the first Close
 // surfaces a Tclunk error (e.g. the Conn shut down before the Rclunk
 // arrived), the first caller receives that error and any subsequent
-// caller receives nil per D-06. Regression guard for WR-01: previously
-// f.closeErr was returned on every call, so a failing first Close
-// caused every defer'd Close to repeat the same error indefinitely.
+// caller receives nil. Regression guard: previously f.closeErr was
+// returned on every call, so a failing first Close caused every
+// defer'd Close to repeat the same error indefinitely.
 func TestFile_CloseIdempotent_FirstErrorThenNil(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
@@ -113,15 +112,15 @@ func TestFile_CloseIdempotent_FirstErrorThenNil(t *testing.T) {
 	if !errors.Is(firstErr, client.ErrClosed) {
 		t.Errorf("first Close: got %v, want ErrClosed", firstErr)
 	}
-	// D-06: the second Close must return nil even though the first
-	// captured an error. sync.Once short-circuits the wire path; the
-	// return-gate distinguishes first vs. subsequent callers.
+	// The second Close must return nil even though the first captured
+	// an error. sync.Once short-circuits the wire path; the return-gate
+	// distinguishes first vs. subsequent callers.
 	if err := root.Close(); err != nil {
-		t.Errorf("second Close after failing first: got %v, want nil (D-06 idempotent)", err)
+		t.Errorf("second Close after failing first: got %v, want nil (idempotent)", err)
 	}
 	// Third Close for good measure -- also nil.
 	if err := root.Close(); err != nil {
-		t.Errorf("third Close: got %v, want nil (D-06 idempotent)", err)
+		t.Errorf("third Close: got %v, want nil (idempotent)", err)
 	}
 }
 
@@ -228,8 +227,8 @@ func TestFile_Walk_ReturnsNewFile(t *testing.T) {
 }
 
 // TestFile_Walk_ErrorReleasesFid: file.Walk(nonexistent) returns an
-// error AND the reserved newFid is released to the allocator (Pitfall
-// 2). We verify via the FidReuseLen test hook.
+// error AND the reserved newFid is released to the allocator. We
+// verify via the FidReuseLen test hook.
 func TestFile_Walk_ErrorReleasesFid(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
@@ -282,7 +281,7 @@ func TestFile_Clone_IndependentOffset(t *testing.T) {
 	if clone.Qid() != root.Qid() {
 		t.Errorf("clone.Qid() = %#v, want root.Qid() = %#v", clone.Qid(), root.Qid())
 	}
-	// Close the clone first — root must remain usable.
+	// Close the clone first -- root must remain usable.
 	if err := clone.Close(); err != nil {
 		t.Fatalf("clone.Close: %v", err)
 	}
@@ -306,7 +305,7 @@ func TestFile_Clone_ErrorReleasesFid(t *testing.T) {
 		t.Fatalf("Attach: %v", err)
 	}
 
-	// Close the Conn — next Clone call must fail fast via ErrClosed.
+	// Close the Conn -- next Clone call must fail fast via ErrClosed.
 	if err := cli.Close(); err != nil {
 		t.Fatalf("cli.Close: %v", err)
 	}

@@ -25,7 +25,7 @@ type protocol uint8
 const (
 	protocolNone protocol = iota
 	protocolL             // 9P2000.L
-	protocolU             // 9P2000.u (also selected when the server replies bare "9P2000" per D-09; Linux v9fs kernel convention.)
+	protocolU             // 9P2000.u (also selected when the server replies bare "9P2000"; Linux v9fs kernel convention.)
 )
 
 // String returns the version string for the protocol dialect.
@@ -56,10 +56,10 @@ var (
 )
 
 // Conn is a 9P client connection. Safe for concurrent use by multiple
-// goroutines per D-07; modeled on database/sql.DB. All T-message writes
-// are serialized through writeMu; all R-message reads come from a single
-// read goroutine that dispatches into per-tag response channels stored in
-// inflight.
+// goroutines; modeled on database/sql.DB. All T-message writes are
+// serialized through writeMu; all R-message reads come from a single
+// read goroutine that dispatches into per-tag response channels stored
+// in inflight.
 //
 // Lifetime invariants:
 //
@@ -71,7 +71,7 @@ var (
 //     returns ErrClosed.
 //   - readerWG tracks the single read goroutine. callerWG tracks every
 //     op-method goroutine that has an acquired tag. Both are drained by
-//     Close/Shutdown (Plan 19-05).
+//     Close/Shutdown.
 type Conn struct {
 	nc      net.Conn
 	dialect protocol
@@ -103,8 +103,8 @@ type Conn struct {
 	// encBufsArr is the backing array for the net.Buffers slice used in
 	// writeT. Three entries suffice: hdr + fixed body + payload. Re-sliced
 	// on every call because net.Buffers.WriteTo mutates both len AND cap
-	// of its receiver on full consumption (see the framing helper godoc
-	// and ninep CLAUDE.md §Performance). Guarded by writeMu.
+	// of its receiver on full consumption (see the framing helper godoc).
+	// Guarded by writeMu.
 	encBufsArr [3][]byte
 
 	// closeCh is closed exactly once by closeOnce to signal shutdown to the
@@ -114,7 +114,7 @@ type Conn struct {
 
 	// callerWG tracks outstanding op-method goroutines (each holds a tag).
 	// readerWG tracks the single read goroutine. Both are awaited by
-	// Close/Shutdown in Plan 19-05.
+	// Close/Shutdown.
 	callerWG sync.WaitGroup
 	readerWG sync.WaitGroup
 
@@ -128,7 +128,7 @@ type Conn struct {
 	// requestTimeout is the default ctx timeout applied by the non-ctx
 	// io.* methods on *File ([File.Read], [File.Write], [File.ReadAt],
 	// [File.WriteAt]) via [Conn.opCtx]. Zero means "no timeout / use
-	// parent ctx as-is" — matches Linux v9fs parity per Pitfall 9.
+	// parent ctx as-is" - matches Linux v9fs parity.
 	// Set at Dial time via [WithRequestTimeout]; immutable after Dial.
 	requestTimeout time.Duration
 
@@ -142,8 +142,8 @@ type Conn struct {
 
 // isClosed returns true once signalShutdown has fired. Non-blocking
 // (closeCh is the single source of truth; see signalShutdown in
-// read_loop.go). Used by writeT's pre-flight check and by Plan 19-04's
-// op methods to short-circuit a closed-Conn return before paying the
+// read_loop.go). Used by writeT's pre-flight check and by the op
+// methods to short-circuit a closed-Conn return before paying the
 // tagAllocator.acquire round-trip.
 func (c *Conn) isClosed() bool {
 	select {
@@ -156,7 +156,7 @@ func (c *Conn) isClosed() bool {
 
 // opCtx builds a per-operation context from parent. When the Conn's
 // requestTimeout is zero (the default), returns (parent, no-op cancel)
-// — the parent is passed through verbatim with no allocation and no
+// -- the parent is passed through verbatim with no allocation and no
 // timer. When requestTimeout > 0, returns [context.WithTimeout] applied
 // to parent; callers MUST invoke cancel via defer to free the timer.
 //
@@ -164,7 +164,7 @@ func (c *Conn) isClosed() bool {
 // honor the Conn-wide default timeout (set via [WithRequestTimeout])
 // without forcing callers of io.Reader etc. to plumb a ctx. The
 // per-op *Ctx variants on *File bypass opCtx and use the caller's ctx
-// verbatim — that's how the "caller ctx overrides WithRequestTimeout"
+// verbatim -- that's how the "caller ctx overrides WithRequestTimeout"
 // contract is enforced.
 func (c *Conn) opCtx(parent context.Context) (context.Context, context.CancelFunc) {
 	if c.requestTimeout == 0 {

@@ -105,7 +105,7 @@ func TestTagAllocator_BlocksOnSaturation(t *testing.T) {
 	case err := <-errCh:
 		t.Fatalf("third acquire returned error prematurely: %v", err)
 	case <-time.After(50 * time.Millisecond):
-		// Good — blocked as expected.
+		// Good -- blocked as expected.
 	}
 
 	// Release one; goroutine must unblock.

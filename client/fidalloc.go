@@ -6,13 +6,13 @@ import (
 	"github.com/dotwaffle/ninep/proto"
 )
 
-// fidStart is the first fid handed out. Zero is reserved — keeps is-zero
+// fidStart is the first fid handed out. Zero is reserved -- keeps is-zero
 // sentinel checks unambiguous and matches hugelgupf/p9's convention.
 const fidStart proto.Fid = 1
 
 // reuseCacheSize caps the reuse slice to prevent unbounded growth. Excess
 // released fids drop on the floor; the 4B-fid counter space tolerates
-// discarded slots for any practical workload per 20-RESEARCH.md §5.
+// discarded slots for any practical workload.
 const reuseCacheSize = 1024
 
 // fidAllocator hands out proto.Fid values for a single Conn. Uses a
@@ -20,17 +20,16 @@ const reuseCacheSize = 1024
 // free-list for reuse. Once the counter reaches proto.NoFid with an
 // empty reuse list, acquire returns ErrFidExhausted.
 //
-// Design rationale (20-RESEARCH.md §5): matches hugelgupf/p9's pool
-// shape (counter + cache) rather than Phase 19's tagAllocator
-// (pre-seeded chan) because the fid address space is 32-bit and cannot
-// be pre-seeded without a multi-GiB allocation at construction.
+// Design rationale: matches hugelgupf/p9's pool shape (counter + cache)
+// rather than the tagAllocator (pre-seeded chan) because the fid
+// address space is 32-bit and cannot be pre-seeded without a multi-GiB
+// allocation at construction.
 //
-// Ordering contract (Pitfall 6 in 20-RESEARCH.md §9): callers MUST
-// release AFTER the server-side Tclunk response is received, never
-// before. Releasing before the Rclunk lands opens a fid-reuse race
-// where the allocator hands the same number to another goroutine that
-// then issues Twalk against a server-view still bound to the prior
-// user.
+// Ordering contract: callers MUST release AFTER the server-side Tclunk
+// response is received, never before. Releasing before the Rclunk
+// lands opens a fid-reuse race where the allocator hands the same
+// number to another goroutine that then issues Twalk against a
+// server-view still bound to the prior user.
 type fidAllocator struct {
 	mu    sync.Mutex
 	next  proto.Fid   // next fresh fid; monotonic
@@ -68,7 +67,7 @@ func (fa *fidAllocator) acquire() (proto.Fid, error) {
 }
 
 // release returns fid to the reuse cache, capped at reuseCacheSize. Past
-// cap, the fid is dropped — harmless under the 4B-fid counter budget.
+// cap, the fid is dropped - harmless under the 4B-fid counter budget.
 // Threadsafe.
 func (fa *fidAllocator) release(fid proto.Fid) {
 	fa.mu.Lock()
@@ -78,7 +77,7 @@ func (fa *fidAllocator) release(fid proto.Fid) {
 	}
 }
 
-// len returns the current reuse-cache depth. Test hook only — not part
+// len returns the current reuse-cache depth. Test hook only - not part
 // of the public API and not used on any hot path.
 func (fa *fidAllocator) len() int {
 	fa.mu.Lock()

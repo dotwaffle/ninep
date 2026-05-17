@@ -89,9 +89,9 @@ func TestClient_Rename_CrossDir(t *testing.T) {
 	}
 }
 
-// TestClient_Rename_WhileOpen: Pitfall 5 proof. Open a file, rename it,
-// and confirm Read from the original *File still returns the original
-// contents — the fid remained bound to the inode, not the path.
+// TestClient_Rename_WhileOpen: open a file, rename it, and confirm Read
+// from the original *File still returns the original contents - the fid
+// remained bound to the inode, not the path.
 func TestClient_Rename_WhileOpen(t *testing.T) {
 	t.Parallel()
 	root := newTestRUDir(t)
@@ -120,7 +120,7 @@ func TestClient_Rename_WhileOpen(t *testing.T) {
 		t.Fatalf("Rename while open: %v", err)
 	}
 
-	// Read from the original *File — should return the payload.
+	// Read from the original *File -- should return the payload.
 	got, err := io.ReadAll(openedF)
 	if err != nil {
 		t.Fatalf("ReadAll after rename: %v", err)
@@ -152,7 +152,7 @@ func TestClient_Rename_Missing(t *testing.T) {
 	}
 	// Fid accounting: no stuck fids. Reuse depth may have grown (we
 	// released several fids during the failed walk), but it must not
-	// shrink — that would indicate fids were re-handed out without a
+	// shrink -- that would indicate fids were re-handed out without a
 	// release cycle completing.
 	if got := client.FidReuseLen(cli); got < reuseBefore {
 		t.Errorf("FidReuseLen dropped: before=%d after=%d", reuseBefore, got)
@@ -160,7 +160,7 @@ func TestClient_Rename_Missing(t *testing.T) {
 }
 
 // TestClient_Rename_NotSupportedOnU: .u dialect gates Rename to
-// ErrNotSupported (execute-time decision — Raw.Trename is .L-only on
+// ErrNotSupported (execute-time decision -- Raw.Trename is .L-only on
 // this codec, and ninep's .u server does not decode Trename).
 func TestClient_Rename_NotSupportedOnU(t *testing.T) {
 	t.Parallel()

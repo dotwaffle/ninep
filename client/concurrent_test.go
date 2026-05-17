@@ -12,18 +12,18 @@ import (
 	"github.com/dotwaffle/ninep/proto"
 )
 
-// TestClient_Concurrent exercises D-07 goroutine safety under load.
-// 100 goroutines × 10 iterations each do Walk→Lopen→Read→Clunk cycles.
-// Each goroutine allocates a unique fid block derived from its index so
-// there's no fid-level collision — the test isolates tag-level and
-// writeMu-level concurrency (D-07 invariants).
+// TestClient_Concurrent exercises goroutine safety under load.
+// 100 goroutines x 10 iterations each do Walk->Lopen->Read->Clunk
+// cycles. Each goroutine allocates a unique fid block derived from its
+// index so there's no fid-level collision - the test isolates tag-level
+// and writeMu-level concurrency.
 func TestClient_Concurrent(t *testing.T) {
 	t.Parallel()
 	const numG = 100
 	const iters = 10
 
 	// maxInflight default is 64; with 100 goroutines we exercise the
-	// natural back-pressure path (D-02).
+	// natural back-pressure path.
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
 	defer cleanup()
 
@@ -88,11 +88,11 @@ func TestClient_Concurrent(t *testing.T) {
 	}
 }
 
-// TestClient_TagReuse_Stress exercises Pitfall 2 ordering (unregister-before-
-// release) under heavy tag churn. 1000 sequential iterations + 10 concurrent
-// goroutines × 1000 iterations. After the sequential portion, inflight.len()
-// must be 0 and the free-tag count must match maxInflight; under -race any
-// tag-collision bug would surface.
+// TestClient_TagReuse_Stress exercises unregister-before-release
+// ordering under heavy tag churn. 1000 sequential iterations + 10
+// concurrent goroutines x 1000 iterations. After the sequential
+// portion, inflight.len() must be 0 and the free-tag count must match
+// maxInflight; under -race any tag-collision bug would surface.
 func TestClient_TagReuse_Stress(t *testing.T) {
 	t.Parallel()
 	const seqIters = 1000
@@ -125,7 +125,7 @@ func TestClient_TagReuse_Stress(t *testing.T) {
 	if got := client.InflightLen(cli); got != 0 {
 		t.Errorf("after %d sequential ops: inflight.len()=%d, want 0", seqIters, got)
 	}
-	// Default maxInflight is 64 — all tags should have been returned.
+	// Default maxInflight is 64 -- all tags should have been returned.
 	if got := client.FreeTagCount(cli); got != 64 {
 		t.Errorf("after %d sequential ops: free-tag count=%d, want 64", seqIters, got)
 	}
@@ -254,7 +254,7 @@ func TestClient_Concurrent_Close(t *testing.T) {
 		closedCount++
 	}
 	if closedCount == 0 {
-		t.Log("warning: no goroutines observed ErrClosed — Close may have fired after all ops finished. " +
+		t.Log("warning: no goroutines observed ErrClosed -- Close may have fired after all ops finished. " +
 			"This is not a bug per se but weakens the test signal.")
 	}
 }

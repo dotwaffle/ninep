@@ -8,7 +8,7 @@ import (
 )
 
 // Setattr mutates metadata fields on the server-side file referenced by
-// this [File]. attr.Valid is the bitmask of fields to write — fields
+// this [File]. attr.Valid is the bitmask of fields to write -- fields
 // not named in Valid are ignored by the server.
 //
 // Requires a 9P2000.L-negotiated Conn; returns a wrapped

@@ -18,10 +18,10 @@ import (
 // deadline composition under -race with 500 concurrent goroutines × 10
 // iterations = 5000 ops. Each iteration picks one of four op-modes:
 //
-//  0. complete — no cancel
-//  1. cancel-immediately — opCancel() before issuing the op
-//  2. cancel-mid-flight — async cancel after a ~µs-range sleep
-//  3. deadline-expiry — WithTimeout short enough to fire in-flight
+//  0. complete -- no cancel
+//  1. cancel-immediately -- opCancel() before issuing the op
+//  2. cancel-mid-flight -- async cancel after a ~µs-range sleep
+//  3. deadline-expiry -- WithTimeout short enough to fire in-flight
 //
 // A single observer goroutine fires cli.Close() mid-stream so the close
 // path is exercised alongside cancellation. After the wait group drains,
@@ -30,16 +30,15 @@ import (
 //   - ≥1 context.Canceled observation (hard)
 //   - ≥1 context.DeadlineExceeded observation (hard)
 //   - ≥1 ErrClosed observation (hard)
-//   - ErrFlushed is timing-dependent on net.Pipe — Logf-warned, not
-//     hard-asserted (Research Q3 + Pitfall 4)
-//   - runtime.NumGoroutine() delta ≤ 5 after cleanup
+//   - ErrFlushed is timing-dependent on net.Pipe - Logf-warned, not
+//     hard-asserted
+//   - runtime.NumGoroutine() delta <= 5 after cleanup
 //   - no panics / no -race violations
 //
-// Runtime budget: 30s default per Research Q3; t.Short() skips the test.
-// Satisfies ROADMAP Phase 22 SC-3 (500+ -race stress, no leaks, random
-// cancellation + close). Runs in the default suite (no build tag),
-// matching Phase 19's TestClient_Concurrent / TestClient_TagReuse_Stress
-// precedent.
+// Runtime budget: 30s default; t.Short() skips the test. 500+ -race
+// stress with no leaks and random cancellation + close. Runs in the
+// default suite (no build tag), matching the TestClient_Concurrent /
+// TestClient_TagReuse_Stress precedent.
 func TestClient_Cancellation_Stress(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
@@ -49,7 +48,7 @@ func TestClient_Cancellation_Stress(t *testing.T) {
 	const (
 		numG  = 500
 		iters = 10
-		// Aggressive deadline — net.Pipe latency is ~µs, so a short
+		// Aggressive deadline -- net.Pipe latency is ~µs, so a short
 		// deadline reliably fires in-flight for mode 3.
 		deadlineShort = 500 * time.Microsecond
 	)
@@ -62,7 +61,7 @@ func TestClient_Cancellation_Stress(t *testing.T) {
 	baseline := runtime.NumGoroutine()
 
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
-	// NOTE: don't defer cleanup — some goroutines WILL observe Close().
+	// NOTE: don't defer cleanup -- some goroutines WILL observe Close().
 	// We invoke cleanup explicitly after wg.Wait().
 
 	parent, cancelParent := context.WithTimeout(t.Context(), 30*time.Second)
@@ -104,12 +103,12 @@ func TestClient_Cancellation_Stress(t *testing.T) {
 
 				switch mode {
 				case 0:
-					// complete — no cancel
+					// complete -- no cancel
 				case 1:
 					// cancel-immediate
 					opCancel()
 				case 2:
-					// cancel-mid-flight — async cancel after a random
+					// cancel-mid-flight -- async cancel after a random
 					// sub-millisecond delay. Using time.AfterFunc to
 					// avoid spawning a goroutine per iter (would dwarf
 					// the stress test's own goroutine count).
@@ -118,7 +117,7 @@ func TestClient_Cancellation_Stress(t *testing.T) {
 						opCancel,
 					)
 				case 3:
-					// deadline-expiry — stack WithTimeout on opCtx so
+					// deadline-expiry -- stack WithTimeout on opCtx so
 					// both opCancel and the dl cancel run cleanly.
 					var dlCancel context.CancelFunc
 					opCtx, dlCancel = context.WithTimeout(opCtx, deadlineShort)
@@ -137,12 +136,12 @@ func TestClient_Cancellation_Stress(t *testing.T) {
 	wg.Wait()
 
 	// Ensure Close fully drained before checking the goroutine baseline.
-	// If the observer never ran (unlikely — 500 × 10 ops far outlast 80ms
+	// If the observer never ran (unlikely -- 500 × 10 ops far outlast 80ms
 	// on -race) we still cleanup normally.
 	select {
 	case <-closeFired:
 	case <-time.After(5 * time.Second):
-		// Observer didn't run or Close didn't complete — force cleanup
+		// Observer didn't run or Close didn't complete -- force cleanup
 		// so the test doesn't hang.
 		t.Log("warning: closeFired not signalled within 5s; forcing cleanup")
 	}
@@ -182,7 +181,7 @@ func TestClient_Cancellation_Stress(t *testing.T) {
 		t.Error("expected ≥1 context.DeadlineExceeded observation (deadline path not exercised)")
 	}
 	// ErrFlushed is order-dependent on net.Pipe (synchronous; Rread often
-	// lands before Rflush). Warn only, per Research Q3 + Pitfall 4.
+	// lands before Rflush). Warn only.
 	if c.flushed == 0 {
 		t.Logf("warning: no ErrFlushed observations " +
 			"(Rflush-first race did not fire on this run; not a failure)")
@@ -198,7 +197,7 @@ type cancellationStressCounters struct {
 	canceled  int
 	deadline  int
 	completed int
-	serverErr int // server-reported *Error (ENOENT etc.) — round-trip succeeded
+	serverErr int // server-reported *Error (ENOENT etc.) -- round-trip succeeded
 }
 
 type cancellationStressSnapshot struct {
@@ -219,10 +218,10 @@ func (c *cancellationStressCounters) classify(err error) {
 	case errors.Is(err, client.ErrClosed):
 		c.closed++
 	case errors.Is(err, client.ErrFlushed):
-		// Additive — ErrFlushed coexists with ctx.Err in the chain per
-		// Plan 22-02 D-05. Count the flushed observation; also bump the
-		// matching ctx counter so those assertions can fire on the
-		// Rflush-first path even if mode-1/2 never hit the R-first path.
+		// Additive - ErrFlushed coexists with ctx.Err in the chain.
+		// Count the flushed observation; also bump the matching ctx
+		// counter so those assertions can fire on the Rflush-first
+		// path even if mode-1/2 never hit the R-first path.
 		c.flushed++
 		switch {
 		case errors.Is(err, context.Canceled):
@@ -261,8 +260,8 @@ func (c *cancellationStressCounters) snapshot() cancellationStressSnapshot {
 //   - variant 0: wire-level Walk → Clunk on a unique fid (mirrors
 //     concurrent_test.go's base pattern).
 //   - variant 1: session-level OpenFile + ReadCtx + Close (exercises
-//     Plan 22-03's *Ctx variants end-to-end).
-//   - variant 2: wire-level Walk to a nonexistent path — server replies
+//     the *Ctx variants end-to-end).
+//   - variant 2: wire-level Walk to a nonexistent path -- server replies
 //     ENOENT; this is a "happy error path" that still completes the
 //     round-trip and tests the canceled-op flow around a failing op.
 //
@@ -286,29 +285,29 @@ func issueStressOp(ctx context.Context, cli *client.Conn, gid, iter int) error {
 		// Clunk with context.Background() so an already-cancelled opCtx
 		// doesn't retry the Tflush on cleanup. The fid is still server-
 		// bound and we want to release it regardless of the caller's
-		// cancellation. Ignore the error — if the Conn is already closed
+		// cancellation. Ignore the error -- if the Conn is already closed
 		// the fid is server-side cleaned up on connection teardown.
 		_ = cli.Clunk(context.Background(), fid)
 		return nil
 
 	case 1:
-		// Session-level OpenFile + ReadCtx + Close. Exercises Plan 22-03's
-		// *Ctx path through roundTrip → flushAndWait.
+		// Session-level OpenFile + ReadCtx + Close. Exercises the
+		// *Ctx path through roundTrip -> flushAndWait.
 		f, err := cli.OpenFile(ctx, "/hello.txt", 0, 0) // O_RDONLY = 0
 		if err != nil {
 			return err
 		}
 		buf := make([]byte, 32)
 		_, rerr := f.ReadCtx(ctx, buf)
-		// Close with no-op ctx — see Clunk rationale above. File.Close
-		// uses the fixed cleanupDeadline per D-24.
+		// Close with no-op ctx - see Clunk rationale above. File.Close
+		// uses the fixed cleanupDeadline.
 		_ = f.Close()
 		return rerr
 
 	case 2:
 		// Wire-level Walk to a nonexistent name. Server returns ENOENT
-		// as a *client.Error; no fid is bound on failure (Phase 19
-		// Rwalk semantics: partial walks allocate nothing).
+		// as a *client.Error; no fid is bound on failure (Rwalk
+		// semantics: partial walks allocate nothing).
 		_, err := cli.Walk(ctx, proto.Fid(0), fid, []string{"nonexistent.txt"})
 		return err
 	}

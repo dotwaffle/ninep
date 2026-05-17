@@ -21,10 +21,10 @@ import (
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
-// Benchmarks in this file establish baselines for Phase 8 (buffer pooling) and
-// Phase 9 (resource limits). Every subtest uses key=value naming so benchstat
-// can group and diff across runs, and every b.Loop / pb.Next body is paired
-// with b.ReportAllocs so the allocs/op column is populated.
+// Benchmarks in this file establish baselines for buffer pooling and
+// resource limits. Every subtest uses key=value naming so benchstat
+// can group and diff across runs, and every b.Loop / pb.Next body is
+// paired with b.ReportAllocs so the allocs/op column is populated.
 //
 // Fid/wire semantics assumed throughout:
 //   - newConnPair already negotiates Tversion; callers send post-Tversion ops.
@@ -62,8 +62,8 @@ func drainResponse(c net.Conn) error {
 
 // benchAttachFid0 attaches fid 0 to the root over cp.client. Separated from
 // newConnPair so the measurement loop starts with a fid that handlers can use.
-// Accepts testing.TB (not *testing.B) so the Phase 14 strace helper test
-// (plan 14-03) can reuse the same prelude without a second implementation.
+// Accepts testing.TB (not *testing.B) so the strace helper test can
+// reuse the same prelude without a second implementation.
 func benchAttachFid0(tb testing.TB, cp *connPair) {
 	tb.Helper()
 	wire := mustEncode(tb, proto.Tag(1), &proto.Tattach{
@@ -82,9 +82,9 @@ func benchAttachFid0(tb testing.TB, cp *connPair) {
 
 // BenchmarkRoundTrip measures the full client->server->client flow for a
 // handful of representative operations. Parameterized over transport={pipe,unix}
-// so a single bench run reports both the synthetic-baseline (net.Pipe — no
+// so a single bench run reports both the synthetic-baseline (net.Pipe -- no
 // socket buffering, no writev) and the production-realistic (unix domain
-// socket — supports writev, real socket-buffer semantics) numbers. Use cases
+// socket -- supports writev, real socket-buffer semantics) numbers. Use cases
 // cover a small fixed-size request (getattr) and a larger data request (read).
 func BenchmarkRoundTrip(b *testing.B) {
 	cases := []struct {
@@ -198,10 +198,9 @@ func BenchmarkRoundTripWithOTel(b *testing.B) {
 }
 
 // BenchmarkReadDecode isolates the recv-path allocation pattern from
-// server/conn.go (handleRequest's read+decode under recvMu). Post-08-04 it
-// mirrors the bufpool.GetMsgBuf / PutMsgBuf flow so the benchmark reflects
-// production behaviour and benchstat shows the allocation win delivered by
-// PERF-02.
+// server/conn.go (handleRequest's read+decode under recvMu). It
+// mirrors the bufpool.GetMsgBuf / PutMsgBuf flow so the benchmark
+// reflects production behaviour.
 //
 // Intentionally NOT parameterized over transport=unix. The benchmark relies
 // on net.Pipe's synchronous Write↔Read semantics: each producer Write blocks
@@ -298,19 +297,17 @@ func BenchmarkFidTableContention(b *testing.B) {
 	}
 }
 
-// BenchmarkWalkCycle exercises the walk+clunk hot path for SEC-01/SEC-02
-// zero-cost verification. The two subtests differ only in the WithMaxFids
-// option: benchstat against limit=none to confirm that WithMaxFids, when
-// never fired, imposes no measurable overhead (branch predictor ensures the
-// extra compare is free when the cap is never hit).
+// BenchmarkWalkCycle exercises the walk+clunk hot path for zero-cost
+// verification. The two subtests differ only in the WithMaxFids
+// option: benchstat against limit=none to confirm that WithMaxFids,
+// when never fired, imposes no measurable overhead (branch predictor
+// ensures the extra compare is free when the cap is never hit).
 //
-// Pattern: Twalk clone (Names=[]) allocates a new fid; Tclunk frees it.
-// This exercises fidTable.add + fidTable.clunk once per iteration -- the
-// code paths modified by Plan 09-02.
+// Pattern: Twalk clone (Names=[]) allocates a new fid; Tclunk frees
+// it. This exercises fidTable.add + fidTable.clunk once per
+// iteration.
 //
-// benchstat-friendly: both subtests use key=value naming so the file can be
-// split and diffed; see .planning/phases/09/09-03-ZEROCOST.md for the
-// methodology and verdict.
+// Both subtests use benchstat-friendly key=value naming.
 func BenchmarkWalkCycle(b *testing.B) {
 	cases := []struct {
 		name string
@@ -433,8 +430,7 @@ func makeBenchDirents(n int) []proto.Dirent {
 }
 
 // BenchmarkEncodeDirents measures allocations and time for EncodeDirents at
-// n=10/100/1000 entries. Phase 8 PERF-03 will target the bytes.Buffer
-// allocation inside EncodeDirents for pooling.
+// n=10/100/1000 entries.
 func BenchmarkEncodeDirents(b *testing.B) {
 	sizes := []int{10, 100, 1000}
 	for _, n := range sizes {
@@ -537,7 +533,7 @@ func BenchmarkXattrRead(b *testing.B) {
 // (server/node.go:85-88) so BenchmarkCreateWriteClose exercises Tlcreate
 // through the full bridge path rather than bouncing off Rlerror(ENOSYS).
 // Created files live in-memory, share no storage with the parent, and are
-// never read back — the bench measures create→write→clunk round-trip cost,
+// never read back -- the bench measures create→write→clunk round-trip cost,
 // not file content persistence.
 //
 // Compare with benchDir in io_bench_test.go (lines 58-63) which only
@@ -558,7 +554,7 @@ func (d *benchCreateDir) Create(_ context.Context, name string, flags uint32, mo
 	_ = gid
 	child := &benchFile{data: make([]byte, 4096)}
 	child.Init(d.gen.Next(proto.QTFILE), child)
-	// Do not d.AddChild — the bench does not re-walk; the created child
+	// Do not d.AddChild -- the bench does not re-walk; the created child
 	// is referenced only via the Tlcreate-returned fid for the same iteration.
 	return child, nil, 0, nil
 }
@@ -577,13 +573,12 @@ func newBenchCreateTree(b *testing.B) *benchCreateDir {
 // Mirrors the Q workload's small_file_create pattern without a kernel 9p
 // mount: every iteration creates a fresh file, writes 4 KiB, and clunks.
 //
-// Acceptance (PERF-05.1, success criterion 4): allocs/op reported here MUST
-// be at least 4 lower than the `-tags nocache` run of the same bench.
-// The A/B comparison is produced via `benchstat` on the two runs.
+// Acceptance: allocs/op reported here MUST be at least 4 lower than
+// the `-tags nocache` run of the same bench. The A/B comparison is
+// produced via `benchstat` on the two runs.
 //
-// Transport is unix-only: pipe hides writev-related effects, and the Q
-// workload runs over kernel 9p (unix socket + v9fs). See 13-RESEARCH.md
-// Pitfall 7 and CLAUDE.md §Performance.
+// Transport is unix-only: pipe hides writev-related effects, and the
+// kernel 9p workload runs over a unix socket via v9fs.
 func BenchmarkCreateWriteClose(b *testing.B) {
 	root := newBenchCreateTree(b)
 	cp := newConnPairMsizeTransport(b, "unix", root, 65536)

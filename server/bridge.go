@@ -132,7 +132,7 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 		return c.errorMsg(proto.EBADF)
 	}
 
-	// Xattr fid routing: read from cached xattr buffer (per Pitfall 6, T-04-08).
+	// Xattr fid routing: read from cached xattr buffer.
 	fs.mu.Lock()
 	if fs.state == fidXattrRead {
 		maxData := c.msize - proto.HeaderSize - 4
@@ -211,7 +211,7 @@ func (c *conn) handleWrite(ctx context.Context, m *proto.Twrite) proto.Message {
 		return c.errorMsg(proto.EBADF)
 	}
 
-	// Xattr fid routing: accumulate into xattr write buffer (per Pitfall 6, T-04-08).
+	// Xattr fid routing: accumulate into xattr write buffer.
 	fs.mu.Lock()
 	if fs.state == fidXattrWrite {
 		// If RawXattrer is in use, delegate to the XattrWriter.
@@ -1032,9 +1032,10 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 	return &p9l.Rxattrwalk{Size: uint64(len(data))}
 }
 
-// handleXattrcreate handles Txattrcreate: mutates the existing fid to xattr
-// write mode. Per Pitfall 1: xattrcreate MUTATES the existing fid (does not
-// create a new fid). Subsequent read/write on this fid go to the xattr buffer.
+// handleXattrcreate handles Txattrcreate: mutates the existing fid to
+// xattr write mode. xattrcreate MUTATES the existing fid (does not
+// create a new fid). Subsequent read/write on this fid go to the
+// xattr buffer.
 func (c *conn) handleXattrcreate(ctx context.Context, m *p9l.Txattrcreate) proto.Message {
 	fs := c.fids.get(m.Fid)
 	if fs == nil {

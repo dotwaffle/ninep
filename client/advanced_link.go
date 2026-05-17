@@ -7,14 +7,14 @@ import (
 
 // Link creates a hard link at newPath pointing at the existing file at
 // existingPath. Both entries reference the same underlying inode after
-// the call returns — reads and writes on either name see the same data.
+// the call returns -- reads and writes on either name see the same data.
 //
 // Requires a 9P2000.L-negotiated Conn; returns wrapped [ErrNotSupported]
 // on .u (9P2000.u has no Tlink wire op).
 //
 // Both paths must be non-root. The parent directory of newPath must
 // exist (Link does not create parents). The server is required to reject
-// cross-device / cross-mount links — surfaces as a *[Error] carrying the
+// cross-device / cross-mount links -- surfaces as a *[Error] carrying the
 // server's errno (typically EXDEV or EPERM).
 //
 // Fid lifecycle: Link acquires two fids (source file, dest parent dir);

@@ -8,10 +8,11 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9l"
 )
 
-// TestNonPayloaderRread_DoesNotSatisfyPayloader is the primary compile+runtime
-// guard for the Phase 14 A/B bench harness: the wrapper MUST NOT satisfy
-// proto.Payloader (otherwise sendResponseInline takes the writev+payload branch
-// and the encode=copy arm measures the wrong path).
+// TestNonPayloaderRread_DoesNotSatisfyPayloader is the primary
+// compile+runtime guard for the writev A/B bench harness: the
+// wrapper MUST NOT satisfy proto.Payloader (otherwise
+// sendResponseInline takes the writev+payload branch and the
+// encode=copy arm measures the wrong path).
 func TestNonPayloaderRread_DoesNotSatisfyPayloader(t *testing.T) {
 	t.Parallel()
 

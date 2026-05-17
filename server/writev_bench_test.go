@@ -118,7 +118,7 @@ func BenchmarkWriteApproach(b *testing.B) {
 				return func(c net.Conn, hdr, body []byte) error {
 					arr[0] = hdr
 					arr[1] = fixedBody
-					arr[2] = body // payload — NOT copied into fixedBody
+					arr[2] = body // payload -- NOT copied into fixedBody
 					bufs := net.Buffers(arr[:])
 					_, err := bufs.WriteTo(c)
 					return err

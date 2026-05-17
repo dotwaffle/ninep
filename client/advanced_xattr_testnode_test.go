@@ -9,16 +9,16 @@ import (
 	"github.com/dotwaffle/ninep/server"
 )
 
-// testXattrNode is the Wave-2 xattr fixture used by the 21-03 high-level
-// round-trips. It implements the four simple xattr capability interfaces
-// (NodeXattrGetter/Setter/Lister/Remover) over a map-backed, mutex-
-// guarded store.
+// testXattrNode is the xattr fixture used by the high-level
+// round-trips. It implements the four simple xattr capability
+// interfaces (NodeXattrGetter/Setter/Lister/Remover) over a
+// map-backed, mutex-guarded store.
 //
-// Disjoint namespace: Wave-1 plan 21-01 ships rawTestXattrNode (prefixed
-// "raw") in raw_advanced_test.go for the wire-level Txattrwalk /
-// Txattrcreate tests. This type uses the Wave-2 unprefixed "test" name
-// so Wave-2 plans see a clean fixture without colliding with Wave-1's
-// sharper-edged helpers.
+// Disjoint namespace: rawTestXattrNode (prefixed "raw") in
+// raw_advanced_test.go handles the wire-level Txattrwalk /
+// Txattrcreate tests. This type uses the unprefixed "test" name so
+// the high-level tests see a clean fixture without colliding with
+// the wire-level helpers.
 type testXattrNode struct {
 	server.Inode
 	qid proto.QID

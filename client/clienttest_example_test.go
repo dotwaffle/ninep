@@ -21,14 +21,14 @@ import (
 // alternative to [clienttest.MemfsPair] for use inside godoc Example
 // functions, which cannot accept a [*testing.T].
 //
-// In tests, prefer clienttest.MemfsPair(tb, build, opts...) — it
+// In tests, prefer clienttest.MemfsPair(tb, build, opts...) -- it
 // applies the same net.Pipe + memfs + server.New + client.Dial boot
 // sequence but registers cleanup via tb.Cleanup and fails the test
 // loudly on contract violations. See the TestExample_*_ViaClienttest
 // trio below for the idiomatic in-test shape.
 //
 // Returns (nil, nil) on any boot error so example bodies can early-
-// return without producing output — any deviation from the //Output:
+// return without producing output -- any deviation from the //Output:
 // assertion fails the example, which is the desired behaviour.
 func exampleHarness(build func(root *memfs.MemDir)) (*client.Conn, func()) {
 	cliNC, srvNC := net.Pipe()
@@ -65,7 +65,7 @@ func exampleHarness(build func(root *memfs.MemDir)) (*client.Conn, func()) {
 // Example_readFile demonstrates reading a file's contents by path via
 // the high-level [client.Conn.OpenFile] + [io.ReadAll] idiom.
 //
-// In tests, prefer clienttest.MemfsPair(tb, build, opts...) — this
+// In tests, prefer clienttest.MemfsPair(tb, build, opts...) -- this
 // example hand-rolls the harness because godoc Example functions take
 // no testing.TB. See TestExample_ReadFile_ViaClienttest for the
 // idiomatic in-test shape.
@@ -101,7 +101,7 @@ func Example_readFile() {
 // Example_writeFile demonstrates creating and writing a new file via
 // [client.Conn.Create] + [client.File.Write].
 //
-// In tests, prefer clienttest.MemfsPair(tb, build, opts...) — this
+// In tests, prefer clienttest.MemfsPair(tb, build, opts...) -- this
 // example hand-rolls the harness because godoc Example functions take
 // no testing.TB. See TestExample_WriteFile_ViaClienttest for the
 // idiomatic in-test shape.
@@ -137,7 +137,7 @@ func Example_writeFile() {
 // independent offset, so the ReadAt calls do not contend on the shared
 // per-File mutex.
 //
-// In tests, prefer clienttest.MemfsPair(tb, build, opts...) — this
+// In tests, prefer clienttest.MemfsPair(tb, build, opts...) -- this
 // example hand-rolls the harness because godoc Example functions take
 // no testing.TB. See TestExample_ConcurrentAccess_ViaClienttest for
 // the idiomatic in-test shape.
@@ -182,7 +182,7 @@ func Example_concurrentAccess() {
 }
 
 // TestExample_ReadFile_ViaClienttest mirrors Example_readFile but uses
-// the canonical [clienttest.MemfsPair] harness — the shape external
+// the canonical [clienttest.MemfsPair] harness -- the shape external
 // consumers should follow when writing integration tests against
 // ninep's client.
 func TestExample_ReadFile_ViaClienttest(t *testing.T) {

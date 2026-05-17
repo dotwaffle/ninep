@@ -246,13 +246,12 @@ func TestConnWriteRejectsOversizedRwriteCount(t *testing.T) {
 	}
 }
 
-// TestRoundTrip_CtxCancelDuringWait: ctx cancel while caller is blocked on
-// respCh causes roundTrip to route through flushAndWait, send Tflush, and
-// return a ctx.Err()-wrapped error once the first frame (Rflush here) lands.
-// Phase 22 (CLIENT-04) change: the test must now drain TWO T-messages from
-// the wire (the original Tclunk + the Tflush) and deliver an Rflush so
-// flushAndWait unblocks; the Phase 19 single-drain path would hang waiting
-// for the flush response.
+// TestRoundTrip_CtxCancelDuringWait: ctx cancel while caller is
+// blocked on respCh causes roundTrip to route through flushAndWait,
+// send Tflush, and return a ctx.Err()-wrapped error once the first
+// frame (Rflush here) lands. The test drains TWO T-messages from the
+// wire (the original Tclunk + the Tflush) and delivers an Rflush so
+// flushAndWait unblocks.
 func TestRoundTrip_CtxCancelDuringWait(t *testing.T) {
 	t.Parallel()
 	c, srvNC := newTestConn(t)
@@ -282,7 +281,7 @@ func TestRoundTrip_CtxCancelDuringWait(t *testing.T) {
 			t.Fatalf("roundTrip err = %v, want context.Canceled in chain", err)
 		}
 		// Rflush arrived first (the only frame we delivered), so
-		// ErrFlushed must also be in the chain per D-05.
+		// ErrFlushed must also be in the chain.
 		if !errors.Is(err, ErrFlushed) {
 			t.Errorf("roundTrip err = %v, want ErrFlushed in chain (Rflush-first)", err)
 		}

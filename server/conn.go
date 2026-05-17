@@ -30,7 +30,7 @@ const (
 	protocolU             // 9P2000.u
 
 	// negotiationRateLimit is the minimum time between Tversion requests
-	// from the same connection (Phase 34).
+	// from the same connection.
 	negotiationRateLimit = 100 * time.Millisecond
 )
 
@@ -77,9 +77,8 @@ type negotiationResult struct {
 // negotiate validates a Tversion request against server limits and selects a
 // protocol. Returns ErrMsizeTooSmall if the negotiated msize falls below
 // minMsize. Pure logic -- no I/O, no connection state mutation, no locks.
-// Callers apply the result to conn fields after handling their own pre/post
-// steps (e.g. handleReVersion's drain+clunk choreography). See
-// .planning/phases/10/10-CONTEXT.md D-SIMP-01.
+// Callers apply the result to conn fields after handling their own
+// pre/post steps (e.g. handleReVersion's drain+clunk choreography).
 func (c *conn) negotiate(tv *proto.Tversion) (negotiationResult, error) {
 	msize := min(tv.Msize, c.server.maxMsize)
 	if msize < minMsize {
@@ -141,7 +140,7 @@ type conn struct {
 	inflight *inflightMap
 
 	// lastNegotiation tracks the UnixNano time of the last Tversion request
-	// for rate-limiting (Phase 34).
+	// for rate-limiting.
 	lastNegotiation atomic.Int64
 
 	// Recv-mutex worker model. A single goroutine type drives the receive
@@ -210,7 +209,7 @@ func newConn(s *Server, nc net.Conn) *conn {
 	// If either probe at server.New detected a recording tracer or enabled
 	// meter, prepend OTel middleware (outermost) and create connection-level
 	// gauge instruments. The nil-to-noop fallback that previously lived here
-	// has been moved to server.New (D-04): by the time we reach this block,
+	// has been moved to server.New: by the time we reach this block,
 	// either (a) s.tracerRecording and s.meterEnabled are both false and we
 	// skip the install entirely (short-circuit path -- no middleware call
 	// frame, no context.WithValue wrap, no span.Start), or (b) at least one
@@ -333,7 +332,7 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 		return fmt.Errorf("decode tversion: %w", err)
 	}
 
-	// Validate msize + select protocol via shared helper (D-SIMP-01).
+	// Validate msize + select protocol via shared helper (shared helper).
 	res, err := c.negotiate(&tver)
 	if err != nil {
 		return err // ErrMsizeTooSmall
@@ -433,7 +432,7 @@ func (c *conn) handleRequest(ctx context.Context) {
 
 		// recvIdle++ BEFORE Lock; recvIdle-- AFTER Lock. This makes
 		// "recvIdle == 0" the precise predicate "no sibling is parked
-		// waiting to take over the wire" (RESEARCH §1, p9 verbatim).
+		// waiting to take over the wire" (p9 verbatim).
 		c.recvIdle.Add(1)
 		c.recvMu.Lock()
 		c.recvIdle.Add(-1)
@@ -469,10 +468,10 @@ func (c *conn) handleRequest(ctx context.Context) {
 			c.signalRecvShutdown()
 			return
 		}
-		// msize validation is server policy and lives HERE — between the
-		// size-prefix read and the body allocation — so a 4 GiB attacker
+		// msize validation is server policy and lives HERE -- between the
+		// size-prefix read and the body allocation -- so a 4 GiB attacker
 		// size never causes a body buffer to be requested. Do not move
-		// this into internal/wire (Phase 18 D-06, research §Pitfall 4).
+		// this into internal/wire.
 		if size > c.msize {
 			c.logger.Warn("message exceeds msize",
 				slog.Uint64("size", uint64(size)),
@@ -509,7 +508,7 @@ func (c *conn) handleRequest(ctx context.Context) {
 		// parked on recvMu AND we are below the maxInflight cap. Skip on
 		// Tversion -- handleReVersion drains all inflight and mutates
 		// c.msize/c.protocol/c.codec; a sibling reading with the old
-		// codec mid-renegotiation would corrupt the stream (RESEARCH P4).
+		// codec mid-renegotiation would corrupt the stream.
 		spawnReplacement := false
 		if msgType != proto.TypeTversion &&
 			c.recvIdle.Load() == 0 &&
@@ -637,8 +636,8 @@ func (c *conn) handleRequest(ctx context.Context) {
 
 		// Per-request context with lazy-cancel flush support. Pooled via
 		// requestCtxPool; returned to the pool in dispatchInline's defer
-		// chain AFTER inflight.finish (LIFO ordering — putRequestCtx is
-		// registered first so it executes last). See D-07 / Pitfall 4.
+		// chain AFTER inflight.finish (LIFO ordering - putRequestCtx is
+		// registered first so it executes last).
 		rctx := getRequestCtx(ctx)
 		if !c.inflight.start(tag, rctx) {
 			putRequestCtx(rctx)
@@ -673,7 +672,7 @@ func (c *conn) handleRequest(ctx context.Context) {
 // request aliases (currently only Twrite.Data). It MUST be returned to
 // the pool BEFORE putCachedMsg: defer is LIFO and Twrite.Data aliases the
 // buffer; clearing the cache before release would zero Data while it
-// still references the recycled buffer (RESEARCH P10).
+// still references the recycled buffer.
 func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message, bufPtr *[]byte) {
 	finished := false
 	finish := func() {
@@ -683,10 +682,10 @@ func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message
 		}
 	}
 
-	// LIFO: registered FIRST so it runs LAST — after finish() removes the
-	// tag from the inflight map. Required by D-07 / Pitfall 4: a concurrent
-	// Tflush must be able to look up `tag` in the inflight map until finish()
-	// removes it; only then is it safe to recycle rctx back to the pool.
+	// LIFO: registered FIRST so it runs LAST - after finish() removes
+	// the tag from the inflight map. A concurrent Tflush must be able
+	// to look up `tag` in the inflight map until finish() removes it;
+	// only then is it safe to recycle rctx back to the pool.
 	// Violating this ordering causes Tflush to call flush() on a
 	// pool-recycled requestCtx belonging to an unrelated later request.
 	defer putRequestCtx(rctx)
@@ -728,8 +727,8 @@ func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message
 // 9P spec, Tversion aborts all outstanding I/O and clunks all fids, then
 // re-negotiates the protocol version and msize.
 func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
-	// Rate-limit re-negotiation attempts (Phase 34). Excessive attempts are
-	// dropped without a response to prevent amplification attacks and
+	// Rate-limit re-negotiation attempts. Excessive attempts are dropped
+	// without a response to prevent amplification attacks and
 	// unnecessary drain/clunk cycles.
 	now := time.Now().UnixNano()
 	last := c.lastNegotiation.Load()
@@ -739,10 +738,10 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 	}
 	c.lastNegotiation.Store(now)
 
-	// Cancel all inflight request contexts first (WR-01), then wait for
-	// handlers to drain with a deadline before mutating connection state
-	// (CR-02). This ensures no handler goroutine reads c.msize, c.protocol,
-	// or c.codec while we are updating them (GO-CC-3).
+	// Cancel all inflight request contexts first, then wait for handlers
+	// to drain with a deadline before mutating connection state. This
+	// ensures no handler goroutine reads c.msize, c.protocol, or
+	// c.codec while we are updating them.
 	c.inflight.cancelAll()
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), cleanupDeadline)
 	defer drainCancel()
@@ -756,7 +755,7 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 		c.logger.Warn("re-negotiation: inflight drain timed out; closing connection",
 			slog.Int("remaining", c.inflight.len()),
 		)
-		_ = c.nc.Close() // D-02: Fatal error policy
+		_ = c.nc.Close() // Fatal error policy
 		return
 	}
 
@@ -777,27 +776,27 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 	var tver proto.Tversion
 	if err := tver.DecodeFrom(bytes.NewReader(body)); err != nil {
 		c.logger.Warn("re-negotiation decode error; closing connection", slog.Any("error", err))
-		_ = c.nc.Close() // D-02: Fatal error policy
+		_ = c.nc.Close() // Fatal error policy
 		return
 	}
 
-	// Validate msize + select protocol via shared helper (D-SIMP-01).
+	// Validate msize + select protocol via shared helper (shared helper).
 	res, err := c.negotiate(&tver)
 	if err != nil {
 		c.logger.Warn("re-negotiation msize too small; closing connection",
 			slog.Uint64("msize", uint64(tver.Msize)),
 			slog.Any("error", err),
 		)
-		_ = c.nc.Close() // D-02: Fatal error policy
+		_ = c.nc.Close() // Fatal error policy
 		return
 	}
 
 	// Send Rversion directly via writeRaw, which acquires writeMu to
-	// prevent interleaving with other dispatchers' writes (CR-01).
+	// prevent interleaving with other dispatchers' writes.
 	rver := &proto.Rversion{Msize: res.msize, Version: res.version}
 	if err := c.writeRaw(tag, rver); err != nil {
 		c.logger.Warn("re-negotiation send error; closing connection", slog.Any("error", err))
-		_ = c.nc.Close() // D-02: Fatal error policy
+		_ = c.nc.Close() // Fatal error policy
 		return
 	}
 
@@ -979,9 +978,9 @@ func (c *conn) sendResponseInline(tag proto.Tag, msg proto.Message, rel releaser
 	// wire.WriteFramesLocked (via net.Buffers.WriteTo's v.consume)
 	// zeroes both length and capacity of bufs on full consumption, so
 	// a hoisted field-level net.Buffers would silently drop subsequent
-	// frames. See internal/wire.WriteFramesLocked godoc + CLAUDE.md
-	// §Performance. writeMu is held above; WriteFramesLocked itself
-	// takes no lock (the *Locked suffix advertises the caller contract).
+	// frames. See internal/wire.WriteFramesLocked godoc. writeMu is
+	// held above; WriteFramesLocked itself takes no lock (the *Locked
+	// suffix advertises the caller contract).
 	bufs := net.Buffers(c.encBufsArr[:n])
 	err := wire.WriteFramesLocked(c.nc, &bufs)
 	c.writeMu.Unlock()

@@ -12,13 +12,7 @@ import (
 // Tstat(fid). On success, f.cachedSize is updated under f.mu so a
 // concurrent [File.Seek] with [io.SeekEnd] observes the fresh value.
 //
-// syncImpl replaces the Phase 20 syncStub (client/sync_stub.go), which
-// returned nil unconditionally without any wire op. The stub's
-// documented contract was "callers that depend on [File.Seek] with
-// [io.SeekEnd] treat Sync as 'no effect'"; Phase 21 closes that gap
-// without an API change — callers never saw the stub.
-//
-// Error handling: on failure, f.cachedSize is NOT modified — the
+// Error handling: on failure, f.cachedSize is NOT modified - the
 // previous value is preserved rather than zeroed. This keeps a
 // successful prior Sync's size stable across a transient error.
 //

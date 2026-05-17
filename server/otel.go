@@ -168,10 +168,10 @@ func newOTelMiddleware(tp trace.TracerProvider, mp metric.MeterProvider, c *conn
 // Int64Counter named "probe" in the same scope. If a real OTel SDK is later
 // installed via otel.SetTracerProvider / otel.SetMeterProvider AFTER
 // server.New returns, the probe instrument may surface as a zero-valued
-// "probe" counter under the ninep scope. This is acceptable because Q wires
-// OTel BEFORE server.New (per 15-CONTEXT.md canonical refs), so in practice
-// the probe never reaches a real SDK. Re-probing to handle post-New provider
-// swaps is explicitly deferred (D-04).
+// "probe" counter under the ninep scope. This is acceptable because
+// consumers wire OTel BEFORE server.New, so in practice the probe
+// never reaches a real SDK. Re-probing to handle post-New provider
+// swaps is explicitly deferred.
 //
 // Preconditions: s.tracerProvider and s.meterProvider MUST be non-nil. The
 // caller (New) ensures this.

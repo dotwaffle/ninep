@@ -9,7 +9,7 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9u"
 )
 
-// Phase 21 advanced-op wire-level wrappers. Each method mirrors the
+// Advanced-op wire-level wrappers. Each method mirrors the
 // [Conn.Clunk] template from ops.go:
 //
 //  1. requireDialect(protocolL/U, "T<op>") where dialect-gated.
@@ -22,14 +22,14 @@ import (
 //  5. Copy out the wire fields the caller needs; putCachedRMsg the
 //     pooled struct exactly once on the happy path.
 //
-// Higher-level *File and *Conn surface methods (plans 21-02..21-05)
-// compose on top of these — every wire-level primitive lives here.
+// Higher-level *File and *Conn surface methods compose on top of
+// these - every wire-level primitive lives here.
 
 // Tsymlink creates a symbolic link named name with the given target in the
 // directory referenced by dfid. Returns the new symlink's QID. Requires a
 // 9P2000.L-negotiated Conn; returns a wrapped [ErrNotSupported] on .u.
 //
-// Higher-level path-rooted sugar lives at [Conn.Symlink] (plan 21-02).
+// Higher-level path-rooted sugar lives at [Conn.Symlink].
 func (r *Raw) Tsymlink(ctx context.Context, dfid proto.Fid, name, target string, gid uint32) (proto.QID, error) {
 	if err := r.c.requireDialect(protocolL, "Tsymlink"); err != nil {
 		return proto.QID{}, err
@@ -57,7 +57,7 @@ func (r *Raw) Tsymlink(ctx context.Context, dfid proto.Fid, name, target string,
 // Requires a 9P2000.L-negotiated Conn; returns a wrapped [ErrNotSupported]
 // on .u.
 //
-// Higher-level [File.Readlink] sugar lives in plan 21-02.
+// Higher-level [File.Readlink] sugar wraps this primitive.
 func (r *Raw) Treadlink(ctx context.Context, fid proto.Fid) (string, error) {
 	if err := r.c.requireDialect(protocolL, "Treadlink"); err != nil {
 		return "", err
@@ -83,9 +83,9 @@ func (r *Raw) Treadlink(ctx context.Context, fid proto.Fid) (string, error) {
 
 // Txattrwalk opens an xattr-read fid (newFid) bound to fid + name, returning
 // the server-declared size of the attribute value. Size is returned verbatim
-// from Rxattrwalk — callers that allocate a buffer MUST bound size against a
-// safe ceiling (high-level [File.XattrGet] in plan 21-03 clamps against
-// [proto.MaxDataSize]). See 21-RESEARCH.md Pitfall 2.
+// from Rxattrwalk - callers that allocate a buffer MUST bound size against a
+// safe ceiling (high-level [File.XattrGet] clamps against
+// [proto.MaxDataSize]).
 //
 // Requires a 9P2000.L-negotiated Conn.
 func (r *Raw) Txattrwalk(ctx context.Context, fid, newFid proto.Fid, name string) (uint64, error) {
@@ -116,9 +116,8 @@ func (r *Raw) Txattrwalk(ctx context.Context, fid, newFid proto.Fid, name string
 // calls that append the attribute value (total bytes = attrSize), then a
 // final [Raw.Clunk] to commit.
 //
-// The caller's fid is invalidated by the final Clunk — DO NOT reuse the
-// same fid value afterwards (pair the Clunk with [Raw.ReleaseFid]). See
-// 21-RESEARCH.md Pitfall 1.
+// The caller's fid is invalidated by the final Clunk - DO NOT reuse the
+// same fid value afterwards (pair the Clunk with [Raw.ReleaseFid]).
 //
 // Requires a 9P2000.L-negotiated Conn.
 func (r *Raw) Txattrcreate(ctx context.Context, fid proto.Fid, name string, attrSize uint64, flags uint32) error {
@@ -148,8 +147,8 @@ func (r *Raw) Txattrcreate(ctx context.Context, fid proto.Fid, name string, attr
 // request blocking or reclaim semantics; start+length define the byte
 // range; procID and clientID identify the lock holder.
 //
-// Requires a 9P2000.L-negotiated Conn. High-level blocking [File.Lock]
-// with ctx-driven poll/backoff lives in plan 21-04.
+// Requires a 9P2000.L-negotiated Conn. High-level blocking
+// [File.Lock] with ctx-driven poll/backoff wraps this primitive.
 func (r *Raw) Tlock(ctx context.Context, fid proto.Fid, lt proto.LockType, flags proto.LockFlags, start, length uint64, procID uint32, clientID string) (proto.LockStatus, error) {
 	if err := r.c.requireDialect(protocolL, "Tlock"); err != nil {
 		return 0, err
@@ -185,13 +184,13 @@ func (r *Raw) Tlock(ctx context.Context, fid proto.Fid, lt proto.LockType, flags
 // the conflicting lock holder's parameters (or LockTypeUnlck when the region
 // is free).
 //
-// The return value is [p9l.Rgetlock] by value — Rgetlock carries only value-
+// The return value is [p9l.Rgetlock] by value -- Rgetlock carries only value-
 // typed fields (LockType + uint64x2 + uint32 + string), which are naturally
 // passed by value and keep the cache-hit contract consistent (Rgetlock is
 // uncached per client/msgcache.go).
 //
-// Requires a 9P2000.L-negotiated Conn. High-level [File.GetLock] sugar
-// lives in plan 21-04.
+// Requires a 9P2000.L-negotiated Conn. High-level [File.GetLock]
+// wraps this primitive.
 func (r *Raw) Tgetlock(ctx context.Context, fid proto.Fid, lt proto.LockType, start, length uint64, procID uint32, clientID string) (p9l.Rgetlock, error) {
 	if err := r.c.requireDialect(protocolL, "Tgetlock"); err != nil {
 		return p9l.Rgetlock{}, err
@@ -222,13 +221,13 @@ func (r *Raw) Tgetlock(ctx context.Context, fid proto.Fid, lt proto.LockType, st
 	return out, nil
 }
 
-// Tstatfs returns filesystem statistics for the file tree containing fid.
-// The returned [proto.FSStat] is by value (not pointer) — Pitfall 8: FSStat
-// is a small fixed-size struct, value return avoids an escape and keeps the
-// cache-lifetime contract local to this method.
+// Tstatfs returns filesystem statistics for the file tree containing
+// fid. The returned [proto.FSStat] is by value (not pointer): FSStat is
+// a small fixed-size struct, value return avoids an escape and keeps
+// the cache-lifetime contract local to this method.
 //
-// Requires a 9P2000.L-negotiated Conn. High-level [File.Statfs] sugar lives
-// in plan 21-04.
+// Requires a 9P2000.L-negotiated Conn. High-level [File.Statfs] wraps
+// this primitive.
 func (r *Raw) Tstatfs(ctx context.Context, fid proto.Fid) (proto.FSStat, error) {
 	if err := r.c.requireDialect(protocolL, "Tstatfs"); err != nil {
 		return proto.FSStat{}, err
@@ -257,8 +256,8 @@ func (r *Raw) Tstatfs(ctx context.Context, fid proto.Fid) (proto.FSStat, error) 
 // callers who need only Size or Mode can narrow the mask to amortize server
 // work. The server is permitted to return MORE than requested.
 //
-// Requires a 9P2000.L-negotiated Conn. High-level [File.Stat] sugar lives
-// in plan 21-04.
+// Requires a 9P2000.L-negotiated Conn. High-level [File.Stat] wraps
+// this primitive.
 func (r *Raw) Tgetattr(ctx context.Context, fid proto.Fid, mask proto.AttrMask) (proto.Attr, error) {
 	if err := r.c.requireDialect(protocolL, "Tgetattr"); err != nil {
 		return proto.Attr{}, err
@@ -285,8 +284,8 @@ func (r *Raw) Tgetattr(ctx context.Context, fid proto.Fid, mask proto.AttrMask) 
 // Tsetattr mutates the attributes selected by attr.Valid on the file
 // referenced by fid. Unset-bit fields are ignored server-side.
 //
-// Requires a 9P2000.L-negotiated Conn. High-level [File.Chmod]/[File.Chown]/
-// [File.Truncate] sugar lives in plan 21-04.
+// Requires a 9P2000.L-negotiated Conn. High-level
+// [File.Chmod]/[File.Chown]/[File.Truncate] wraps this primitive.
 func (r *Raw) Tsetattr(ctx context.Context, fid proto.Fid, attr proto.SetAttr) error {
 	if err := r.c.requireDialect(protocolL, "Tsetattr"); err != nil {
 		return err
@@ -312,8 +311,8 @@ func (r *Raw) Tsetattr(ctx context.Context, fid proto.Fid, attr proto.SetAttr) e
 // Semantically equivalent to the .L Trename wire op (single-fid rename):
 // fid keeps pointing at the renamed object, dfid is the target directory.
 //
-// Requires a 9P2000.L-negotiated Conn. High-level path-rooted [Conn.Rename]
-// sugar lives in plan 21-02.
+// Requires a 9P2000.L-negotiated Conn. High-level path-rooted
+// [Conn.Rename] wraps this primitive.
 func (r *Raw) Trename(ctx context.Context, fid, dfid proto.Fid, name string) error {
 	if err := r.c.requireDialect(protocolL, "Trename"); err != nil {
 		return err
@@ -337,11 +336,10 @@ func (r *Raw) Trename(ctx context.Context, fid, dfid proto.Fid, name string) err
 
 // Trenameat moves oldName in oldDirFid to newName under newDirFid. Unlike
 // [Raw.Trename], both source and target dirs are addressed by fid and no
-// fid is held against the object being renamed — no open-fid invalidation
-// concerns on this path (Pitfall 5 applies only to long-lived open fids).
+// fid is held against the object being renamed - no open-fid
+// invalidation concerns on this path.
 //
-// Requires a 9P2000.L-negotiated Conn. Higher-level sugar lives in plan
-// 21-02.
+// Requires a 9P2000.L-negotiated Conn.
 func (r *Raw) Trenameat(ctx context.Context, oldDirFid proto.Fid, oldName string, newDirFid proto.Fid, newName string) error {
 	if err := r.c.requireDialect(protocolL, "Trenameat"); err != nil {
 		return err
@@ -370,10 +368,10 @@ func (r *Raw) Trenameat(ctx context.Context, oldDirFid proto.Fid, oldName string
 
 // Tunlinkat removes the entry name from directory dirFid. Flags may include
 // AT_REMOVEDIR (0x200) to request directory removal; otherwise the entry
-// must be a non-directory. See Pitfall 9 for flag encoding notes.
+// must be a non-directory.
 //
-// Requires a 9P2000.L-negotiated Conn. Higher-level [Conn.Remove] sugar
-// lives in plan 21-02.
+// Requires a 9P2000.L-negotiated Conn. Higher-level [Conn.Remove]
+// wraps this primitive.
 func (r *Raw) Tunlinkat(ctx context.Context, dirFid proto.Fid, name string, flags uint32) error {
 	if err := r.c.requireDialect(protocolL, "Tunlinkat"); err != nil {
 		return err
@@ -399,8 +397,8 @@ func (r *Raw) Tunlinkat(ctx context.Context, dirFid proto.Fid, name string, flag
 // file referenced by fid. Both fids must resolve within the same file
 // tree; cross-mount links are rejected by the server.
 //
-// Requires a 9P2000.L-negotiated Conn. Higher-level [Conn.Link] sugar
-// lives in plan 21-02.
+// Requires a 9P2000.L-negotiated Conn. Higher-level [Conn.Link] wraps
+// this primitive.
 func (r *Raw) Tlink(ctx context.Context, dfid, fid proto.Fid, name string) error {
 	if err := r.c.requireDialect(protocolL, "Tlink"); err != nil {
 		return err
@@ -426,8 +424,8 @@ func (r *Raw) Tlink(ctx context.Context, dfid, fid proto.Fid, name string) error
 // POSIX mode + device-type bits; major/minor select the device; gid sets
 // the owning group. Returns the new node's QID.
 //
-// Requires a 9P2000.L-negotiated Conn. Higher-level [Conn.Mknod] sugar
-// lives in plan 21-02.
+// Requires a 9P2000.L-negotiated Conn. Higher-level [Conn.Mknod] wraps
+// this primitive.
 func (r *Raw) Tmknod(ctx context.Context, dfid proto.Fid, name string, mode, major, minor, gid uint32) (proto.QID, error) {
 	if err := r.c.requireDialect(protocolL, "Tmknod"); err != nil {
 		return proto.QID{}, err
@@ -464,8 +462,8 @@ func (r *Raw) Tmknod(ctx context.Context, dfid proto.Fid, name string, mode, maj
 // on this fid, and should release the fid to the allocator via
 // [Raw.ReleaseFid] once this call returns (error or not).
 //
-// Dialect-neutral — Tremove ships on both 9P2000.L and 9P2000.u wire sets
-// (see proto/messages.go). See 21-RESEARCH.md Pitfall 7.
+// Dialect-neutral - Tremove ships on both 9P2000.L and 9P2000.u wire
+// sets (see proto/messages.go).
 func (r *Raw) Tremove(ctx context.Context, fid proto.Fid) error {
 	req := &proto.Tremove{Fid: fid}
 	resp, err := r.c.roundTrip(ctx, req)
@@ -488,9 +486,10 @@ func (r *Raw) Tremove(ctx context.Context, fid proto.Fid) error {
 // fid. The 9P2000.u Stat carries the legacy 16-field layout (Name/UID/GID
 // strings + numeric IDs in the .u extension fields).
 //
-// Requires a 9P2000.u-negotiated Conn; returns a wrapped [ErrNotSupported]
-// on .L where [Raw.Tgetattr] is the dialect equivalent. The unified
-// [File.Stat] in plan 21-04 picks the correct wire op from c.Dialect().
+// Requires a 9P2000.u-negotiated Conn; returns a wrapped
+// [ErrNotSupported] on .L where [Raw.Tgetattr] is the dialect
+// equivalent. The unified [File.Stat] picks the correct wire op
+// from c.Dialect().
 func (r *Raw) Tstat(ctx context.Context, fid proto.Fid) (p9u.Stat, error) {
 	if err := r.c.requireDialect(protocolU, "Tstat"); err != nil {
 		return p9u.Stat{}, err

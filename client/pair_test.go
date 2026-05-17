@@ -44,16 +44,14 @@ func buildTestRoot(tb testing.TB) server.Node {
 // cleanup func that Close()s the client, cancels the server's ctx, and
 // waits for the server goroutine to exit.
 //
-// Plan 19-02 → Plan 19-03 bridging contract: while client/dial_stub.go is
-// active, client.Dial returns (nil, nil). This helper detects cli == nil
-// and calls tb.Skipf(...) so the test skips rather than fails. After Plan
-// 19-03 Task 1 pre_flight deletes dial_stub.go and Plan 19-03 Task 2 ships
-// the real Dial, the skip path is no longer taken and downstream tests
-// exercise the real implementation.
+// Historically, a stub Dial returned (nil, nil) so this helper detects
+// cli == nil and calls tb.Skipf(...) so tests skip rather than fail.
+// With the real Dial in place, the skip path is no longer taken and
+// downstream tests exercise the real implementation.
 //
 // Mirrors server/walk_test.go:77's newConnPairTransport but wires in the
-// real client.Dial on the client side instead of a hand-rolled Tversion
-// exchange.
+// real client.Dial on the client side instead of a hand-rolled
+// Tversion exchange.
 func newClientServerPair(tb testing.TB, root server.Node, clientOpts ...client.Option) (*client.Conn, func()) {
 	tb.Helper()
 
@@ -71,8 +69,8 @@ func newClientServerPair(tb testing.TB, root server.Node, clientOpts ...client.O
 	}()
 
 	// Client-side: Dial runs Tversion inside. A tight ctor-time ctx (5s)
-	// fails fast on negotiation bugs; the real Conn is expected to clear
-	// the deadline once live (Plan 19-03 responsibility).
+	// fails fast on negotiation bugs; the real Conn clears the deadline
+	// once live.
 	dialCtx, dialCancel := context.WithTimeout(tb.Context(), 5*time.Second)
 	defer dialCancel()
 
@@ -90,15 +88,13 @@ func newClientServerPair(tb testing.TB, root server.Node, clientOpts ...client.O
 		tb.Fatalf("client.Dial: %v", err)
 	}
 
-	// Plan 19-02 → 19-03 bridging stub: Dial may return (nil, nil). Skip
-	// rather than fail so CI stays green across the package while the stub
-	// is active. Plan 19-03 Task 1 pre_flight removes client/dial_stub.go
-	// and this branch becomes unreachable.
+	// Legacy stub: Dial historically returned (nil, nil). Skip rather
+	// than fail so CI stays green if the stub is ever reintroduced.
 	if cli == nil {
 		_ = cliNC.Close()
 		srvCancel()
 		<-srvDone
-		tb.Skipf("client.Dial stub active; Plan 19-03 Task 1 pre_flight deletes client/dial_stub.go")
+		tb.Skipf("client.Dial stub active; build with the real Dial")
 	}
 
 	cleanup := func() {
@@ -110,10 +106,10 @@ func newClientServerPair(tb testing.TB, root server.Node, clientOpts ...client.O
 	return cli, cleanup
 }
 
-// TestPairHelper_Boots is a smoke test for newClientServerPair — it
-// verifies the helper returns a non-nil Conn and a functioning cleanup.
-// While the dial stub is active this test skips; after Plan 19-03 it
-// exercises a real Conn boot.
+// TestPairHelper_Boots is a smoke test for newClientServerPair - it
+// verifies the helper returns a non-nil Conn and a functioning
+// cleanup. With the real Dial in place this exercises a real Conn
+// boot; with a stubbed Dial the helper skips.
 func TestPairHelper_Boots(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))

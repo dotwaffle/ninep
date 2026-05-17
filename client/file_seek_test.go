@@ -234,7 +234,7 @@ func TestFileSeek_InvalidWhence(t *testing.T) {
 
 // TestFileSeek_PastEOF_SucceedsButReadFails: Seek(1_000_000, SeekStart)
 // succeeds; a subsequent Read against a small file returns
-// (0, io.EOF). Matches D-11 and os.File semantics for regular files.
+// (0, io.EOF). Matches os.File semantics for regular files.
 func TestFileSeek_PastEOF_SucceedsButReadFails(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
@@ -274,7 +274,7 @@ func TestFileSeek_PastEOF_SucceedsButReadFails(t *testing.T) {
 // TestFileSeek_Directory_Succeeds: Seek on a directory fid succeeds
 // with pure local arithmetic. A subsequent Read on the directory fid
 // returns either io.EOF or a *client.Error -- the invariant under
-// test is that Seek itself does not reject a directory fid (D-11).
+// test is that Seek itself does not reject a directory fid.
 func TestFileSeek_Directory_Succeeds(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))

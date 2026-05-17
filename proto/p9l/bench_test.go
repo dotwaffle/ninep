@@ -1,8 +1,8 @@
 // Package p9l benchmark suite.
 //
-// These benchmarks establish per-message-type encode/decode baselines for the
-// 9P2000.L codec. They are intended to be captured with -count=10 in Plan 04
-// and diffed against Phase 8 buffer-pool variants via benchstat.
+// These benchmarks establish per-message-type encode/decode baselines for
+// the 9P2000.L codec. They are intended to be captured with -count=10
+// and diffed against buffer-pool variants via benchstat.
 //
 // Conventions:
 //   - Subtest names follow the key=value form (msg=Tversion, msg=Twalk_nwname=5),

@@ -581,7 +581,7 @@ func TestDirentType(t *testing.T) {
 	}
 }
 
-// --- Task 2: Directory operations tests ---
+// --- Directory operations tests ---
 
 func TestLookup_ExistingChild(t *testing.T) {
 	t.Parallel()

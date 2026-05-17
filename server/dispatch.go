@@ -273,7 +273,7 @@ func (c *conn) handleClunk(ctx context.Context, tc *proto.Tclunk) proto.Message 
 			}
 			return &proto.Rclunk{}
 		}
-		// Validate written size matches declared size (per Pitfall 2, T-04-07).
+		// Validate written size matches declared size.
 		if uint64(len(fs.xattrData)) != fs.xattrSize {
 			return c.errorMsg(proto.EIO)
 		}

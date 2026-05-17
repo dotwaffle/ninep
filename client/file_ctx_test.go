@@ -13,15 +13,14 @@ import (
 	"github.com/dotwaffle/ninep/client"
 )
 
-// Plan 22-03 tests for File.ReadCtx / File.WriteCtx / File.ReadAtCtx /
+// Tests for File.ReadCtx / File.WriteCtx / File.ReadAtCtx /
 // File.WriteAtCtx plus the WithRequestTimeout / opCtx delegation path on
 // File.Read / File.Write / File.ReadAt / File.WriteAt.
 //
 // DELEGATION tests (TestFile_*Ctx_Delegation) run against the normal
 // memfs-backed server and verify that calling the *Ctx variant with a
-// Background ctx produces byte-identical results to the non-ctx path.
-// This is the Phase 20 regression gate: no behaviour change for the
-// default-timeout (infinite) case.
+// Background ctx produces byte-identical results to the non-ctx path:
+// no behaviour change for the default-timeout (infinite) case.
 //
 // TIMEOUT tests run against the flushMockServer (defined in flush_test.go)
 // which parks Rread responses on rreadGate, letting us deterministically
@@ -62,13 +61,13 @@ func TestFile_ReadCtx_Delegation(t *testing.T) {
 	n2, err2 := f2.ReadCtx(context.Background(), buf2)
 
 	if n1 != n2 {
-		t.Errorf("Read n=%d, ReadCtx n=%d — want equal", n1, n2)
+		t.Errorf("Read n=%d, ReadCtx n=%d -- want equal", n1, n2)
 	}
 	if string(buf1[:n1]) != string(buf2[:n2]) {
-		t.Errorf("Read data=%q, ReadCtx data=%q — want equal", buf1[:n1], buf2[:n2])
+		t.Errorf("Read data=%q, ReadCtx data=%q -- want equal", buf1[:n1], buf2[:n2])
 	}
 	if !errorsEquivalent(err1, err2) {
-		t.Errorf("Read err=%v, ReadCtx err=%v — want equivalent", err1, err2)
+		t.Errorf("Read err=%v, ReadCtx err=%v -- want equivalent", err1, err2)
 	}
 }
 
@@ -100,7 +99,7 @@ func TestFile_WriteCtx_Delegation(t *testing.T) {
 		t.Errorf("WriteCtx n=%d, want %d", n, len("hello-ctx"))
 	}
 
-	// Read back via a fresh fid — WriteCtx should have advanced f.offset,
+	// Read back via a fresh fid -- WriteCtx should have advanced f.offset,
 	// so reading from a new handle starts at 0 and sees the bytes.
 	rf, err := cli.OpenFile(ctx, "rw.bin", os.O_RDONLY, 0)
 	if err != nil {
@@ -143,18 +142,18 @@ func TestFile_ReadAtCtx_Delegation(t *testing.T) {
 	n2, err2 := f.ReadAtCtx(context.Background(), buf2, 6)
 
 	if n1 != n2 {
-		t.Errorf("ReadAt n=%d, ReadAtCtx n=%d — want equal", n1, n2)
+		t.Errorf("ReadAt n=%d, ReadAtCtx n=%d -- want equal", n1, n2)
 	}
 	if string(buf1[:n1]) != string(buf2[:n2]) {
 		t.Errorf("ReadAt data=%q, ReadAtCtx data=%q", buf1[:n1], buf2[:n2])
 	}
 	if !errorsEquivalent(err1, err2) {
-		t.Errorf("ReadAt err=%v, ReadAtCtx err=%v — want equivalent", err1, err2)
+		t.Errorf("ReadAt err=%v, ReadAtCtx err=%v -- want equivalent", err1, err2)
 	}
 }
 
 // TestFile_ReadAtCtx_PreservesOffset verifies ReadAtCtx does NOT mutate
-// f.offset — the io.ReaderAt invariant (D-12).
+// f.offset - the io.ReaderAt invariant.
 func TestFile_ReadAtCtx_PreservesOffset(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
@@ -227,7 +226,7 @@ func TestFile_WriteAtCtx_Delegation(t *testing.T) {
 		t.Errorf("offset after WriteAtCtx = %d, want 0 (preserved)", pos)
 	}
 
-	// Read back — first 4 bytes undefined (zero), bytes 4..9 are "abcdef".
+	// Read back -- first 4 bytes undefined (zero), bytes 4..9 are "abcdef".
 	rf, err := cli.OpenFile(ctx, "rw.bin", os.O_RDONLY, 0)
 	if err != nil {
 		t.Fatalf("OpenFile read-back: %v", err)
@@ -255,7 +254,7 @@ func TestFile_WriteAtCtx_Delegation(t *testing.T) {
 
 // ---- Timeout + cancellation tests (flushMockServer) ----
 
-// TestFile_Read_TimeoutTriggersTflush (D-26): WithRequestTimeout(50ms) +
+// TestFile_Read_TimeoutTriggersTflush: WithRequestTimeout(50ms) +
 // server holding Rread -> File.Read returns with context.DeadlineExceeded
 // AND server observes exactly one Tflush on the wire.
 func TestFile_Read_TimeoutTriggersTflush(t *testing.T) {
@@ -266,7 +265,7 @@ func TestFile_Read_TimeoutTriggersTflush(t *testing.T) {
 	defer cleanup()
 
 	// Configure the mock to send Rflush immediately on receiving Tflush
-	// — otherwise flushAndWait parks indefinitely on the rflushGate
+	// - otherwise flushAndWait parks indefinitely on the rflushGate
 	// (which is the default state).
 	srv.rflushSendImmediately.Store(true)
 
@@ -371,7 +370,7 @@ func TestFile_Read_InfiniteDefault_NoTimeout(t *testing.T) {
 		t.Errorf("Read n=%d, want 12", n)
 	}
 	// 100ms ceiling is far below any plausible default timeout value
-	// (e.g. 30s) — this catches a regression where WithRequestTimeout
+	// (e.g. 30s) -- this catches a regression where WithRequestTimeout
 	// defaults to a finite value that adds per-call overhead.
 	if elapsed > 100*time.Millisecond {
 		t.Errorf("Read took %v; want < 100ms (no hidden default timeout)", elapsed)

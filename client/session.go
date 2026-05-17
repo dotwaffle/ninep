@@ -12,8 +12,8 @@ import (
 // NoFid, uname, aname) where rootFid is freshly allocated from this
 // Conn's fid pool. Returns a [*File] representing the root directory.
 //
-// Authentication (afid != NoFid) is not supported in v1.3.0 -- see
-// package doc. Attach always passes NoFid for the afid field; use
+// Authentication (afid != NoFid) is not supported -- see package
+// doc. Attach always passes NoFid for the afid field; use
 // [Conn.AttachFid] (or [Raw.Attach]) if wire-level control is needed.
 //
 // The returned *File is also cached on the Conn as the implicit root
@@ -22,7 +22,7 @@ import (
 // new implicit root (the prior root File is NOT auto-Closed -- callers
 // that care track both).
 //
-// Per D-05 / D-19: ctx is respected for the Tattach round-trip.
+// ctx is respected for the Tattach round-trip.
 func (c *Conn) Attach(ctx context.Context, uname, aname string) (*File, error) {
 	fid, err := c.fids.acquire()
 	if err != nil {
@@ -68,7 +68,7 @@ func (c *Conn) Root() *File {
 // permission bits on Create pass through [Conn.Create]'s perm argument
 // instead.
 //
-// Error-path fid lifecycle (Pitfall 2 / Pitfall 3):
+// Error-path fid lifecycle:
 //   - Walk fails BEFORE server binding: reserved fid is released.
 //   - Walk succeeds, Lopen/Topen fails: walked fid is Tclunked then
 //     released.
@@ -111,9 +111,8 @@ func (c *Conn) OpenFile(ctx context.Context, p string, flags int, mode os.FileMo
 	}
 	if err != nil {
 		// Walk succeeded -> fileFid is server-bound. Clunk before
-		// release (Pitfall 3). Use context.Background() for the
-		// cleanup clunk because the caller's ctx may already be
-		// cancelled.
+		// release. Use context.Background() for the cleanup clunk
+		// because the caller's ctx may already be cancelled.
 		_ = c.Clunk(context.Background(), fileFid)
 		c.fids.release(fileFid)
 		return nil, err
@@ -202,8 +201,8 @@ func (c *Conn) Create(ctx context.Context, p string, flags int, mode os.FileMode
 // The returned *File must be Closed by the caller. On .L, flags=0
 // (== O_RDONLY) opens the directory fid for Tread/Treaddir. On .u,
 // [posixToNinepMode] maps 0 to OREAD which likewise opens for
-// read-only directory enumeration (though Phase 20's [File.ReadDir]
-// is .L-only -- .u directory enumeration is deferred; see Q4).
+// read-only directory enumeration (though [File.ReadDir] is .L-only
+// in this library -- .u directory enumeration is deferred).
 //
 // Empty path, "/", and "." all open the root directory (equivalent to
 // a zero-step Twalk followed by Tlopen/Topen).

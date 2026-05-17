@@ -268,7 +268,7 @@ func TestClient_Lcreate_L(t *testing.T) {
 	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	// Clone root into fid 1 — Lcreate mutates the supplied fid into the
+	// Clone root into fid 1 -- Lcreate mutates the supplied fid into the
 	// newly-created file per the 9P spec, so we must not burn the root.
 	if _, err := cli.Walk(ctx, 0, 1, nil); err != nil {
 		t.Fatalf("Walk-clone: %v", err)

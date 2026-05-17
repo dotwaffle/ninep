@@ -21,10 +21,10 @@ import (
 // proto.Message interface value) to the registered inflight chan for the
 // frame's tag.
 //
-// Chan-type contract (locked by this plan's objective + Task 1): the
-// inflight chan is chan proto.Message (value). Because proto.Message is
-// an interface holding a pointer-to-concrete-type, passing the decoded
-// rmsg directly transports the underlying pointer at zero indirection.
+// Chan-type contract: the inflight chan is chan proto.Message (value).
+// Because proto.Message is an interface holding a pointer-to-
+// concrete-type, passing the decoded rmsg directly transports the
+// underlying pointer at zero indirection.
 //
 // Mirror of server/conn.go's handleRequest hot loop but:
 //
@@ -35,20 +35,20 @@ import (
 // Exit conditions (any triggers signalShutdown):
 //
 //   - wire.ReadSize returns err (EOF, net.ErrClosed, io.ErrUnexpectedEOF)
-//   - size > c.msize (oversize frame — Pitfall 10-B)
+//   - size > c.msize (oversize frame)
 //   - wire.ReadBody returns err
 //   - newRMessage(type) returns ErrUnknownType
 //   - msg.DecodeFrom returns err
 //
-// Per Pitfall 10-B: a decode error is FATAL (the wire stream is now
-// misaligned because we don't know how many bytes the malformed body
-// should have consumed). Log + signalShutdown + return; we deliberately
-// do NOT log-and-continue.
+// A decode error is FATAL (the wire stream is now misaligned because
+// we don't know how many bytes the malformed body should have
+// consumed). Log + signalShutdown + return; we deliberately do NOT
+// log-and-continue.
 func (c *Conn) readLoop() {
 	defer c.readerWG.Done()
 
 	// Goroutine-local bytes.Reader to avoid per-frame Reader allocs
-	// (Pitfall 4 — mirrors server/conn.go's hot-path pattern).
+	// (mirrors server/conn.go's hot-path pattern).
 	var bodyReader bytes.Reader
 
 	for {
@@ -64,7 +64,7 @@ func (c *Conn) readLoop() {
 		}
 
 		// msize validation between ReadSize and ReadBody per
-		// internal/wire contract (Phase 18 D-06 preserved) + research §1.
+		// internal/wire contract.
 		if size > c.msize {
 			c.logger.Warn("client: oversize frame",
 				slog.Uint64("size", uint64(size)),
@@ -102,30 +102,30 @@ func (c *Conn) readLoop() {
 		msgType := proto.MessageType(b[0])
 		tag := proto.Tag(binary.LittleEndian.Uint16(b[1:3]))
 
-		// 24-03 / D-05: zero-copy Rread fast path (Pattern B from
-		// 24-RESEARCH.md §Architecture Patterns).
+		// Zero-copy Rread fast path.
 		//
 		// When Conn.readAtZeroCopy registered this tag with a non-nil dst
 		// slice, the full Rread body is already in our pooled buffer b.
 		// Copy the count[4]+data[count] payload directly into dst[:count]
-		// — bypassing newRMessage's Rread cache slot AND the Data alloc
+		// - bypassing newRMessage's Rread cache slot AND the Data alloc
 		// inside proto.Rread.DecodeFrom. Two allocs eliminated per ReadAt.
 		//
 		// Body layout: type[1]+tag[2] = b[0:3] (parsed above), then
 		// count[4] = b[3:7] and data[count] = b[7:7+count].
 		//
-		// Concurrency (WR-01 fix): the lookup, copy-into-entry.dst, n
-		// assignment, AND the cap-1 send happen under a single RLock span
-		// to serialize against inflightMap.cancelAll's Lock. Without this,
+		// Concurrency: the lookup, copy-into-entry.dst, n assignment,
+		// AND the cap-1 send happen under a single RLock span to
+		// serialize against inflightMap.cancelAll's Lock. Without this,
 		// cancelAll can close entry.ch (unblocking the caller with
-		// ErrClosed) while the read loop is mid-copy, allowing the caller
-		// to free / reuse dst's backing array before the copy completes —
-		// a write-after-free data race. Holding RLock across the copy
-		// guarantees that either the copy finishes before cancelAll can
-		// proceed, or the entry is already gone by the time we re-acquire
-		// (in which case lookup returns nil and we fall through to the
-		// non-ZC path, which decodes into a fresh slice and drops it via
-		// the deliver-into-nil-entry → putCachedRMsg arm).
+		// ErrClosed) while the read loop is mid-copy, allowing the
+		// caller to free / reuse dst's backing array before the copy
+		// completes - a write-after-free data race. Holding RLock
+		// across the copy guarantees that either the copy finishes
+		// before cancelAll can proceed, or the entry is already gone
+		// by the time we re-acquire (in which case lookup returns nil
+		// and we fall through to the non-ZC path, which decodes into
+		// a fresh slice and drops it via the deliver-into-nil-entry
+		// -> putCachedRMsg arm).
 		//
 		// The send is inlined (rather than calling deliver) because we
 		// already hold the RLock; calling deliver would re-RLock and risk
@@ -156,9 +156,9 @@ func (c *Conn) readLoop() {
 					c.signalShutdown()
 					return
 				}
-				// Pitfall 1 (24-RESEARCH.md): server returned more bytes
-				// than the caller asked for. Spec says count <= request.count;
-				// any violation is a protocol error — never silently truncate.
+				// Server returned more bytes than the caller asked for.
+				// Spec says count <= request.count; any violation is a
+				// protocol error - never silently truncate.
 				if count > uint32(len(entry.dst)) {
 					c.inflight.mu.RUnlock()
 					bufpool.PutMsgBuf(bufPtr)
@@ -169,8 +169,8 @@ func (c *Conn) readLoop() {
 					c.signalShutdown()
 					return
 				}
-				// Pitfall 1 variant: count claims more bytes than the
-				// frame body actually carries (frame corruption). Fatal.
+				// Variant: count claims more bytes than the frame body
+				// actually carries (frame corruption). Fatal.
 				if int(count) > len(b)-7 {
 					c.inflight.mu.RUnlock()
 					bufpool.PutMsgBuf(bufPtr)
@@ -185,15 +185,16 @@ func (c *Conn) readLoop() {
 					copy(entry.dst[:count], b[7:7+count])
 				}
 				entry.n = int(count)
-				// Inlined deliver — non-blocking send to cap-1 entry.ch.
-				// Sentinel-msg: readAtZeroCopy identifies the fast-path
-				// success via pointer equality `r == rreadSentinelOK`.
+				// Inlined deliver - non-blocking send to cap-1
+				// entry.ch. Sentinel-msg: readAtZeroCopy identifies
+				// the fast-path success via pointer equality
+				// `r == rreadSentinelOK`.
 				select {
 				case entry.ch <- rreadSentinelOK:
 				default:
 					// Unreachable under correct usage (cap-1 + tag
 					// serialization). Sentinel needs no putCachedRMsg
-					// reclaim — it is a singleton, not a pool slot.
+					// reclaim - it is a singleton, not a pool slot.
 				}
 				c.inflight.mu.RUnlock()
 				bufpool.PutMsgBuf(bufPtr)
@@ -241,7 +242,7 @@ func (c *Conn) readLoop() {
 			return
 		}
 
-		bodyReader.Reset(b[3:]) // zero-alloc Reader reset (Pitfall 4)
+		bodyReader.Reset(b[3:]) // zero-alloc Reader reset
 		if err := rmsg.DecodeFrom(&bodyReader); err != nil {
 			bufpool.PutMsgBuf(bufPtr)
 			c.logger.Warn("client: decode R-message",
@@ -254,8 +255,8 @@ func (c *Conn) readLoop() {
 		bufpool.PutMsgBuf(bufPtr)
 
 		// Deliver the proto.Message interface value (which already holds
-		// a pointer-to-concrete-type). Chan type is chan proto.Message
-		// per Task 1's inflightMap; no pointer-to-interface wrapping.
+		// a pointer-to-concrete-type). Chan type is chan proto.Message;
+		// no pointer-to-interface wrapping.
 		c.inflight.deliver(tag, rmsg)
 	}
 }
@@ -263,7 +264,7 @@ func (c *Conn) readLoop() {
 // signalShutdown is safe to call multiple times (closeOnce). Closes
 // closeCh, cancels all inflight callers, and closes nc so any peer
 // blocked on read also exits. The full Close/Shutdown drain sequence
-// lives in Plan 19-05; this helper just fires the signals.
+// lives in close.go; this helper just fires the signals.
 func (c *Conn) signalShutdown() {
 	c.closeOnce.Do(func() {
 		close(c.closeCh)
@@ -331,16 +332,15 @@ func (c *Conn) newRMessage(t proto.MessageType) (proto.Message, error) {
 		if c.dialect == protocolL {
 			return &p9l.Rreaddir{}, nil
 		}
-	// Phase 21 (.L-only advanced ops): getattr/setattr/statfs, symlink/
+	// .L-only advanced ops: getattr/setattr/statfs, symlink/
 	// readlink, locks, xattr two-phase, link/mknod/rename/renameat/
-	// unlinkat. Dialect gating is defense-in-depth — per-op
+	// unlinkat. Dialect gating here is defense-in-depth - per-op
 	// requireDialect at the ops layer is the primary enforcement point.
 	// A misbehaving peer that emits a .L-only R-type on a .u Conn falls
 	// through to the default arm and triggers signalShutdown, the
 	// correct behaviour for corrupted framing.
 	//
-	// None cached per client/msgcache.go — these are cold paths per the
-	// server-side Phase 13-05 profile audit.
+	// None cached per client/msgcache.go - these are cold paths.
 	case proto.TypeRgetattr:
 		if c.dialect == protocolL {
 			return &p9l.Rgetattr{}, nil
@@ -397,7 +397,7 @@ func (c *Conn) newRMessage(t proto.MessageType) (proto.Message, error) {
 		if c.dialect == protocolL {
 			return &p9l.Runlinkat{}, nil
 		}
-	// Phase 21 (.u-only stat ops).
+	// .u-only stat ops.
 	case proto.TypeRstat:
 		if c.dialect == protocolU {
 			return &p9u.Rstat{}, nil

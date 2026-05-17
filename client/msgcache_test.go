@@ -22,7 +22,7 @@ func TestRmsgCache_GetFresh(t *testing.T) {
 }
 
 // TestRmsgCache_RoundTrip verifies that Put followed by Get returns a
-// zero-reset pointer (per pool.Cache[T] contract — *m = *new(T) on Get).
+// zero-reset pointer (per pool.Cache[T] contract -- *m = *new(T) on Get).
 func TestRmsgCache_RoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -43,7 +43,7 @@ func TestRmsgCache_RoundTrip(t *testing.T) {
 
 // TestRmsgCache_AliasingRread verifies that Rread.Data is cleared on Put.
 // If Data is not cleared, a concurrent peer could observe the stale pointer
-// between the Put and the next decode's assignment — the research §6 and
+// between the Put and the next decode's assignment - mirrors the
 // server/msgcache_pools.go:60 invariant for the T-side.
 func TestRmsgCache_AliasingRread(t *testing.T) {
 	t.Parallel()
@@ -68,7 +68,7 @@ func TestRmsgCache_AliasingRread(t *testing.T) {
 }
 
 // TestPutCachedRMsg_UnknownType verifies that putCachedRMsg does not panic
-// when given a message type it doesn't cache (Rversion, Rattach, Rflush —
+// when given a message type it doesn't cache (Rversion, Rattach, Rflush --
 // and T-messages, which are server-side).
 func TestPutCachedRMsg_UnknownType(t *testing.T) {
 	t.Parallel()
@@ -79,11 +79,11 @@ func TestPutCachedRMsg_UnknownType(t *testing.T) {
 		}
 	}()
 
-	// Tversion is a T-message — client never caches these, should no-op.
+	// Tversion is a T-message -- client never caches these, should no-op.
 	putCachedRMsg(&proto.Tversion{})
-	// Rversion is an R-message but is low-volume (once per Conn) — not cached.
+	// Rversion is an R-message but is low-volume (once per Conn) -- not cached.
 	putCachedRMsg(&proto.Rversion{})
-	// Rattach is an R-message but low-volume (once per attach) — not cached.
+	// Rattach is an R-message but low-volume (once per attach) -- not cached.
 	putCachedRMsg(&proto.Rattach{})
 }
 

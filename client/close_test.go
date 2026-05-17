@@ -12,8 +12,8 @@ import (
 	"github.com/dotwaffle/ninep/proto"
 )
 
-// TestClient_Close_UnblocksCallers exercises D-22: an in-flight caller blocked
-// on respCh must return ErrClosed well before the 5s default drain deadline
+// TestClient_Close_UnblocksCallers asserts that an in-flight caller blocked
+// on respCh returns ErrClosed well before the 5s default drain deadline
 // once Close is invoked from another goroutine.
 func TestClient_Close_UnblocksCallers(t *testing.T) {
 	t.Parallel()
@@ -31,7 +31,7 @@ func TestClient_Close_UnblocksCallers(t *testing.T) {
 
 	// Kick off a goroutine that will get ErrClosed once Close fires.
 	// We register a tag manually through an op that the server hasn't been
-	// primed to complete quickly — simplest: spawn N goroutines doing
+	// primed to complete quickly -- simplest: spawn N goroutines doing
 	// sequential Walk/Clunk cycles and call Close mid-stream.
 	errCh := make(chan error, 1)
 	go func() {
@@ -68,7 +68,7 @@ func TestClient_Close_UnblocksCallers(t *testing.T) {
 	select {
 	case err := <-errCh:
 		if err == nil {
-			// The loop completed — that's fine as long as Close was fast.
+			// The loop completed -- that's fine as long as Close was fast.
 			return
 		}
 		if !errors.Is(err, client.ErrClosed) {
@@ -108,11 +108,11 @@ func TestClient_Close_IdempotentFromMultipleGoroutines(t *testing.T) {
 }
 
 // TestClient_Close_GoroutineLeak verifies no goroutines leak after Close.
-// Per D-24, readerWG.Wait() and callerWG.Wait() must run unconditionally
-// before Close returns.
+// readerWG.Wait() and callerWG.Wait() must run unconditionally before
+// Close returns.
 //
 // This test does NOT call t.Parallel() because runtime.NumGoroutine() is a
-// process-global count — parallel subtests spawn/drain goroutines on the
+// process-global count -- parallel subtests spawn/drain goroutines on the
 // same clock, introducing noise that has nothing to do with Conn leaks.
 // Serial execution isolates the delta to just this test's Conn lifecycle.
 func TestClient_Close_GoroutineLeak(t *testing.T) {
@@ -192,7 +192,7 @@ func TestClient_Shutdown_CtxDeadline(t *testing.T) {
 	}
 	elapsed := time.Since(start)
 
-	// Shutdown should be quick — callers drain immediately because
+	// Shutdown should be quick -- callers drain immediately because
 	// signalShutdown unblocks them, so the deadline isn't the bound here.
 	// The gate is "well under 5s default".
 	if elapsed > 1*time.Second {

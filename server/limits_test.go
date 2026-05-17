@@ -38,7 +38,7 @@ func TestMaxConnections_RejectsExcess(t *testing.T) {
 	sendTversion(t, c1Client, 65536, "9P2000.L")
 	_ = readRversion(t, c1Client)
 
-	// Second connection: must be rejected — ServeConn must return fast.
+	// Second connection: must be rejected -- ServeConn must return fast.
 	c2Client, c2Server := net.Pipe()
 	t.Cleanup(func() { _ = c2Client.Close() })
 	done2 := make(chan struct{})
@@ -49,19 +49,19 @@ func TestMaxConnections_RejectsExcess(t *testing.T) {
 
 	select {
 	case <-done2:
-		// ok — ServeConn returned immediately
+		// ok -- ServeConn returned immediately
 	case <-time.After(500 * time.Millisecond):
 		t.Fatalf("ServeConn did not return on rejected connection within 500ms")
 	}
 
-	// The rejected conn should be closed — read returns error.
+	// The rejected conn should be closed -- read returns error.
 	buf := make([]byte, 1)
 	_ = c2Client.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 	if _, err := c2Client.Read(buf); err == nil {
 		t.Fatalf("expected read error on rejected conn, got nil")
 	}
 
-	// Clean up c1 — closing client lets the first ServeConn drain.
+	// Clean up c1 -- closing client lets the first ServeConn drain.
 	_ = c1Client.Close()
 	<-done1
 
@@ -295,7 +295,7 @@ func TestMaxFids_WalkCloneReturnsEMFILE(t *testing.T) {
 
 // TestMaxFids_WalkMultiEMFILE verifies that a multi-name Twalk at the fid
 // cap returns Rlerror{EMFILE} and NOT a partial Rwalk with QIDs.
-// Pitfall 3 defensive assertion: "not an Rwalk".
+// Defensive assertion: "not an Rwalk".
 func TestMaxFids_WalkMultiEMFILE(t *testing.T) {
 	t.Parallel()
 	root := testTree()
@@ -317,7 +317,7 @@ func TestMaxFids_WalkMultiEMFILE(t *testing.T) {
 
 // TestMaxFids_XattrwalkEMFILE verifies that a Txattrwalk at the fid cap
 // returns Rlerror{EMFILE} and NOT Rxattrwalk{Size:0}.
-// Pitfall 4 defensive assertion: "not an Rxattrwalk".
+// Defensive assertion: "not an Rxattrwalk".
 //
 // The root node must implement at least one xattr interface so the cap
 // check (which runs AFTER the interface dispatch in handleXattrwalk) is
@@ -340,7 +340,7 @@ func TestMaxFids_XattrwalkEMFILE(t *testing.T) {
 	_, msg := readResponse(t, cp.client)
 	// Must be Rlerror{EMFILE}, NOT Rxattrwalk{Size: 0}.
 	if _, ok := msg.(*p9l.Rxattrwalk); ok {
-		t.Fatalf("got Rxattrwalk when EMFILE expected (Pitfall 4 regression): %+v", msg)
+		t.Fatalf("got Rxattrwalk when EMFILE expected: %+v", msg)
 	}
 	isError(t, msg, proto.EMFILE)
 }

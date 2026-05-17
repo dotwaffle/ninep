@@ -2,8 +2,7 @@
 //
 // Mirror-exact shape of server/io_bench_test.go and server/bench_test.go
 // so benchstat can diff client and server numbers on identical axes.
-// Any axis-name drift breaks SC-4's v1.2.0 regression gate (per
-// 24-RESEARCH.md Pitfall 3).
+// Any axis-name drift breaks the regression gate.
 package client_test
 
 import (
@@ -17,10 +16,10 @@ import (
 	"github.com/dotwaffle/ninep/server"
 )
 
-// File-wide constants — byte-identical to server/io_bench_test.go.
+// File-wide constants -- byte-identical to server/io_bench_test.go.
 // Do NOT rename or reshape: benchstat groups by string match.
 const (
-	benchFileSize = 128 * 1024 * 1024 // 128 MiB — large enough to exercise
+	benchFileSize = 128 * 1024 * 1024 // 128 MiB -- large enough to exercise
 	numOffsets    = 1024              // offset pool depth
 )
 
@@ -68,7 +67,7 @@ func (d *benchDir) Open(_ context.Context, _ uint32) (server.FileHandle, uint32,
 
 // newBenchTree builds a root benchDir with a 128 MiB "data" file child.
 // Mirrors server/io_bench_test.go:newBenchTree shape; the data buffer is
-// left zeroed (throughput benches don't inspect bytes) — the server-side
+// left zeroed (throughput benches don't inspect bytes) -- the server-side
 // PCG-fill is unnecessary for client measurements.
 func newBenchTree(tb testing.TB) *benchDir {
 	tb.Helper()
@@ -106,8 +105,7 @@ func newBenchClient(tb testing.TB, transport string, root server.Node, msize uin
 // the clienttest harness.
 //
 // Uses Conn.OpenFile (the documented high-level surface), not the
-// non-existent File.Open — same correction made in 24-01-SUMMARY.md
-// Deviation 1.
+// non-existent File.Open.
 func benchOpenDataFile(tb testing.TB, cli *client.Conn) *client.File {
 	tb.Helper()
 	if _, err := cli.Attach(tb.Context(), "bench", ""); err != nil {
@@ -139,14 +137,13 @@ func preGeneratedOffsets(readSize uint32) []uint64 {
 }
 
 // BenchmarkClientRead_4K measures client-side Rread throughput at 4 KiB
-// reads over the default 64 KiB msize. Mirrors server/io_bench_test.go:
-// BenchmarkServerRead_4K shape and axes for benchstat parity (SC-4 gate).
+// reads over the default 64 KiB msize. Mirrors
+// server/io_bench_test.go:BenchmarkServerRead_4K shape and axes for
+// benchstat parity.
 //
-// SC-2 target (per 24-CONTEXT.md D-12): allocs/op on transport=unix is on
-// par with server's BenchmarkServerRead_4K/transport=unix/encode=payloader
-// (within 1 alloc/op). This baseline bench measures the current (pre
-// zero-copy) path; 24-03 installs the zero-copy branch and 24-05's
-// VERIFICATION.md records the absolute-allocs number.
+// Target: allocs/op on transport=unix is on par with server's
+// BenchmarkServerRead_4K/transport=unix/encode=payloader (within 1
+// alloc/op).
 func BenchmarkClientRead_4K(b *testing.B) {
 	const readSize uint32 = 4096
 	const msize uint32 = 65536
@@ -157,8 +154,8 @@ func BenchmarkClientRead_4K(b *testing.B) {
 			cli := newBenchClient(b, transport, root, msize)
 			f := benchOpenDataFile(b, cli)
 
-			// dst reused across iterations (Pitfall 6). The alloc for
-			// dst belongs to setup, not the per-op cost.
+			// dst reused across iterations. The alloc for dst belongs
+			// to setup, not the per-op cost.
 			dst := make([]byte, readSize)
 			offsets := preGeneratedOffsets(readSize)
 
@@ -264,11 +261,11 @@ func BenchmarkClientWrite_1M(b *testing.B) {
 // the client side. Mirrors server/bench_test.go:BenchmarkWalkClunk shape
 // and axes (transport={unix,pipe}).
 //
-// Each iteration: root.Clone(ctx) issues Twalk(rootFid, newFid, nil) —
+// Each iteration: root.Clone(ctx) issues Twalk(rootFid, newFid, nil) --
 // the 0-step "clone" walk that returns a fresh *File whose Close issues
 // Tclunk. This is the client-surface equivalent of the server's raw
 // Twalk(...,nil)/Tclunk frame pair. (The plan suggested File.Walk(ctx,
-// nil) but that path errors out — File.Walk rejects empty names; Clone
+// nil) but that path errors out -- File.Walk rejects empty names; Clone
 // is the documented 0-step API per File.Walk's godoc.)
 func BenchmarkClientWalkClunk(b *testing.B) {
 	for _, transport := range []string{"unix", "pipe"} {

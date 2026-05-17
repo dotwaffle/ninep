@@ -43,7 +43,7 @@ const deadlineSafetyMargin = 100 * time.Millisecond
 //
 // serverMsize, clientMsize, serveTimeout, and dialTimeout use a
 // zero-value "sentinel" convention: 0 means "no override supplied by the
-// caller, use the harness default". Options never write 0 explicitly —
+// caller, use the harness default". Options never write 0 explicitly --
 // WithMsize always writes the caller's value to BOTH msize fields, and
 // WithServeTimeout / WithDialTimeout only write their respective field.
 type config struct {
@@ -99,8 +99,8 @@ func WithClientOpts(opts ...client.Option) Option {
 // (via [server.WithMaxMsize]) and the client (via [client.WithMsize]).
 // This is a convenience shorthand for the common symmetric case.
 //
-// For asymmetric tuning — e.g. a server cap smaller than the client
-// proposal to exercise the negotiation floor — bypass WithMsize and use
+// For asymmetric tuning -- e.g. a server cap smaller than the client
+// proposal to exercise the negotiation floor -- bypass WithMsize and use
 // [WithServerOpts] + [WithClientOpts] directly:
 //
 //	clienttest.Pair(t, root,
@@ -142,7 +142,7 @@ func WithDialTimeout(d time.Duration) Option {
 // drains the server goroutine. The parent ctx is the caller's to manage;
 // the harness never propagates cancellation upward into it.
 //
-// Passing nil is silently coerced to [context.Background] — the harness
+// Passing nil is silently coerced to [context.Background] -- the harness
 // never panics on a nil ctx, matching the defensive posture of other
 // standard-library test helpers.
 func WithCtx(ctx context.Context) Option {
@@ -188,7 +188,7 @@ func discardLogger() *slog.Logger {
 // the defaults outright.
 //
 // A nil root is a programming error and is surfaced by [server.New],
-// not by Pair — the harness does not second-guess server.New's contract.
+// not by Pair -- the harness does not second-guess server.New's contract.
 func Pair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, *client.Conn) {
 	tb.Helper()
 
@@ -212,9 +212,9 @@ func Pair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, *cli
 // UnixPair skips the test on Windows (runtime.GOOS == "windows") since
 // unix-domain sockets are not broadly supported there.
 //
-// Callers needing the writev fast path for bench validation (SC-4 mirror
-// benches) use UnixPair; correctness-only tests should use [Pair] for
-// cross-platform coverage and lower overhead.
+// Callers needing the writev fast path for bench validation use
+// UnixPair; correctness-only tests should use [Pair] for cross-platform
+// coverage and lower overhead.
 //
 // The harness applies the same defaults and Option semantics as [Pair];
 // see Pair's godoc for the full contract. Teardown is registered via
@@ -249,11 +249,11 @@ func UnixPair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, 
 	// through `accepted` so the main goroutine can surface accept errors
 	// with test-appropriate diagnostics rather than blocking.
 	//
-	// WR-02: defense against an Accept that completes after the main
+	// Defense against an Accept that completes after the main
 	// goroutine has already moved on (e.g. timer arm won the select
 	// race). The non-blocking send + close-on-default means a late
 	// successful Accept doesn't park forever AND doesn't leak the
-	// server-side conn — the goroutine closes it immediately if the
+	// server-side conn - the goroutine closes it immediately if the
 	// recipient is gone. ln.Close in tb.Cleanup unblocks a still-blocked
 	// Accept with net.ErrClosed.
 	type acceptResult struct {
@@ -282,11 +282,11 @@ func UnixPair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, 
 		return nil, nil
 	}
 
-	// WR-02: use time.NewTimer/Stop instead of time.After so the timer
+	// Use time.NewTimer/Stop instead of time.After so the timer
 	// goroutine is reclaimed on the success path (time.After always
 	// leaks a goroutine until its duration elapses). Drain `accepted`
 	// non-blockingly in the timeout arm so a late accept's conn is
-	// closed rather than leaked — Go's uniform-random select can pick
+	// closed rather than leaked - Go's uniform-random select can pick
 	// the timer arm even after accepted is ready, and silently leaking
 	// the server-side conn until process exit is wrong.
 	timer := time.NewTimer(dialTimeout)
@@ -302,7 +302,7 @@ func UnixPair(tb testing.TB, root server.Node, opts ...Option) (*server.Server, 
 	case <-timer.C:
 		_ = cliNC.Close()
 		// Drain a late-arriving accept result so its conn is closed
-		// rather than leaked. Non-blocking — if accept hasn't returned
+		// rather than leaked. Non-blocking -- if accept hasn't returned
 		// yet, ln.Close in tb.Cleanup will surface net.ErrClosed and
 		// the accept goroutine's default arm closes any partial conn.
 		select {
@@ -398,7 +398,7 @@ func finalizePair(tb testing.TB, cfg *config, root server.Node, cliNC, srvNC net
 		return nil, nil // unreachable; tb.Fatalf aborts
 	}
 	// Post-19-03: Dial never returns (nil, nil). If the contract is
-	// violated, fail loudly rather than silently skip — tests must
+	// violated, fail loudly rather than silently skip -- tests must
 	// surface API regressions.
 	if cli == nil {
 		_ = cliNC.Close()

@@ -352,7 +352,7 @@ func TestServerSurvivesDisconnect(t *testing.T) {
 }
 
 // This test does NOT call t.Parallel() because runtime.NumGoroutine() is a
-// process-global count — parallel sibling tests spawn/drain goroutines on the
+// process-global count -- parallel sibling tests spawn/drain goroutines on the
 // same clock, introducing noise that has nothing to do with this test's
 // connection lifecycle. Serial execution isolates the delta to just rapid
 // connect/disconnect cycles (precedent: client.TestClient_Close_GoroutineLeak).

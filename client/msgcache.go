@@ -10,21 +10,20 @@ import (
 // the server caches the T-messages it decodes most often; the client caches
 // the R-messages it decodes most often.
 //
-// Per .planning/phases/19/19-RESEARCH.md §6 (Codec Dispatch Encore — Factory
-// Tables), the hot-path R-messages are:
+// The hot-path R-messages are:
 //
-//   - Rread, Rwrite  — data I/O, bulk of traffic
-//   - Rwalk, Rclunk  — every open/close cycle
-//   - Rlopen, Rlcreate — file lifecycle (per open/create)
-//   - Rlerror        — per-request failure path (.L)
+//   - Rread, Rwrite  - data I/O, bulk of traffic
+//   - Rwalk, Rclunk  - every open/close cycle
+//   - Rlopen, Rlcreate - file lifecycle (per open/create)
+//   - Rlerror        - per-request failure path (.L)
 //
 // NOT cached (intentional):
 //
-//   - Rversion, Rattach, Rflush — low-volume (once per Conn or per attach)
-//   - Rerror (.u) — dialect minority; cache hit rate too low to justify
-//   - Rgetattr, Rreaddir, Rreadlink, Rstatfs, Rsetattr, etc. —
-//     per the server-side 13-05 profile audit, cold paths rarely warrant
-//     cache slots. Revisit if a future profile run shows otherwise.
+//   - Rversion, Rattach, Rflush - low-volume (once per Conn or per attach)
+//   - Rerror (.u) - dialect minority; cache hit rate too low to justify
+//   - Rgetattr, Rreaddir, Rreadlink, Rstatfs, Rsetattr, etc. -
+//     cold paths rarely warrant cache slots. Revisit if a future
+//     profile run shows otherwise.
 //
 // Each cache is bounded at pool.Cap (=3) slots. Concurrent Get/Put is atomic
 // via channel semantics. See internal/pool/cache.go for the full contract.
@@ -39,20 +38,22 @@ var (
 )
 
 // rreadSentinelOK is the package-level singleton returned by the read
-// loop's zero-copy Rread fast path (read_loop.go). It carries no payload —
-// the response bytes have already been copied into the caller's dst slice
-// and the caller's *int n receives the byte count BEFORE deliver fires.
+// loop's zero-copy Rread fast path (read_loop.go). It carries no
+// payload - the response bytes have already been copied into the
+// caller's dst slice and the caller's *int n receives the byte count
+// BEFORE deliver fires.
 //
-// Why a sentinel instead of a cached *proto.Rread: the whole point of
-// 24-03 is to eliminate the per-ReadAt Rread cache slot consumption + the
+// Why a sentinel instead of a cached *proto.Rread: the zero-copy path
+// eliminates the per-ReadAt Rread cache slot consumption + the
 // Rread.Data allocation inside DecodeFrom. Reusing a singleton (with
-// Data=nil for its lifetime) keeps the chan proto.Message contract intact
-// without paying any per-request cost. Conn.readAtZeroCopy identifies the
-// fast-path response by pointer equality (`r == rreadSentinelOK`).
+// Data=nil for its lifetime) keeps the chan proto.Message contract
+// intact without paying any per-request cost. Conn.readAtZeroCopy
+// identifies the fast-path response by pointer equality
+// (`r == rreadSentinelOK`).
 //
-// putCachedRMsg short-circuits the sentinel — it is never returned to the
-// rreadCache (which would corrupt the cache invariant that every entry
-// is independently writable).
+// putCachedRMsg short-circuits the sentinel - it is never returned
+// to the rreadCache (which would corrupt the cache invariant that
+// every entry is independently writable).
 var rreadSentinelOK = &proto.Rread{}
 
 // getCachedRread returns a zero-reset *proto.Rread from the cache (or a
@@ -97,10 +98,10 @@ func getCachedRlerror() *p9l.Rlerror { return rlerrorCache.Get() }
 //   - Rwalk.QIDs aliases a decoder-allocated slice. Decoders rebuild the
 //     slice via make() rather than append to the cached one (see the
 //     server-side Twalk.Names invariant enforced by
-//     TestTwalkReuseDoesNotAliasStrings in Phase 13), so nil-ing on Put is
+//     TestTwalkReuseDoesNotAliasStrings), so nil-ing on Put is
 //     belt-and-braces here too.
 //
-// Rlopen/Rlcreate/Rlerror have no slice fields — their Get-side zero-reset
+// Rlopen/Rlcreate/Rlerror have no slice fields - their Get-side zero-reset
 // is sufficient.
 func putCachedRMsg(msg proto.Message) {
 	if msg == nil {
@@ -108,7 +109,7 @@ func putCachedRMsg(msg proto.Message) {
 	}
 	switch m := msg.(type) {
 	case *proto.Rread:
-		// 24-03: never recycle the zero-copy sentinel into the rreadCache.
+		// Never recycle the zero-copy sentinel into the rreadCache.
 		// The sentinel is a singleton observed by Conn.readAtZeroCopy via
 		// pointer-equality; pooling it would let the next cached-Rread
 		// borrower clobber the singleton's Data field and break that
@@ -132,7 +133,7 @@ func putCachedRMsg(msg proto.Message) {
 	case *p9l.Rlerror:
 		rlerrorCache.Put(m)
 	default:
-		// Unknown type — drop to GC. Rversion/Rattach/Rflush and any
+		// Unknown type - drop to GC. Rversion/Rattach/Rflush and any
 		// T-messages intentionally land here (low-volume or wrong side).
 	}
 }

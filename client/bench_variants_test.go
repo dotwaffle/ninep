@@ -1,38 +1,36 @@
 // Package client_test contains variant-matrix benchmarks for the client
-// library. Per 24-CONTEXT.md D-02 / D-04, these live in a SEPARATE file
-// from the SC-4 mirror benches in client/bench_test.go so benchstat's
-// axis-matching against v1.2.0 HEAD stays clean (the mirror benches use
-// only `transport=` while the variant matrix uses `encoding=` / `pool_size=`;
-// folding them together would mismatch benchstat's column extraction).
+// library. These live in a SEPARATE file from the mirror benches in
+// client/bench_test.go so benchstat's axis-matching stays clean (the
+// mirror benches use only `transport=` while the variant matrix uses
+// `encoding=` / `pool_size=`; folding them together would mismatch
+// benchstat's column extraction).
 //
-// The variant matrix is reference-only (D-13): output populates a
-// reference table in 24-VERIFICATION.md. These benches do NOT gate any
-// release.
+// The variant matrix is reference-only: output populates a reference
+// table. These benches do NOT gate any release.
 //
-// Matrix: {encoding=p9l|p9u} × {pool_size=1|3|8|16} = 8 subtests.
+// Matrix: {encoding=p9l|p9u} x {pool_size=1|3|8|16} = 8 subtests.
 //
 // Benchstat column extraction:
 //
-//	-col encoding     → p9l vs p9u at same pool_size
-//	-col pool_size    → saturation curve at same dialect
+//	-col encoding     -> p9l vs p9u at same pool_size
+//	-col pool_size    -> saturation curve at same dialect
 //
-// Research Pitfall 8 / pool.Cache cap: allocs/op rising at pool_size > 3
-// is the bounded-cache signal, not a regression. internal/pool.Cache is
-// capped at 3 slots per type. The pool_size axis maps to maxInflight per
-// research §Pattern 3 (NOT a literal pool-cap API change — the cache cap
-// is a constant by design).
+// pool.Cache cap: allocs/op rising at pool_size > 3 is the bounded-cache
+// signal, not a regression. internal/pool.Cache is capped at 3 slots per
+// type. The pool_size axis maps to maxInflight (NOT a literal pool-cap
+// API change - the cache cap is a constant by design).
 //
-// Encoding-axis caveat (24-04 SUMMARY): the server has no public option
-// to force .u advertisement and the client's Dial hardcodes a "9P2000.L"
-// proposal (client/dial.go), so the encoding subtest name is currently
-// structural only — both p9l and p9u subtests run the .L codec end-to-end.
-// The axis is preserved so future work that adds dialect forcing can fill
-// in real .u numbers without renaming subtests (which would break any
-// historical benchstat comparison).
+// Encoding-axis caveat: the server has no public option to force .u
+// advertisement and the client's Dial hardcodes a "9P2000.L" proposal
+// (client/dial.go), so the encoding subtest name is currently structural
+// only - both p9l and p9u subtests run the .L codec end-to-end. The axis
+// is preserved so future work that adds dialect forcing can fill in real
+// .u numbers without renaming subtests (which would break any historical
+// benchstat comparison).
 //
-// Discretion (24-CONTEXT.md "Claude's Discretion"): variant uses
-// transport=unix only — pipe doubles CI time and the writev signal lives
-// only on unix. The mirror benches in bench_test.go cover the pipe axis.
+// The variant matrix uses transport=unix only - pipe doubles CI time and
+// the writev signal lives only on unix. The mirror benches in
+// bench_test.go cover the pipe axis.
 package client_test
 
 import (
@@ -49,11 +47,11 @@ import (
 // newBenchClientWithInflight pairs a server+client over the unix
 // transport with the supplied maxInflight cap and (notionally) the
 // supplied dialect. Used only by the variant-matrix benches in this
-// file; the SC-4 mirror benches in bench_test.go use [newBenchClient].
+// file; the mirror benches in bench_test.go use [newBenchClient].
 //
-// dialect: "p9l" → default; "p9u" → currently a no-op (no server-side
+// dialect: "p9l" -> default; "p9u" -> currently a no-op (no server-side
 // option exists to force .u advertisement, and Dial proposes "9P2000.L"
-// — see file-level godoc for the caveat). Reserved for future use.
+// - see file-level godoc for the caveat). Reserved for future use.
 func newBenchClientWithInflight(tb testing.TB, _ string, root server.Node, msize uint32, maxInflight int) *client.Conn {
 	tb.Helper()
 	_, cli := clienttest.UnixPair(tb, root,
@@ -72,22 +70,22 @@ func newBenchClientWithInflight(tb testing.TB, _ string, root server.Node, msize
 //     on the hot path; any sec/op delta is noise-floor territory. Today
 //     both subtests exercise the .L codec (see file-level godoc).
 //   - pool_size = maxInflight:
-//     1 — serial; cache never saturates; minimum allocs.
-//     3 — matches internal/pool.Cache cap; at steady state the cache
+//     1 -- serial; cache never saturates; minimum allocs.
+//     3 -- matches internal/pool.Cache cap; at steady state the cache
 //     fully services the working set.
-//     8 — 2.5× cache cap; cache saturates on bursts; allocs rise.
-//     16 — 5× cache cap; sustained pressure; allocs rise further.
+//     8 -- 2.5× cache cap; cache saturates on bursts; allocs rise.
+//     16 -- 5× cache cap; sustained pressure; allocs rise further.
 //
-// Rising allocs at pool_size > 3 is EXPECTED (24-RESEARCH.md Pitfall 8),
+// Rising allocs at pool_size > 3 is EXPECTED (the bounded-cache cap),
 // not a regression. The signal informs future cache-cap tuning work.
 //
-// Per D-13, this bench is reference only; SC-4 uses only
+// This bench is reference only; the release gate uses only
 // [BenchmarkClientRead_4K] (mirror-exact, single-axis transport).
 //
 // Each worker calls cli.OpenFile to obtain a distinct *opened* fid so
 // parallel ReadAts do not serialise on f.mu (independent fids share the
 // underlying server node but each has its own offset, mutex, and
-// per-file lock). The fids share the Conn-level tag allocator — this is
+// per-file lock). The fids share the Conn-level tag allocator -- this is
 // the correct measurement model for pool_size saturation.
 //
 // File.Clone is intentionally NOT used: Clone produces an unopened fid

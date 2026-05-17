@@ -65,7 +65,7 @@ func newClientServerPairMsize(tb testing.TB, root server.Node, msize uint32, cli
 
 // TestClient_Msize_TwriteOversized verifies the client refuses to send a
 // T-message whose framed size would exceed the negotiated msize, and does
-// so WITHOUT tearing down the Conn — subsequent small writes must still
+// so WITHOUT tearing down the Conn -- subsequent small writes must still
 // succeed.
 func TestClient_Msize_TwriteOversized(t *testing.T) {
 	t.Parallel()
@@ -105,7 +105,7 @@ func TestClient_Msize_TwriteOversized(t *testing.T) {
 		t.Errorf("error %q should mention msize or frame size", msg)
 	}
 
-	// Conn must still be healthy — issue a small Write and expect success.
+	// Conn must still be healthy -- issue a small Write and expect success.
 	small := []byte("hi")
 	if _, err := cli.Write(ctx, proto.Fid(1), 0, small); err != nil {
 		t.Errorf("small Write after oversize rejection: %v (Conn should remain healthy)", err)
@@ -137,14 +137,14 @@ func TestClient_Msize_ConnectionStillHealthyAfterLocalReject(t *testing.T) {
 
 	// Force a local reject first (writing 2KiB on a 1024 msize conn).
 	// Use Walk on fid=2 to get a writable handle; rw.bin is empty so we
-	// can Write to it (but that's not needed — we reuse fid=1 here,
+	// can Write to it (but that's not needed -- we reuse fid=1 here,
 	// which is read-only, and just want a local reject).
 	_, errOversize := cli.Write(ctx, proto.Fid(1), 0, make([]byte, 2048))
 	if errOversize == nil {
 		t.Fatal("expected local reject, got nil")
 	}
 
-	// Now Read — Conn must still be healthy.
+	// Now Read -- Conn must still be healthy.
 	data, err := cli.Read(ctx, proto.Fid(1), 0, 100)
 	if err != nil {
 		t.Fatalf("Read after local reject: %v (Conn should remain healthy)", err)
@@ -213,7 +213,7 @@ func TestClient_Msize_RreadOversized(t *testing.T) {
 		junk := make([]byte, next-4)
 		_, _ = io.ReadFull(srvNC, junk)
 
-		// Respond with an OVERSIZED size prefix — 2048 > 1024 msize.
+		// Respond with an OVERSIZED size prefix -- 2048 > 1024 msize.
 		// Client's readLoop must signalShutdown on this.
 		var bad [4]byte
 		binary.LittleEndian.PutUint32(bad[:], 2048)
@@ -233,7 +233,7 @@ func TestClient_Msize_RreadOversized(t *testing.T) {
 
 	// Fire an op that makes the mock server send the oversized response.
 	// The op may return an error directly (if readLoop shuts down before
-	// the select) OR land in the respCh-closed path — both should
+	// the select) OR land in the respCh-closed path -- both should
 	// surface as ErrClosed.
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
@@ -242,7 +242,7 @@ func TestClient_Msize_RreadOversized(t *testing.T) {
 	// The first op's outcome depends on racing: the server may shut
 	// down before our op's respCh is read (ErrClosed directly) OR the
 	// op may return a write error. Either is acceptable for the first
-	// op. What we REQUIRE is that a subsequent op returns ErrClosed —
+	// op. What we REQUIRE is that a subsequent op returns ErrClosed --
 	// the read loop must have shut down the Conn.
 	_ = firstErr
 
@@ -265,7 +265,7 @@ func TestClient_Msize_RreadOversized(t *testing.T) {
 }
 
 // TestClient_Msize_RreadExactMsize verifies a frame whose size exactly
-// equals the negotiated msize is accepted (boundary test — > msize
+// equals the negotiated msize is accepted (boundary test -- > msize
 // rejects, == msize must not).
 func TestClient_Msize_RreadExactMsize(t *testing.T) {
 	t.Parallel()
@@ -273,7 +273,7 @@ func TestClient_Msize_RreadExactMsize(t *testing.T) {
 	// A real client-server pair, negotiated at 4096 msize. A Tread of
 	// 4073 bytes from a file yields an Rread whose framed size is
 	// exactly 4096 (4 size + 1 type + 2 tag + 4 count + 4073 data = 4084
-	// — close enough to exercise the boundary). The test passes if the
+	// -- close enough to exercise the boundary). The test passes if the
 	// Read succeeds without the msize guard triggering.
 	cli, cleanup := newClientServerPairMsize(t, buildTestRoot(t), 4096)
 	defer cleanup()

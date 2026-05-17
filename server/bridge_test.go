@@ -194,7 +194,7 @@ var (
 	_ NodeRawReaddirer = (*invalidRawDir)(nil)
 )
 
-// --- Phase 4 test node types ---
+// --- Capability test node types ---
 
 // symlinkDir is a test directory supporting Symlink, Link, Mknod, Unlink,
 // Rename, and Readlink on children.
@@ -363,7 +363,7 @@ func (w *testXattrWriter) Commit(_ context.Context) error {
 	return nil
 }
 
-// Compile-time checks for Phase 4 test types.
+// Compile-time checks for capability test types.
 var (
 	_ NodeSymlinker = (*symlinkDir)(nil)
 	_ NodeLinker    = (*symlinkDir)(nil)
@@ -521,12 +521,11 @@ func TestBridge_OpenRead(t *testing.T) {
 			root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
 			root.AddChild("file.txt", file.EmbeddedInode())
 
-			// Large-read fixture: only used by the transport=unix subtest to
-			// exercise the 3-iovec writev fast path with a non-trivial (>=4 KiB)
-			// payload. See .planning/phases/14/14-RESEARCH.md §Pitfall 2 for
-			// why iovcnt is 3 when len(payload) > 0 and 2 when it's empty.
-			// Contents are deterministic (byte(i % 251) avoids all-zero runs and
-			// keeps the test hermetic).
+			// Large-read fixture: only used by the transport=unix subtest
+			// to exercise the 3-iovec writev fast path with a non-trivial
+			// (>=4 KiB) payload. iovcnt is 3 when len(payload) > 0 and
+			// 2 when it's empty. Contents are deterministic (byte(i %
+			// 251) avoids all-zero runs and keeps the test hermetic).
 			var bigFile *bridgeFile
 			if transport == "unix" {
 				bigContent := make([]byte, 8192)
@@ -575,13 +574,14 @@ func TestBridge_OpenRead(t *testing.T) {
 			}
 
 			// Large-read variant: transport=unix only. Exercises the
-			// net.Buffers.WriteTo -> pfd.Writev single-syscall fast path with
-			// iovcnt=3 (hdr + 4-byte count prefix + payload). transport=pipe
-			// falls into the sequential-Write loop in net/net.go:851-864 via
-			// the 5-byte "hello" read above, so this extra coverage is specific
-			// to the writev path (PERF-07.4 canary for Pitfall 3: if the pooled
-			// buffer were released before writev completed, the bytes.Equal
-			// check below would fail intermittently under -race).
+			// net.Buffers.WriteTo -> pfd.Writev single-syscall fast path
+			// with iovcnt=3 (hdr + 4-byte count prefix + payload).
+			// transport=pipe falls into the sequential-Write loop in
+			// net/net.go:851-864 via the 5-byte "hello" read above, so
+			// this extra coverage is specific to the writev path. It is
+			// also a canary: if the pooled buffer were released before
+			// writev completed, the bytes.Equal check below would fail
+			// intermittently under -race.
 			if transport == "unix" {
 				// Fresh fid (5) to avoid colliding with the "hello" fid (1).
 				msg = cp.walk(t, 5, 0, 5, "big.bin")
@@ -1324,7 +1324,7 @@ func TestBridge_EINVAL_CreateDotDot(t *testing.T) {
 	isError(t, msg, proto.EINVAL)
 }
 
-// --- Phase 4 end-to-end integration tests ---
+// --- Capability bridge end-to-end integration tests ---
 
 func TestBridge_Symlink(t *testing.T) {
 	t.Parallel()

@@ -13,7 +13,7 @@ import (
 	"github.com/dotwaffle/ninep/server/memfs"
 )
 
-// -- Task 1 tests ---------------------------------------------------
+// -- LockType + backoff helpers -------------------------------------
 
 // TestClient_LockType_Values asserts the LockType enum maps to the
 // matching proto.LockType constants. Compile-time equivalence via the
@@ -71,7 +71,7 @@ func TestLockBackoff_Schedule(t *testing.T) {
 
 // TestClient_WithLockPollSchedule_Override dials a Conn with an
 // overridden schedule. The observable side effect is verified in
-// TestClient_Lock_Contended_Backoff — here we only assert the option
+// TestClient_Lock_Contended_Backoff -- here we only assert the option
 // doesn't error and takes effect on the first Blocked status.
 func TestClient_WithLockPollSchedule_Override(t *testing.T) {
 	t.Parallel()
@@ -101,7 +101,7 @@ func TestClient_WithLockPollSchedule_Override(t *testing.T) {
 	}
 }
 
-// -- Task 2 tests ---------------------------------------------------
+// -- Lock / Unlock / TryLock / GetLock end-to-end -------------------
 
 func TestClient_Lock_Uncontended(t *testing.T) {
 	t.Parallel()
@@ -168,9 +168,9 @@ func TestClient_Lock_Contended_Backoff(t *testing.T) {
 	}
 }
 
-// TestClient_Lock_CtxCancel_SendsUnlock is the Pitfall-6 proof. On
-// ctx cancellation mid-backoff loop, Lock MUST emit a Tlock(UNLCK)
-// on the way out so the server-side lock table matches client state.
+// TestClient_Lock_CtxCancel_SendsUnlock proves that on ctx cancellation
+// mid-backoff loop, Lock MUST emit a Tlock(UNLCK) on the way out so
+// the server-side lock table matches client state.
 func TestClient_Lock_CtxCancel_SendsUnlock(t *testing.T) {
 	t.Parallel()
 	root, locker := buildLockerRoot(t)
@@ -209,7 +209,7 @@ func TestClient_Lock_CtxCancel_SendsUnlock(t *testing.T) {
 }
 
 // TestClient_Lock_RequiresOpenedFid walks to a locker node WITHOUT
-// opening it, then calls File.Lock — the server requires fidOpened
+// opening it, then calls File.Lock -- the server requires fidOpened
 // state and MUST reject with a wire error.
 func TestClient_Lock_RequiresOpenedFid(t *testing.T) {
 	t.Parallel()
@@ -369,7 +369,7 @@ func TestClient_Lock_NotSupportedOnU(t *testing.T) {
 	defer cleanup()
 	// We need a *File to call Lock. Fabricate via raw walk+lopen won't
 	// work on .u; use the Conn.Attach path which on .u will not have
-	// a lockable fid — we just need *any* *File.
+	// a lockable fid -- we just need *any* *File.
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	// The uMockServer answers Tattach; that's enough to get a *File.

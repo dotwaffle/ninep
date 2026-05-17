@@ -13,32 +13,31 @@ import (
 	"go.opentelemetry.io/otel/codes"
 )
 
-// roundTrip is the shared dispatch helper used by every op method on *Conn.
-// It enforces the ordering invariants from research §4:
+// roundTrip is the shared dispatch helper used by every op method on
+// *Conn. It enforces the following ordering invariants:
 //
-//  1. Pre-flight isClosed check — short-circuit to ErrClosed before paying
-//     the tagAllocator round trip (pitfall 10-C).
-//  2. callerWG.Add(1) / defer Done — Close() waits for callers to drain
-//     before shutting the read goroutine (Plan 19-05 contract).
-//  3. tagAllocator.acquire — blocks on ctx, closeCh, or free-list slot.
-//  4. inflight.register BEFORE writeT — pitfall 1 (register-before-send).
-//  5. writeT — encode + writev under writeMu.
+//  1. Pre-flight isClosed check - short-circuit to ErrClosed before paying
+//     the tagAllocator round trip.
+//  2. callerWG.Add(1) / defer Done - Close() waits for callers to drain
+//     before shutting the read goroutine.
+//  3. tagAllocator.acquire - blocks on ctx, closeCh, or free-list slot.
+//  4. inflight.register BEFORE writeT (register-before-send).
+//  5. writeT - encode + writev under writeMu.
 //  6. Wait on respCh / ctx.Done / closeCh.
-//  7. unregister(tag) BEFORE release(tag) — pitfall 2 (tag-reuse race).
-//  8. release(tag) — return to free-list.
+//  7. unregister(tag) BEFORE release(tag) (tag-reuse race avoidance).
+//  8. release(tag) - return to free-list.
 //
 // Error paths preserve the unregister-before-release ordering. On writeT
 // failure, the tag is released after unregistering so the caller observes
 // the real write error (not a tag-leak consequence).
 //
-// Phase 22 (CLIENT-04, D-01..D-07): ctx cancellation enters
-// [Conn.flushAndWait], which sends Tflush(tag) and blocks for the
-// first frame among (original R, Rflush, closeCh). flushAndWait owns
-// the cleanup of both the original tag AND the flushTag it allocates.
-// The returned error wraps ctx.Err() via %w so errors.Is chains work;
-// on the Rflush-first path, [ErrFlushed] is also in the chain (D-05).
-// Late-arriving second frames are dropped by inflight.deliver's
-// unregistered-tag path (Pitfall 7).
+// Ctx cancellation enters [Conn.flushAndWait], which sends Tflush(tag)
+// and blocks for the first frame among (original R, Rflush, closeCh).
+// flushAndWait owns the cleanup of both the original tag AND the
+// flushTag it allocates. The returned error wraps ctx.Err() via %w so
+// errors.Is chains work; on the Rflush-first path, [ErrFlushed] is
+// also in the chain. Late-arriving second frames are dropped by
+// inflight.deliver's unregistered-tag path.
 //
 // Returns the decoded R-message as a proto.Message value. The caller is
 // responsible for calling toError first (to translate Rlerror/Rerror) and
@@ -68,17 +67,16 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 		return nil, err
 	}
 
-	// Register BEFORE writeT — pitfall 1.
+	// Register BEFORE writeT.
 	respCh := c.inflight.register(tag)
 
 	if err := c.writeT(tag, msg); err != nil {
-		// Pitfall 2 ordering preserved on error paths: unregister, then
-		// release.
+		// Unregister-before-release ordering preserved on error paths.
 		c.inflight.unregister(tag)
 		c.tags.release(tag)
 		// If the Conn is shutting down (signalShutdown has fired), a
 		// writeT failure is almost certainly the result of the shutdown
-		// racing the write — surface as ErrClosed so callers see a
+		// racing the write - surface as ErrClosed so callers see a
 		// consistent shutdown signal rather than the transport-specific
 		// io.ErrClosedPipe / net.ErrClosed wrapper.
 		if c.isClosed() {
@@ -94,33 +92,33 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 	select {
 	case r, ok := <-respCh:
 		if !ok {
-			// Channel closed by inflight.cancelAll — Conn is shutting down.
+			// Channel closed by inflight.cancelAll - Conn is shutting down.
 			// The read goroutine has signalled shutdown; our caller observes
 			// ErrClosed. The tag is released so no leak.
 			//
-			// unregister is called BEFORE release to keep pitfall-2 ordering
-			// uniform with the peer branches (line 85, line 97). cancelAll
-			// already deleted the entry today, so this is a no-op map
-			// lookup under Lock — but relying on that coupling would silently
-			// leak the entry if cancelAll is ever refactored to delay the
-			// delete (e.g. for a graceful-drain diagnostic pass). unregister
-			// is idempotent (map delete of a missing key).
+			// unregister is called BEFORE release to keep the ordering
+			// uniform with the peer branches. cancelAll already deleted
+			// the entry today, so this is a no-op map lookup under Lock -
+			// but relying on that coupling would silently leak the entry
+			// if cancelAll is ever refactored to delay the delete (e.g.
+			// for a graceful-drain diagnostic pass). unregister is
+			// idempotent (map delete of a missing key).
 			c.inflight.unregister(tag)
 			c.tags.release(tag)
 			c.recordError(span, ErrClosed)
 			return nil, ErrClosed
 		}
-		// Unregister BEFORE release — pitfall 2.
+		// Unregister BEFORE release.
 		c.inflight.unregister(tag)
 		c.tags.release(tag)
 		resp = r
 	case <-ctx.Done():
-		// Phase 22 (CLIENT-04, D-01): delegate to flushAndWait, which
-		// sends Tflush(tag) and owns the unregister + release of both
-		// `tag` (the original) and the flushTag it acquires. The
-		// returned error wraps ctx.Err() so errors.Is(err,
-		// context.Canceled) / context.DeadlineExceeded work; on the
-		// Rflush-first path, ErrFlushed is also in the chain (D-05).
+		// Delegate to flushAndWait, which sends Tflush(tag) and owns
+		// the unregister + release of both `tag` (the original) and
+		// the flushTag it acquires. The returned error wraps
+		// ctx.Err() so errors.Is(err, context.Canceled) /
+		// context.DeadlineExceeded work; on the Rflush-first path,
+		// ErrFlushed is also in the chain.
 		r, ferr := c.flushAndWait(ctx, tag, respCh)
 		if ferr != nil {
 			c.recordError(span, ferr)
@@ -143,20 +141,20 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 
 // toError translates an R-message into a *Error if it represents a
 // server-reported failure. Rlerror (.L) populates only Errno; Rerror (.u)
-// populates both Errno and Msg. Returns nil for any other message type —
+// populates both Errno and Msg. Returns nil for any other message type -
 // the caller treats that as a normal response and type-asserts.
 //
-// Per D-13 (.planning/phases/19/19-CONTEXT.md) callers always route through
-// toError before type-asserting, so the two dialects' error shapes are
-// unified at the ops boundary and user code uses a single errors.Is pattern
-// against proto.Errno constants regardless of negotiated dialect.
+// Callers always route through toError before type-asserting, so the
+// two dialects' error shapes are unified at the ops boundary and user
+// code uses a single errors.Is pattern against proto.Errno constants
+// regardless of negotiated dialect.
 //
-// Ownership: when toError returns a non-nil error, it has already returned
-// msg to its R-message cache via putCachedRMsg. The caller MUST NOT touch
-// msg after observing a non-nil return — the fields have been reset and the
-// pointer may already have been handed to another borrower. When toError
-// returns nil, msg is left intact for the caller to type-assert and later
-// return to the cache.
+// Ownership: when toError returns a non-nil error, it has already
+// returned msg to its R-message cache via putCachedRMsg. The caller
+// MUST NOT touch msg after observing a non-nil return - the fields
+// have been reset and the pointer may already have been handed to
+// another borrower. When toError returns nil, msg is left intact for
+// the caller to type-assert and later return to the cache.
 func toError(msg proto.Message) error {
 	switch r := msg.(type) {
 	case *p9l.Rlerror:
@@ -189,12 +187,12 @@ func expectRType(msg proto.Message, wantTypes ...proto.MessageType) error {
 	return fmt.Errorf("client: unexpected response type %v", got)
 }
 
-// AttachFid associates fid with the root of the file tree named by aname and
-// establishes the session for user uname. This is the low-level wire op;
-// Phase 20's [Conn.Attach] wraps it to return a *File with an allocator-
-// owned fid. Per D-17/D-18 Phase 19 supports only afid=NoFid (no
-// authentication); Tauth is not implemented. aname selects the mount
-// point, server-defined; the empty string is the conventional "default"
+// AttachFid associates fid with the root of the file tree named by
+// aname and establishes the session for user uname. This is the
+// low-level wire op; [Conn.Attach] wraps it to return a *File with an
+// allocator-owned fid. Only afid=NoFid (no authentication) is
+// supported; Tauth is not implemented. aname selects the mount point,
+// server-defined; the empty string is the conventional "default"
 // root.
 //
 // Returns the root QID on success, or a *Error translated from Rlerror/Rerror
@@ -233,7 +231,7 @@ func (c *Conn) AttachFid(ctx context.Context, fid proto.Fid, uname, aname string
 // An empty names slice clones fid into newFid without navigating. Returns
 // one QID per successfully walked element.
 //
-// The returned []proto.QID is caller-owned — it is copied out of the pooled
+// The returned []proto.QID is caller-owned -- it is copied out of the pooled
 // Rwalk struct before the struct is returned to the cache, so callers may
 // retain the slice indefinitely.
 func (c *Conn) Walk(ctx context.Context, fid, newFid proto.Fid, names []string) ([]proto.QID, error) {
@@ -251,7 +249,7 @@ func (c *Conn) Walk(ctx context.Context, fid, newFid proto.Fid, names []string) 
 		putCachedRMsg(resp)
 		return nil, err
 	}
-	// Copy out before cache return — Rwalk.QIDs aliases a decoder-allocated
+	// Copy out before cache return -- Rwalk.QIDs aliases a decoder-allocated
 	// slice that the cache returns to a zero-reset state on next Get.
 	qids := make([]proto.QID, len(r.QIDs))
 	copy(qids, r.QIDs)
@@ -280,15 +278,14 @@ func (c *Conn) Clunk(ctx context.Context, fid proto.Fid) error {
 	return nil
 }
 
-// Flush asks the server to abort the request identified by oldTag. Per the
-// 9P spec the server responds with Rflush regardless of whether oldTag
-// matches an outstanding request. As such, a nil return does NOT confirm
-// the original request was cancelled — the request may have completed
-// before Flush was received.
+// Flush asks the server to abort the request identified by oldTag.
+// Per the 9P spec the server responds with Rflush regardless of
+// whether oldTag matches an outstanding request. As such, a nil return
+// does NOT confirm the original request was cancelled - the request
+// may have completed before Flush was received.
 //
-// Phase 19 does not auto-invoke Flush on ctx cancellation; that wiring
-// lives in Phase 22 (CLIENT-04). This method is the raw wire-level
-// primitive for callers that need it directly.
+// Flush is a raw wire-level primitive; high-level callers usually let
+// roundTrip drive auto-flush on ctx cancellation.
 func (c *Conn) Flush(ctx context.Context, oldTag proto.Tag) error {
 	req := &proto.Tflush{OldTag: oldTag}
 	resp, err := c.roundTrip(ctx, req)
@@ -309,7 +306,7 @@ func (c *Conn) Flush(ctx context.Context, oldTag proto.Tag) error {
 // Read reads up to count bytes from fid starting at offset. Returns the
 // bytes actually read, which may be fewer than count (EOF or short read).
 //
-// The returned slice is caller-owned — it is copied out of the pooled
+// The returned slice is caller-owned - it is copied out of the pooled
 // Rread struct (whose Data field aliases a bucket buffer from bufpool)
 // before the struct is returned to the cache. Callers may retain the
 // slice indefinitely.
@@ -353,32 +350,33 @@ func (c *Conn) Read(ctx context.Context, fid proto.Fid, offset uint64, count uin
 // into dst[:count] by the read loop's zero-copy fast path. Returns the
 // number of bytes written into dst.
 //
-// 24-03 / D-05: this is the Payloader-symmetric peer of [Conn.Read].
-// Where Conn.Read pays two allocs per round trip — Rread.Data inside
-// proto.Rread.DecodeFrom plus a result-copy in Conn.Read itself — this
-// helper pays neither: the read loop copies the response payload directly
-// from its pooled body buffer into the caller's dst, and signals success
-// via the rreadSentinelOK singleton (no Rread cache slot consumed).
+// This is the Payloader-symmetric peer of [Conn.Read]. Where
+// Conn.Read pays two allocs per round trip - Rread.Data inside
+// proto.Rread.DecodeFrom plus a result-copy in Conn.Read itself - this
+// helper pays neither: the read loop copies the response payload
+// directly from its pooled body buffer into the caller's dst, and
+// signals success via the rreadSentinelOK singleton (no Rread cache
+// slot consumed).
 //
 // Conn.Read is intentionally NOT removed: Raw.Read consumers and any
 // caller without a pre-allocated destination still use it. File.ReadAt
-// (Task 3) routes through readAtZeroCopy because the caller's dst is
-// always available there.
+// routes through readAtZeroCopy because the caller's dst is always
+// available there.
 //
 // dst MUST have len(dst) >= count. The read loop enforces this with a
 // protocol-error path (signalShutdown) if the server returns more than
-// len(dst) bytes — Pitfall 1 in 24-RESEARCH.md — so the caller's
-// guarantee prevents accidental truncation-without-error.
+// len(dst) bytes - so the caller's guarantee prevents accidental
+// truncation-without-error.
 //
-// Returns (0, err) on tag-acquisition, write, or context errors — dst is
-// untouched in those paths. Returns (n, nil) on success where n is the
-// bytes actually read (<= count; may be 0 at EOF).
+// Returns (0, err) on tag-acquisition, write, or context errors - dst
+// is untouched in those paths. Returns (n, nil) on success where n is
+// the bytes actually read (<= count; may be 0 at EOF).
 //
-// Phase 22 (CLIENT-04) ctx-cancel semantics preserved: ctx.Done →
-// flushAndWait(ctx, tag, respCh). Under Pattern B the entire response
-// body is received before the caller's select runs, so dst is either
-// fully written or completely untouched — there is no mid-write cancel
-// window to corrupt the caller's buffer.
+// Ctx-cancel semantics preserved: ctx.Done -> flushAndWait(ctx, tag,
+// respCh). The entire response body is received before the caller's
+// select runs, so dst is either fully written or completely untouched
+// - there is no mid-write cancel window to corrupt the caller's
+// buffer.
 func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64, count uint32, dst []byte) (int, error) {
 	if c.isClosed() {
 		return 0, ErrClosed
@@ -403,16 +401,16 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 		return 0, err
 	}
 
-	// Register ZC BEFORE writeT — Pitfall 1 (register-before-send).
+	// Register ZC BEFORE writeT (register-before-send).
 	// entry.n is written by the read loop's Rread fast path before deliver,
-	// and read here after entry.ch unblocks — happens-before via the
+	// and read here after entry.ch unblocks - happens-before via the
 	// cap-1 chan send/receive edge.
 	entry := c.inflight.registerZC(tag, dst)
 
 	req := &proto.Tread{Fid: fid, Offset: offset, Count: count}
 	c.recordRequest(ctx, req)
 	if err := c.writeT(tag, req); err != nil {
-		// Pitfall 2 ordering preserved on error paths: unregister, then release.
+		// Unregister-before-release ordering preserved on error paths.
 		c.inflight.unregister(tag)
 		c.tags.release(tag)
 		if c.isClosed() {
@@ -423,7 +421,7 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 		return 0, err
 	}
 
-	// Wait for response, ctx cancel, or shutdown — same shape as roundTrip.
+	// Wait for response, ctx cancel, or shutdown - same shape as roundTrip.
 	var resp proto.Message
 	select {
 	case r, ok := <-entry.ch:
@@ -434,16 +432,16 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 			c.recordError(span, ErrClosed)
 			return 0, ErrClosed
 		}
-		// Unregister BEFORE release — Pitfall 2.
+		// Unregister BEFORE release.
 		c.inflight.unregister(tag)
 		c.tags.release(tag)
 		resp = r
 	case <-ctx.Done():
-		// Phase 22 (CLIENT-04, D-01): delegate to flushAndWait, which
-		// owns the unregister + release of `tag` (and any flushTag it
-		// allocates). flushAndWait returns (msg, err); for the ZC path
-		// the response (if any) is the rreadSentinelOK singleton or an
-		// Rlerror — drop both via putCachedRMsg-style cleanup. Note:
+		// Delegate to flushAndWait, which owns the unregister +
+		// release of `tag` (and any flushTag it allocates).
+		// flushAndWait returns (msg, err); for the ZC path the
+		// response (if any) is the rreadSentinelOK singleton or an
+		// Rlerror - drop both via putCachedRMsg-style cleanup. Note:
 		// flushAndWait already calls putCachedRMsg on the original R
 		// message internally (origCh drain arms), and rreadSentinelOK
 		// is a no-op there per the sentinel guard in putCachedRMsg.
@@ -463,7 +461,7 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 	// r is one of: rreadSentinelOK (zero-copy fast path success) or
 	// an error R-message (Rlerror/Rerror). Defensive type-check at the
 	// end catches a misbehaving server returning Rread (cached path)
-	// or some other unexpected R-type — never panic, always return err.
+	// or some other unexpected R-type -- never panic, always return err.
 	if resp == rreadSentinelOK {
 		c.recordZCResponse(ctx, proto.TypeTread, elapsed, entry.n)
 		return entry.n, nil
@@ -510,9 +508,10 @@ func (c *Conn) Write(ctx context.Context, fid proto.Fid, offset uint64, data []b
 	return count, nil
 }
 
-// Lopen opens an existing file referenced by fid with the given POSIX open
-// flags (O_RDONLY, O_RDWR, etc.). Requires a 9P2000.L-negotiated Conn (D-19,
-// D-20); on a .u Conn returns ErrNotSupported without touching the wire.
+// Lopen opens an existing file referenced by fid with the given POSIX
+// open flags (O_RDONLY, O_RDWR, etc.). Requires a
+// 9P2000.L-negotiated Conn; on a .u Conn returns ErrNotSupported
+// without touching the wire.
 //
 // Returns the file's QID and the server's suggested iounit (the maximum
 // bytes the server is willing to return in a single Rread or accept in a
@@ -578,8 +577,8 @@ func (c *Conn) Lcreate(ctx context.Context, fid proto.Fid, name string, flags ui
 	return qid, iou, nil
 }
 
-// Open is the 9P2000.u file-open operation. Requires a .u-negotiated Conn
-// (D-19, D-20); on a .L Conn returns ErrNotSupported.
+// Open is the 9P2000.u file-open operation. Requires a .u-negotiated
+// Conn; on a .L Conn returns ErrNotSupported.
 //
 // mode is a 9P2000.u open mode (OREAD=0, OWRITE=1, ORDWR=2, OEXEC=3 with
 // optional flag bits in the upper bits). Returns QID + iounit.
@@ -606,14 +605,15 @@ func (c *Conn) Open(ctx context.Context, fid proto.Fid, mode uint8) (proto.QID, 
 	return r.QID, r.IOUnit, nil
 }
 
-// CreateFid is the 9P2000.u create-and-open wire operation. Requires a
-// .u-negotiated Conn. Phase 20's [Conn.Create] wraps this and the
-// .L-only [Conn.Lcreate] behind a dialect-neutral session method; use
-// CreateFid (or [Raw.Create]) only when explicit fid control is needed.
+// CreateFid is the 9P2000.u create-and-open wire operation. Requires
+// a .u-negotiated Conn. [Conn.Create] wraps this and the .L-only
+// [Conn.Lcreate] behind a dialect-neutral session method; use
+// CreateFid (or [Raw.Create]) only when explicit fid control is
+// needed.
 //
 // perm is the file-mode + type bits; mode is the 9P2000.u open mode;
-// extension is the .u Extension field (symlink target, device spec, etc. —
-// empty for regular files).
+// extension is the .u Extension field (symlink target, device spec,
+// etc. - empty for regular files).
 func (c *Conn) CreateFid(ctx context.Context, fid proto.Fid, name string, perm proto.FileMode, mode uint8, extension string) (proto.QID, uint32, error) {
 	if err := c.requireDialect(protocolU, "Create"); err != nil {
 		return proto.QID{}, 0, err

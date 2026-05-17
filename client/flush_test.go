@@ -19,7 +19,7 @@ import (
 // flushMockServer is a hand-rolled 9P2000.L mock server built on top of a
 // raw net.Conn. It gives the test explicit control over the ordering of
 // Rread vs Rflush responses so the first-frame-wins logic in
-// client.flushAndWait (D-04, D-06) can be exercised deterministically.
+// client.flushAndWait can be exercised deterministically.
 //
 // The server's behaviour on receiving a T-message is configured via three
 // atomics on flushMockServer:
@@ -42,12 +42,13 @@ import (
 //     client first.
 //
 // The server also counts Tflush frames observed on the wire (tflushCount)
-// so the double-flush-guard test (Pitfall 1) can assert exactly one
-// Tflush per caller ctx.Cancel.
+// so the double-flush-guard test can assert exactly one Tflush per
+// caller ctx.Cancel.
 //
-// Protocol scope: enough of .L to run Tversion → Tattach → Twalk →
-// Tlopen → Tread. No writes, no directory ops, no xattr — Phase 22 only
-// exercises the roundTrip ctx.Done path, which is dialect-neutral.
+// Protocol scope: enough of .L to run Tversion -> Tattach -> Twalk ->
+// Tlopen -> Tread. No writes, no directory ops, no xattr - this test
+// only exercises the roundTrip ctx.Done path, which is
+// dialect-neutral.
 type flushMockServer struct {
 	nc net.Conn
 
@@ -65,7 +66,7 @@ type flushMockServer struct {
 	rflushSendImmediately atomic.Bool
 
 	// tflushCount is the number of Tflush frames observed on the wire.
-	// Used by the Pitfall 1 double-flush-guard test.
+	// Used by the double-flush-guard test.
 	tflushCount atomic.Int64
 
 	// writeMu serialises R-message writes so a goroutine-driven Rflush
@@ -240,8 +241,8 @@ func (r *memReader) Read(p []byte) (int, error) {
 // closes the client; the mock server's cleanup is registered by
 // newFlushMockServer.
 //
-// Optional client.Option values append to the default set (msize=65536,
-// discardLogger). Used by Plan 22-03's timeout tests to inject
+// Optional client.Option values append to the default set
+// (msize=65536, discardLogger). Used by timeout tests to inject
 // WithRequestTimeout without duplicating the harness.
 func newFlushTestPair(tb testing.TB, extraOpts ...client.Option) (*client.Conn, *flushMockServer, func()) {
 	tb.Helper()
@@ -270,7 +271,7 @@ func newFlushTestPair(tb testing.TB, extraOpts ...client.Option) (*client.Conn, 
 
 // attachAndOpen attaches the root and opens hello.txt, returning the
 // fid the test can use for a Tread. Panics on error because a failing
-// prelude means the test harness is broken — the subtest assertions
+// prelude means the test harness is broken -- the subtest assertions
 // aren't the thing under test here.
 func attachAndOpen(tb testing.TB, cli *client.Conn) proto.Fid {
 	tb.Helper()
@@ -290,7 +291,7 @@ func attachAndOpen(tb testing.TB, cli *client.Conn) proto.Fid {
 	return fid
 }
 
-// TestFlushAndWait_Ordering_RFirst verifies D-05's R-first path: when
+// TestFlushAndWait_Ordering_RFirst verifies the R-first path: when
 // the original Rread arrives before Rflush, the caller's error chain
 // satisfies errors.Is(err, ctx.Err()) but NOT errors.Is(err, ErrFlushed).
 func TestFlushAndWait_Ordering_RFirst(t *testing.T) {
@@ -301,7 +302,7 @@ func TestFlushAndWait_Ordering_RFirst(t *testing.T) {
 	fid := attachAndOpen(t, cli)
 
 	// Set up: release Rread quickly, hold Rflush. Rread will win.
-	// Order matters — arm the Rflush-hold BEFORE cancelling so the race
+	// Order matters -- arm the Rflush-hold BEFORE cancelling so the race
 	// is deterministic.
 	readCtx, readCancel := context.WithCancel(t.Context())
 
@@ -331,8 +332,8 @@ func TestFlushAndWait_Ordering_RFirst(t *testing.T) {
 	srv.releaseRread()
 
 	// The client's Read call should return now. Don't release the
-	// flush gate — the late-arriving Rflush should be dropped by
-	// inflight.deliver's unregistered-tag path (Pitfall 7).
+	// flush gate - the late-arriving Rflush should be dropped by
+	// inflight.deliver's unregistered-tag path.
 	var res result
 	select {
 	case res = <-resCh:
@@ -364,14 +365,14 @@ func TestFlushAndWait_Ordering_RFirst(t *testing.T) {
 	}
 	// After the flush cycle, both the original tag and the flushTag
 	// are released. We had tag=1 for the initial Attach/Walk/Lopen
-	// pipeline (those are clunked on no fid — they use tag, then
+	// pipeline (those are clunked on no fid - they use tag, then
 	// release). FreeTagCount should be back to the default 64.
 	if got := client.FreeTagCount(cli); got != 64 {
 		t.Errorf("FreeTagCount after flush = %d; want 64", got)
 	}
 }
 
-// TestFlushAndWait_Ordering_RflushFirst verifies D-05's Rflush-first
+// TestFlushAndWait_Ordering_RflushFirst verifies the Rflush-first
 // path: when Rflush arrives before the original Rread, the caller's
 // error chain satisfies BOTH errors.Is(err, ctx.Err()) AND
 // errors.Is(err, ErrFlushed).
@@ -412,7 +413,7 @@ func TestFlushAndWait_Ordering_RflushFirst(t *testing.T) {
 
 	// Release the Rread so the server's handleRead goroutine exits
 	// cleanly during Cleanup; the client's read-loop drops it via the
-	// unregistered-tag path (Pitfall 7).
+	// unregistered-tag path.
 	srv.releaseRread()
 
 	if res.err == nil {
@@ -436,13 +437,12 @@ func TestFlushAndWait_Ordering_RflushFirst(t *testing.T) {
 }
 
 // TestFlushAndWait_CloseDuringFlush exercises the closeCh arm of
-// flushAndWait's inner select (D-19, D-21, Pitfall 5): Conn.Close
-// fires while flushAndWait is parked waiting for a response, and the
-// caller sees ErrClosed.
+// flushAndWait's inner select: Conn.Close fires while flushAndWait
+// is parked waiting for a response, and the caller sees ErrClosed.
 func TestFlushAndWait_CloseDuringFlush(t *testing.T) {
 	t.Parallel()
 	cli, _, _ := newFlushTestPair(t)
-	// Do NOT register the default cleanup — this test drives Close
+	// Do NOT register the default cleanup - this test drives Close
 	// explicitly and a second Close would be a no-op but obscures
 	// intent.
 
@@ -482,8 +482,8 @@ func TestFlushAndWait_CloseDuringFlush(t *testing.T) {
 		t.Fatalf("Read returned nil err; want ErrClosed")
 	}
 	if !errors.Is(res.err, client.ErrClosed) {
-		// Per Pitfall 5, closeCh-first is allowed to lose the ctx
-		// cause; the caller MUST see ErrClosed.
+		// closeCh-first is allowed to lose the ctx cause; the caller
+		// MUST see ErrClosed.
 		t.Errorf("errors.Is(err, ErrClosed) = false; want true. err = %v", res.err)
 	}
 }
@@ -498,7 +498,7 @@ func TestFlushAndWait_TagReuse(t *testing.T) {
 
 	fid := attachAndOpen(t, cli)
 
-	// Run Rflush-first path — simpler, no gate timing juggling.
+	// Run Rflush-first path - simpler, no gate timing juggling.
 	srv.rflushSendImmediately.Store(true)
 
 	readCtx, readCancel := context.WithCancel(t.Context())
@@ -517,7 +517,7 @@ func TestFlushAndWait_TagReuse(t *testing.T) {
 	// Allow any late drops to finish.
 	time.Sleep(50 * time.Millisecond)
 
-	// Now issue a fresh Walk/Clunk cycle. Must succeed — if the tag
+	// Now issue a fresh Walk/Clunk cycle. Must succeed - if the tag
 	// allocator leaked, FreeTagCount would be < 64 and a pathological
 	// sequence of cancellations could eventually starve. For this
 	// test, one follow-on op is sufficient.
@@ -535,10 +535,10 @@ func TestFlushAndWait_TagReuse(t *testing.T) {
 	}
 }
 
-// TestFlushAndWait_DoubleFlush_SingleFrame (Pitfall 1) asserts that
-// repeated ctx.Cancel on an already-cancelled ctx does NOT produce
-// multiple Tflush frames on the wire. The ctx is idempotent; each
-// roundTrip sends at most one Tflush per ctx.Done fire.
+// TestFlushAndWait_DoubleFlush_SingleFrame asserts that repeated
+// ctx.Cancel on an already-cancelled ctx does NOT produce multiple
+// Tflush frames on the wire. The ctx is idempotent; each roundTrip
+// sends at most one Tflush per ctx.Done fire.
 func TestFlushAndWait_DoubleFlush_SingleFrame(t *testing.T) {
 	t.Parallel()
 	cli, srv, cleanup := newFlushTestPair(t)
@@ -558,7 +558,7 @@ func TestFlushAndWait_DoubleFlush_SingleFrame(t *testing.T) {
 
 	time.Sleep(20 * time.Millisecond)
 	// Cancel THREE times. A well-behaved flushAndWait sends exactly one
-	// Tflush — the repeated cancels are ctx-idempotent and have no
+	// Tflush - the repeated cancels are ctx-idempotent and have no
 	// visible effect on the wire.
 	readCancel()
 	readCancel()
@@ -569,6 +569,6 @@ func TestFlushAndWait_DoubleFlush_SingleFrame(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	if got := srv.tflushCount.Load(); got != 1 {
-		t.Errorf("tflushCount = %d after one Tread cancel; want exactly 1 (Pitfall 1)", got)
+		t.Errorf("tflushCount = %d after one Tread cancel; want exactly 1", got)
 	}
 }

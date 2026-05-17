@@ -8,31 +8,30 @@ import (
 	"github.com/dotwaffle/ninep/proto"
 )
 
-// Phase 21 Plan 03 — high-level extended-attribute surface on *File.
+// High-level extended-attribute surface on *File.
 //
 // Each method hides the 9P2000.L two-phase xattr protocol:
 //
 //   - XattrGet / XattrList: Txattrwalk (allocates a dedicated read fid
-//     bound to the source file + name; name="" lists all attrs) →
-//     Tread-loop draining the server-declared size → Tclunk releases
+//     bound to the source file + name; name="" lists all attrs) ->
+//     Tread-loop draining the server-declared size -> Tclunk releases
 //     the xattr fid. The caller's *File is untouched.
 //
 //   - XattrSet / XattrRemove: File.Clone (produces a disposable fid)
-//     → Txattrcreate (server MUTATES the cloned fid into xattr-write
-//     state — Pitfall 1) → Twrite loop → Tclunk commits. The caller's
-//     *File is again untouched because the mutation lands on the
-//     clone, not on f.
+//     -> Txattrcreate (server MUTATES the cloned fid into xattr-write
+//     state) -> Twrite loop -> Tclunk commits. The caller's *File is
+//     again untouched because the mutation lands on the clone, not on f.
 //
 // All four methods are 9P2000.L-only; .u returns ErrNotSupported via
 // the requireDialect gate before any wire op.
 
 // xattrChunk returns the maximum byte count safe to transfer in a
 // single Tread/Twrite for an xattr op. Mirrors File.maxChunk's msize
-// clamp — xattr ops do not carry an iounit, so the only bound is
+// clamp -- xattr ops do not carry an iounit, so the only bound is
 // msize minus per-message framing overhead.
 //
 // Returns 0 when the Conn's negotiated msize is at or below the
-// framing overhead — a state only reachable against a pathological
+// framing overhead -- a state only reachable against a pathological
 // mock server ([Dial] enforces minMsize=256 > ioFrameOverhead).
 // Callers MUST treat chunk==0 as "no forward progress possible" and
 // surface a clear error before entering the Tread/Twrite loop; zero
@@ -50,15 +49,15 @@ func (f *File) xattrChunk() uint32 {
 // choreography shared by XattrGet and XattrList (the latter uses
 // name="" per 9P2000.L convention).
 //
-// Pitfall 2 bound: the Rxattrwalk.Size field is an 8-byte server-
-// supplied integer. A malicious or broken server could declare any
-// value up to 2^64-1; making a []byte of that size would OOM the
-// client. Clamp against proto.MaxDataSize (16 MiB) BEFORE allocation
-// and surface an error without draining a single Tread byte.
+// Size bound: the Rxattrwalk.Size field is an 8-byte server-supplied
+// integer. A malicious or broken server could declare any value up to
+// 2^64-1; making a []byte of that size would OOM the client. Clamp
+// against proto.MaxDataSize (16 MiB) BEFORE allocation and surface an
+// error without draining a single Tread byte.
 //
 // On every exit path the freshly-allocated xattr fid is clunked
 // (best-effort) and released to the fid allocator. Errors from the
-// cleanup Clunk are suppressed — the primary error is what the caller
+// cleanup Clunk are suppressed -- the primary error is what the caller
 // needs to see, and the fid is returned to the allocator regardless.
 func (f *File) twoPhaseXattrRead(ctx context.Context, name string) ([]byte, error) {
 	if err := f.conn.requireDialect(protocolL, "XattrGet"); err != nil {
@@ -75,7 +74,7 @@ func (f *File) twoPhaseXattrRead(ctx context.Context, name string) ([]byte, erro
 		f.conn.fids.release(newFid)
 		return nil, err
 	}
-	// Pitfall 2: reject oversized server declarations before allocation.
+	// Reject oversized server declarations before allocation.
 	if size > uint64(proto.MaxDataSize) {
 		_ = r.Clunk(ctx, newFid)
 		f.conn.fids.release(newFid)
@@ -98,7 +97,7 @@ func (f *File) twoPhaseXattrRead(ctx context.Context, name string) ([]byte, erro
 	chunk := f.xattrChunk()
 	if chunk == 0 {
 		// Conn msize is at or below the per-message framing floor
-		// (only reachable against a pathological mock server — Dial
+		// (only reachable against a pathological mock server -- Dial
 		// enforces minMsize=256). No forward progress is possible.
 		_ = r.Clunk(ctx, newFid)
 		f.conn.fids.release(newFid)
@@ -119,7 +118,7 @@ func (f *File) twoPhaseXattrRead(ctx context.Context, name string) ([]byte, erro
 		}
 		if len(data) == 0 {
 			// Server promised `size` bytes via Rxattrwalk but returned
-			// zero at offset off — short read, surface as an error.
+			// zero at offset off -- short read, surface as an error.
 			_ = r.Clunk(ctx, newFid)
 			f.conn.fids.release(newFid)
 			return nil, fmt.Errorf("client: xattr short read at offset %d/%d", off, size)
@@ -160,7 +159,7 @@ func (f *File) twoPhaseXattrRead(ctx context.Context, name string) ([]byte, erro
 //	}
 //
 // The server-declared size is clamped against [proto.MaxDataSize]
-// (16 MiB) before the client allocates its receive buffer — a
+// (16 MiB) before the client allocates its receive buffer -- a
 // misbehaving server cannot OOM this call by declaring an oversized
 // value.
 //
@@ -176,8 +175,8 @@ func (f *File) XattrGet(ctx context.Context, name string) ([]byte, error) {
 // if it does not. The exact flag semantics are enforced by the server
 // implementation of [server.NodeXattrSetter].
 //
-// Pitfall 1: the 9P2000.L Txattrcreate protocol MUTATES the supplied
-// fid into xattr-write state; after the subsequent Tclunk commits the
+// Note: the 9P2000.L Txattrcreate protocol MUTATES the supplied fid
+// into xattr-write state; after the subsequent Tclunk commits the
 // value, that fid is invalidated. To keep the caller's *File f valid
 // for reads/writes after XattrSet returns, this method clones f first
 // (File.Clone allocates a fresh fid at the same server-side node) and
@@ -196,13 +195,13 @@ func (f *File) XattrSet(ctx context.Context, name string, data []byte, flags uin
 	if err := f.conn.requireDialect(protocolL, "XattrSet"); err != nil {
 		return err
 	}
-	// Pitfall 1: operate on a clone so f.fid is untouched by the
+	// Operate on a clone so f.fid is untouched by the
 	// xattrcreate-write-clunk sequence.
 	clone, err := f.Clone(ctx)
 	if err != nil {
 		return err
 	}
-	// Do NOT `defer clone.Close()` — the final Raw.Clunk below is the
+	// Do NOT `defer clone.Close()` -- the final Raw.Clunk below is the
 	// xattr-commit gesture; clone.Close would double-clunk. Explicit
 	// fid release after the commit keeps the ownership model obvious.
 
@@ -224,7 +223,7 @@ func (f *File) XattrSet(ctx context.Context, name string, data []byte, flags uin
 	chunk := f.xattrChunk()
 	if chunk == 0 && size > 0 {
 		// Conn msize is at or below the per-message framing floor
-		// (only reachable against a pathological mock server — Dial
+		// (only reachable against a pathological mock server -- Dial
 		// enforces minMsize=256). No forward progress is possible.
 		_ = r.Clunk(ctx, clone.fid)
 		f.conn.fids.release(clone.fid)
@@ -238,7 +237,7 @@ func (f *File) XattrSet(ctx context.Context, name string, data []byte, flags uin
 		if err != nil {
 			// Must still Clunk to release server state; the server
 			// validates written==declared and returns EIO on mismatch,
-			// which is expected here — swallow that secondary error.
+			// which is expected here -- swallow that secondary error.
 			_ = r.Clunk(ctx, clone.fid)
 			f.conn.fids.release(clone.fid)
 			return err
@@ -263,7 +262,7 @@ func (f *File) XattrSet(ctx context.Context, name string, data []byte, flags uin
 
 // XattrList returns the names of all extended attributes set on this
 // file. Composes XattrGet with name="" per the 9P2000.L list-all
-// convention — the server returns attribute names NUL-separated with
+// convention -- the server returns attribute names NUL-separated with
 // a trailing NUL byte after the last name.
 //
 // Returns a non-nil empty slice (not nil) when no attributes exist,
@@ -271,7 +270,7 @@ func (f *File) XattrSet(ctx context.Context, name string, data []byte, flags uin
 // before ranging.
 //
 // The trailing NUL and any internal empty entries (a defensive guard
-// against malformed server responses — no legitimate xattr name is
+// against malformed server responses -- no legitimate xattr name is
 // the empty string) are filtered out.
 //
 // Requires a 9P2000.L-negotiated Conn.
@@ -297,7 +296,7 @@ func (f *File) XattrList(ctx context.Context) ([]string, error) {
 
 // XattrRemove deletes the extended attribute name. Composes XattrSet
 // with a zero-length value and flags=0 per the 9P2000.L wire
-// convention — the server's xattr-commit path
+// convention -- the server's xattr-commit path
 // (server/dispatch.go:254) treats size=0 at commit time as a request
 // to invoke [server.NodeXattrRemover].
 //

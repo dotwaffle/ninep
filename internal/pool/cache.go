@@ -1,7 +1,7 @@
 // Package pool provides a generic bounded-channel cache for reusable message
 // structs on the 9P server and client hot paths. It replaces the seven
 // per-type chan caches that previously lived at package scope in
-// ninep/server/msgcache.go (v1.1.15 — v1.2.x).
+// ninep/server/msgcache.go (v1.1.15 -- v1.2.x).
 //
 // # Design
 //
@@ -49,7 +49,7 @@ const Cap = 3
 // proto.Message) cannot be expressed as a single type parameter without the
 // `[T any, PT interface{ *T; proto.Message }]` two-param pattern, which
 // bloats every call site. Callers enforce the relationship at the type
-// switch in server/msgcache_pools.go:putCachedMsg (and Phase 19's
+// switch in server/msgcache_pools.go:putCachedMsg (and the client-side
 // putCachedRMsg).
 //
 // Channel operations are atomic; Cache is safe for concurrent Get/Put from
@@ -75,7 +75,7 @@ func NewCache[T any]() *Cache[T] {
 // Zero-reset: *m = *new(T) sets every field to its zero value before
 // returning, matching the pre-extraction per-type `*m = proto.Twrite{}`
 // pattern. Callers that need belt-and-braces clearing of aliasing fields
-// must still clear them on the Put side — see the package-level comment.
+// must still clear them on the Put side -- see the package-level comment.
 func (c *Cache[T]) Get() *T {
 	select {
 	case m := <-c.ch:

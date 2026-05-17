@@ -64,7 +64,7 @@ func TestWithClientOpts_Appends(t *testing.T) {
 }
 
 // TestWithMsize_SetsBoth verifies that WithMsize(n) populates BOTH
-// serverMsize and clientMsize (the D-08 "sets both" contract).
+// serverMsize and clientMsize ("sets both" contract).
 func TestWithMsize_SetsBoth(t *testing.T) {
 	t.Parallel()
 	cfg := newConfig()
@@ -113,13 +113,13 @@ func TestWithCtx_Sets(t *testing.T) {
 func TestWithCtx_NilCoerced(t *testing.T) {
 	t.Parallel()
 	cfg := newConfig()
-	// Intentional nil ctx — exercises the defensive coercion path.
+	// Intentional nil ctx -- exercises the defensive coercion path.
 	//nolint:staticcheck // SA1012: testing defensive nil handling.
 	WithCtx(nil)(cfg)
 	if cfg.parentCtx == nil {
 		t.Fatal("parentCtx is nil after WithCtx(nil); want context.Background()")
 	}
-	// Any no-deadline ctx is acceptable — we just require non-nil so the
+	// Any no-deadline ctx is acceptable -- we just require non-nil so the
 	// downstream context.WithTimeout derivation does not panic.
 	if _, ok := cfg.parentCtx.Deadline(); ok {
 		t.Fatal("parentCtx has a deadline; WithCtx(nil) should yield a background-equivalent ctx")
@@ -152,7 +152,7 @@ func TestNewConfig_Defaults(t *testing.T) {
 	}
 }
 
-// TestDefaultMsize_Reasonable pins defaultMsize at 65536 — mirrors the
+// TestDefaultMsize_Reasonable pins defaultMsize at 65536 -- mirrors the
 // precedent set by client/pair_test.go. A change to this sentinel is a
 // deliberate policy shift; this test forces the author to acknowledge it.
 func TestDefaultMsize_Reasonable(t *testing.T) {
@@ -223,7 +223,7 @@ func TestPair_HonorsWithMsize(t *testing.T) {
 //
 // We cancel the parent AFTER Dial has succeeded (cancelling before would
 // fail Dial immediately and never exercise the steady-state ctx path).
-// After cancel, subsequent client ops must fail — the server ctx is done
+// After cancel, subsequent client ops must fail -- the server ctx is done
 // and the Conn has been closed/aborted by the cleanup path on the next
 // op. We verify the Conn surfaces some error rather than hanging.
 func TestPair_HonorsWithCtx(t *testing.T) {
@@ -243,20 +243,20 @@ func TestPair_HonorsWithCtx(t *testing.T) {
 
 	// After parent cancel, the server's 30s deadline is superseded by
 	// the parent-derived cancellation. New requests must unblock within
-	// a bounded window rather than hang — we give the server up to 2 s
+	// a bounded window rather than hang -- we give the server up to 2 s
 	// to tear down.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		ctx, opCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer opCancel()
-		// Any op — Attach works. We don't care about the specific
+		// Any op -- Attach works. We don't care about the specific
 		// error, just that one is produced.
 		_, _ = cli.Attach(ctx, "tester", "")
 	}()
 	select {
 	case <-done:
-		// OK — either returned an error or succeeded before teardown.
+		// OK -- either returned an error or succeeded before teardown.
 	case <-time.After(3 * time.Second):
 		t.Fatal("client op hung after parent ctx cancel; server goroutine may have leaked")
 	}
@@ -338,7 +338,7 @@ func TestPair_ServerOptsPassthrough(t *testing.T) {
 	if err == nil {
 		t.Fatal("second Attach succeeded with MaxFids=1; expected failure")
 	}
-	// Tolerate any error — the point is that the server-side cap fired,
+	// Tolerate any error -- the point is that the server-side cap fired,
 	// which proves the option threaded through. Nested wrappers may
 	// change the surfaced error over time; we assert only "non-nil".
 	_ = errors.Unwrap
@@ -361,9 +361,8 @@ func TestPair_DefaultMsizeApplies(t *testing.T) {
 // real unix-domain socket and verifies the full Attach + OpenFile +
 // ReadAll round-trip returns exactly the file contents.
 //
-// This is a SMOKE test — it proves UnixPair boots, Dial succeeds over
-// unix, and the round-trip works end-to-end. It is NOT a benchmark;
-// Wave 2 (Plan 24-02) owns the perf numbers.
+// This is a SMOKE test - it proves UnixPair boots, Dial succeeds over
+// unix, and the round-trip works end-to-end. It is NOT a benchmark.
 //
 // Skipped on Windows via the runtime.GOOS check inside UnixPair.
 func TestUnixPair_Boots(t *testing.T) {

@@ -8,18 +8,18 @@ import (
 
 // tagAllocator hands out proto.Tag values from a bounded free-list.
 //
-// Design (locked in 19-CONTEXT.md D-01..D-03):
+// Design:
 //   - Free-list chan proto.Tag, capacity = maxInflight.
-//   - Seeded at construction with tags [1..maxInflight]. Tag 0 is excluded
-//     by convention (matches server/bench_test.go and Linux v9fs client;
-//     see 19-RESEARCH.md Pitfall 6). NoTag (0xFFFF) is reserved for Tversion
-//     and likewise excluded — the WithMaxInflight clamp to 65534 ensures the
-//     seed loop can never reach it.
-//   - Natural back-pressure (D-02): when saturated, acquire blocks until a
+//   - Seeded at construction with tags [1..maxInflight]. Tag 0 is
+//     excluded by convention (matches server/bench_test.go and Linux
+//     v9fs client). NoTag (0xFFFF) is reserved for Tversion and
+//     likewise excluded - the WithMaxInflight clamp to 65534 ensures
+//     the seed loop can never reach it.
+//   - Natural back-pressure: when saturated, acquire blocks until a
 //     tag is released. No separate semaphore.
-//   - Not an atomic-counter + bitmap (D-03): scan cost is visible under
-//     contention; chan Get/Put are O(1) and serialize at the bottleneck
-//     already imposed by the goroutine scheduler.
+//   - Not an atomic-counter + bitmap: scan cost is visible under
+//     contention; chan Get/Put are O(1) and serialize at the
+//     bottleneck already imposed by the goroutine scheduler.
 type tagAllocator struct {
 	free chan proto.Tag
 }
@@ -39,7 +39,7 @@ func newTagAllocator(n int) *tagAllocator {
 // cancelled, or stop is closed. The returned tag is non-zero and not
 // proto.NoTag; callers must release it exactly once.
 //
-// Ordering of the select branches is not load-bearing — Go's select is
+// Ordering of the select branches is not load-bearing - Go's select is
 // randomized when multiple cases are ready, which is the correct behavior:
 // a pending shutdown wins against a healthy pool only eventually, but the
 // pool drains fairly in the common case.
@@ -58,7 +58,7 @@ func (ta *tagAllocator) acquire(ctx context.Context, stop <-chan struct{}) (prot
 // capacity = maxInflight and only the goroutine that acquired `tag` may
 // call release, so the send never blocks in correct usage.
 //
-// A full channel here implies a double-release — a caller bug that -race
+// A full channel here implies a double-release - a caller bug that -race
 // stress tests (TestTagAllocator_Stress_TagReuse) surface. Dropping the
 // extra release is the safest local response; logging would require a
 // logger dependency that tags.go intentionally avoids.

@@ -35,10 +35,9 @@ func TestRaw_ReturnsNonNil(t *testing.T) {
 func TestRaw_Parity_Attach(t *testing.T) {
 	t.Parallel()
 
-	// Wire-level AttachFid baseline (reached via Raw.Attach as of
-	// Plan 20-03; the former Conn.Attach signature migrated to
-	// Raw.Attach when the high-level *File-returning Conn.Attach was
-	// introduced).
+	// Wire-level AttachFid baseline (reached via Raw.Attach; the
+	// former Conn.Attach signature migrated to Raw.Attach when the
+	// high-level *File-returning Conn.Attach was introduced).
 	cliA, cleanupA := newClientServerPair(t, buildTestRoot(t))
 	defer cleanupA()
 	ctxA, cancelA := rawTestCtx(t)
@@ -257,7 +256,7 @@ func TestRaw_AcquireFid_HandsOutUnique(t *testing.T) {
 }
 
 // TestRaw_AcquireReleaseCycle: after ReleaseFid(f), the next AcquireFid
-// returns f (LIFO reuse — fidAllocator pops from the back of the reuse
+// returns f (LIFO reuse -- fidAllocator pops from the back of the reuse
 // slice per 20-01 design).
 func TestRaw_AcquireReleaseCycle(t *testing.T) {
 	t.Parallel()

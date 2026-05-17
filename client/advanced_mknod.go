@@ -8,12 +8,12 @@ import (
 )
 
 // Mknod creates a device/fifo/special-file node named name under the
-// directory at parentPath. Mode carries the POSIX mode bits — the
+// directory at parentPath. Mode carries the POSIX mode bits -- the
 // high-order bits select the node type (S_IFIFO/S_IFCHR/S_IFBLK/S_IFSOCK
 // etc.), the low-order bits are the permission bits. major/minor
 // identify the device; gid sets the owning group.
 //
-// The returned [*File] is a stat-only handle bound to the new node —
+// The returned [*File] is a stat-only handle bound to the new node --
 // 9P has no "open a device node" mechanism at this layer; the fid is
 // useful for [File.Close] (release the fid) and capability-level
 // operations that do not require Tlopen/Topen.
@@ -27,7 +27,7 @@ import (
 // Mknod.
 //
 // Fid lifecycle: acquires up to two fids (parent dir + newly-created
-// node). Both are clunked and released on every exit path — the parent
+// node). Both are clunked and released on every exit path -- the parent
 // dirFid at method exit, the newFid only on post-Tmknod walk failure.
 // On success the newFid lives on as the returned *File.fid until
 // [File.Close].
@@ -60,7 +60,7 @@ func (c *Conn) Mknod(ctx context.Context, parentPath, name string, mode proto.Fi
 		return nil, fmt.Errorf("client: partial walk to parent (%d of %d steps)", len(qids), len(parents))
 	}
 
-	// Issue Tmknod. mode is passed through as a uint32 — the wire layer
+	// Issue Tmknod. mode is passed through as a uint32 -- the wire layer
 	// accepts any FileMode value; server-side interpretation determines
 	// node type (FIFO/char-dev/block-dev/socket) from the S_IF* bits.
 	qid, err := c.Raw().Tmknod(ctx, dirFid, name, uint32(mode), major, minor, gid)

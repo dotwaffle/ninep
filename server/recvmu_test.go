@@ -207,7 +207,7 @@ func TestRecvMuWorkerLifecycle(t *testing.T) {
 	})
 
 	// This subtest does NOT call t.Parallel() because runtime.NumGoroutine()
-	// is a process-global count — parallel sibling (sub)tests introduce noise
+	// is a process-global count -- parallel sibling (sub)tests introduce noise
 	// unrelated to this test's server-conn lifecycle. Serial execution within
 	// the parent reduces (but does not eliminate) that noise: the parent
 	// TestRecvMuWorkerLifecycle IS t.Parallel, so other top-level parallel

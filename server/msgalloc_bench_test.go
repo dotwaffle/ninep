@@ -10,7 +10,7 @@ import (
 // treadPool backs the "approach=pooled" variants. Declared in the test
 // file because production code does not pool message structs (pooling
 // caused a ~15% regression at the server level due to cross-P sync.Pool
-// overhead — see BenchmarkRead commentary).
+// overhead -- see BenchmarkRead commentary).
 var treadPool = sync.Pool{
 	New: func() any { return &proto.Tread{} },
 }
@@ -28,7 +28,7 @@ var treadPool = sync.Pool{
 //
 // All three do the same work: decode a Tread body from a pre-encoded byte
 // slice and assert one of its fields. This keeps the comparison apples-to-
-// apples — only the allocation strategy differs.
+// apples -- only the allocation strategy differs.
 
 // a minimal 11-byte Tread body: fid[4] + offset[8] + count[4] = 16 actually
 // but including msg decode path specifics... just make a valid body.
@@ -72,7 +72,7 @@ func BenchmarkMessageAlloc(b *testing.B) {
 	b.Run("approach=value", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			// Stack-allocated value — no interface conversion.
+			// Stack-allocated value -- no interface conversion.
 			// This is what the middleware-contract change would enable:
 			// the dispatch path would pass concrete types rather than
 			// wrapping in proto.Message.

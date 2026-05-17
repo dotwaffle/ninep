@@ -56,21 +56,18 @@ func FidReuseLen(c *Conn) int {
 }
 
 // SetCachedSize is a test-only helper that pokes the cachedSize field
-// on a *File. Originally used by file_seek_test.go to exercise the
-// SeekEnd code path before Phase 21's File.Sync shipped; still useful
-// for tests that want to assert Sync's error path does NOT overwrite a
-// pre-existing cachedSize. Takes f.mu to match the locking discipline
-// of the I/O methods that read cachedSize.
+// on a *File. Useful for tests that want to assert Sync's error path
+// does NOT overwrite a pre-existing cachedSize. Takes f.mu to match
+// the locking discipline of the I/O methods that read cachedSize.
 func SetCachedSize(f *File, size int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.cachedSize = size
 }
 
-// CachedSizeOf exposes f.cachedSize for Phase 21 Sync tests that assert
-// the real wire-backed Sync populates cachedSize (vs the Phase 20 stub
-// that left it untouched). Takes f.mu to match the locking discipline
-// of SetCachedSize above.
+// CachedSizeOf exposes f.cachedSize for Sync tests that assert the
+// real wire-backed Sync populates cachedSize. Takes f.mu to match the
+// locking discipline of SetCachedSize above.
 func CachedSizeOf(f *File) int64 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -94,10 +91,9 @@ func NewFileForTest(c *Conn) *File {
 
 // NewFileWrappingFidForTest constructs a *File bound to an explicit,
 // caller-supplied live fid (i.e. one already bound server-side via
-// Attach/Walk/Lopen). Used by Plan 22-03 timeout tests to exercise
-// File.Read / File.ReadCtx against the flushMockServer harness from
-// Plan 22-02, which doesn't have OpenFile path semantics. Not part of
-// the public API surface.
+// Attach/Walk/Lopen). Used by timeout tests to exercise File.Read /
+// File.ReadCtx against the flushMockServer harness, which doesn't
+// have OpenFile path semantics. Not part of the public API surface.
 func NewFileWrappingFidForTest(c *Conn, fid proto.Fid, iounit uint32) *File {
 	return newFile(c, fid, proto.QID{}, iounit)
 }

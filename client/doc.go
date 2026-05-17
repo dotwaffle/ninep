@@ -15,14 +15,13 @@
 // # Authentication Scope
 //
 // This package supports [Tattach] with afid=NoFid only. The Tauth/afid
-// handshake is not implemented — the common case (Q, Linux v9fs default
-// trans=tcp) is no-auth, and every concrete consumer known at v1.3.0 falls in
-// that bucket. Future milestones may add Tauth if a concrete consumer requires
-// it.
+// handshake is not implemented - the common case (Linux v9fs default
+// trans=tcp) is no-auth. Future work may add Tauth if a concrete
+// consumer requires it.
 //
 // # Dialects: .L Primary, .u Best-Effort
 //
-// 9P2000.L is the primary dialect and has full feature parity — every
+// 9P2000.L is the primary dialect and has full feature parity -- every
 // operation in the client (attach, walk, open, read, write, clunk, flush) and
 // the advanced operations (symlinks, xattr, locks, statfs, rename) are
 // implemented for .L.
@@ -45,7 +44,7 @@
 // Override with [WithMsize]. The server's Rversion msize caps the proposal;
 // the negotiated msize is the minimum of the two.
 //
-// Note that the ninep server's default maximum msize is 4 MiB — the asymmetry
+// Note that the ninep server's default maximum msize is 4 MiB -- the asymmetry
 // is intentional. Server-to-server callers (e.g. ninep→ninep local) can bump
 // with [WithMsize] if profiling shows a win.
 //
@@ -59,14 +58,14 @@
 //	    // ...
 //	}
 //
-// Use proto.Errno constants rather than syscall.Errno for portability — the
+// Use proto.Errno constants rather than syscall.Errno for portability -- the
 // proto↔syscall bridge is platform-specific (see [Error.Is] godoc).
 //
 // # File Handle
 //
 // The [File] type is the primary high-level API for 9P file operations.
 // It implements [io.Reader], [io.Writer], [io.Closer], [io.Seeker],
-// [io.ReaderAt], and [io.WriterAt] — so any Go package that consumes
+// [io.ReaderAt], and [io.WriterAt] -- so any Go package that consumes
 // those interfaces (io.Copy, bufio, encoding/json, compress/gzip,
 // net/http Body) can read from and write to 9P files directly without
 // adapter code.
@@ -81,7 +80,7 @@
 // semantics is documented on File.Close).
 //
 // Fid lifecycle is managed implicitly. Callers never see proto.Fid
-// values on the high-level path — [Conn.Attach] allocates the root
+// values on the high-level path -- [Conn.Attach] allocates the root
 // fid, [Conn.OpenFile] allocates per-open fids, [File.Clone]
 // allocates clone fids, and [File.Close] releases them on clunk.
 //
@@ -108,15 +107,15 @@
 //
 // # Advanced Operations
 //
-// Phase 21 adds the 9P operations beyond read/write/walk/open/clunk:
-// symbolic links, extended attributes, POSIX locks, filesystem
-// statistics, and path manipulation (rename / remove / link / mknod /
-// setattr).
+// The package implements the 9P operations beyond
+// read/write/walk/open/clunk: symbolic links, extended attributes,
+// POSIX locks, filesystem statistics, and path manipulation (rename /
+// remove / link / mknod / setattr).
 //
 // ## Symbolic Links
 //
-//   - [Conn.Symlink] — create a symlink at a path. (.L-only)
-//   - [File.Readlink] — read a symlink's target. (.L-only)
+//   - [Conn.Symlink] -- create a symlink at a path. (.L-only)
+//   - [File.Readlink] -- read a symlink's target. (.L-only)
 //
 // ## Extended Attributes (.L-only)
 //
@@ -133,37 +132,37 @@
 //   - Blocking Lock uses exponential backoff (10ms → 500ms cap); tests
 //     can override via [WithLockPollSchedule].
 //   - Ctx cancellation unconditionally releases any granted lock via a
-//     background-ctx Tlock(UNLCK) — belt-and-braces against the
+//     background-ctx Tlock(UNLCK) -- belt-and-braces against the
 //     cancel-during-grant race.
 //
 // ## Filesystem Statistics
 //
-//   - [File.Stat] — dialect-neutral metadata (p9u.Stat on both .L and
+//   - [File.Stat] -- dialect-neutral metadata (p9u.Stat on both .L and
 //     .u). On .L, internally uses Tgetattr; on .u, uses Tstat.
-//   - [File.Getattr] — rich .L-specific [proto.Attr] (includes NLink,
+//   - [File.Getattr] -- rich .L-specific [proto.Attr] (includes NLink,
 //     Blocks, BTime, Gen, DataVersion dropped by Stat). (.L-only)
-//   - [File.Setattr] — write metadata (chmod/chown/truncate via
+//   - [File.Setattr] -- write metadata (chmod/chown/truncate via
 //     [proto.SetAttr].Valid bitmask). (.L-only)
-//   - [File.Statfs] — filesystem-level stats (by value, not pointer).
+//   - [File.Statfs] -- filesystem-level stats (by value, not pointer).
 //     (.L-only)
-//   - [File.Sync] — refresh the File's cachedSize from the server
+//   - [File.Sync] -- refresh the File's cachedSize from the server
 //     (Tgetattr on .L, Tstat on .u); backs Seek(SeekEnd) after
 //     concurrent writes.
 //
 // ## Path Manipulation
 //
-//   - [Conn.Rename] — rename across directories. (.L uses Trenameat;
+//   - [Conn.Rename] -- rename across directories. (.L uses Trenameat;
 //     .u returns [ErrNotSupported].)
-//   - [Conn.Remove] — remove file or directory (auto-detects QTDIR for
+//   - [Conn.Remove] -- remove file or directory (auto-detects QTDIR for
 //     Tunlinkat's AT_REMOVEDIR flag on .L). (.L-only)
-//   - [Conn.Link] — create a hard link. (.L-only)
-//   - [Conn.Mknod] — create a device / fifo / socket node. (.L-only)
+//   - [Conn.Link] -- create a hard link. (.L-only)
+//   - [Conn.Mknod] -- create a device / fifo / socket node. (.L-only)
 //
 // ## Dialect Compatibility
 //
 // Methods marked .L-only return a wrapped [ErrNotSupported] on a
 // 9P2000.u-negotiated Conn. Use [errors.Is] to discriminate. The
-// single .u-only Raw primitive is [Raw.Tstat] — [File.Stat]
+// single .u-only Raw primitive is [Raw.Tstat] -- [File.Stat]
 // dispatches on dialect so callers never see this asymmetry.
 //
 // ## Not Supported
@@ -172,7 +171,7 @@
 // passes NoFid; authentication must be handled at the transport layer
 // (TLS, SSH). See the "Authentication Scope" section above.
 //
-// Chmod / Chown / Truncate convenience helpers are deferred — callers
+// Chmod / Chown / Truncate convenience helpers are deferred -- callers
 // invoke [File.Setattr] with the appropriate [proto.SetAttr].Valid
 // bitmask. A future ergonomic pass may add wrappers if consumer demand
 // surfaces.
@@ -184,7 +183,7 @@
 // # Raw Sub-Surface
 //
 // The [Raw] type returned by [Conn.Raw] exposes direct 9P wire
-// operations with explicit fid arguments — [Raw.Read], [Raw.Write],
+// operations with explicit fid arguments -- [Raw.Read], [Raw.Write],
 // [Raw.Walk], [Raw.Clunk], [Raw.Flush], [Raw.Lopen], [Raw.Lcreate],
 // [Raw.Open], [Raw.Create], [Raw.Attach]. Plus [Raw.AcquireFid] and
 // [Raw.ReleaseFid] integrate with the Conn's fid allocator for
@@ -194,18 +193,17 @@
 // T-messages manually, track fids in a parallel data structure, or
 // port an existing 9P client that expects wire-level primitives. The
 // high-level [File] surface handles offset tracking, fid lifecycle,
-// and io.* interface conformance — use it for typical read/write
+// and io.* interface conformance -- use it for typical read/write
 // workloads and fall through to Raw only when the high-level shape
 // does not fit.
 //
-// # SEED-001 Resolution
+// # API Shape
 //
-// The v1.3.0 client API design resolved SEED-001 (see
-// .planning/seeds/) as a sync-primary + async-escape shape. [File] is
-// a synchronous, io.*-composable handle; [Raw] is the async/pipeline-
+// The client API is a sync-primary + async-escape shape. [File] is a
+// synchronous, io.*-composable handle; [Raw] is the async/pipeline-
 // friendly escape hatch. This departs from hugelgupf/p9 (ReadAt /
 // WriteAt only, no io.Reader) and docker/go-p9p (raw T/R only, no
-// File) — the motivation is composition with the Go standard I/O
+// File) - the motivation is composition with the Go standard I/O
 // ecosystem. Callers that need pipelined writes (e.g. 128 KiB chunks
 // issued in parallel) use [Raw] over the goroutine-safe Conn.
 package client

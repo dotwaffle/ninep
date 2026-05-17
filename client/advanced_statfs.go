@@ -7,10 +7,9 @@ import (
 )
 
 // Statfs queries filesystem-level statistics for the file tree
-// containing this [File]'s fid. The return is BY VALUE — a successful
+// containing this [File]'s fid. The return is BY VALUE - a successful
 // Statfs always returns a populated [proto.FSStat], so a pointer return
-// shape (nil possible) would be misleading (Pitfall 8 in
-// 21-RESEARCH.md).
+// shape (nil possible) would be misleading.
 //
 // Requires a 9P2000.L-negotiated Conn; returns a wrapped
 // [ErrNotSupported] on a .u Conn. The gate fires before any wire op so

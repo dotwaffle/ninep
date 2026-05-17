@@ -10,10 +10,10 @@ import (
 )
 
 // attrToStat converts a 9P2000.L [proto.Attr] into a 9P2000.u-compatible
-// [p9u.Stat] for [File.Stat]'s dialect-neutral return shape (Pitfall 4
-// Option A in 21-RESEARCH.md). Fields present only in .L — NLink, Blocks,
-// BTime, Gen, DataVersion — are discarded; callers needing them invoke
-// [File.Getattr] on a .L Conn directly.
+// [p9u.Stat] for [File.Stat]'s dialect-neutral return shape. Fields
+// present only in .L (NLink, Blocks, BTime, Gen, DataVersion) are
+// discarded; callers needing them invoke [File.Getattr] on a .L Conn
+// directly.
 //
 // UID and GID are stored as strings in 9P2000.u; on the .L side they
 // are numeric uint32. attrToStat stringifies them as decimal, matching
@@ -22,11 +22,11 @@ import (
 // user ID" string) has no .L counterpart and is left empty. Extension
 // is left empty for the same reason.
 //
-// Size (the 2-byte wire stat-length prefix) is zero — the encoder
+// Size (the 2-byte wire stat-length prefix) is zero -- the encoder
 // rewrites it from EncodedSize() at emit time. Similarly Type/Dev have
 // no .L source and map to zero.
 //
-// This is a pure helper — no I/O, no allocations beyond the two UID/GID
+// This is a pure helper -- no I/O, no allocations beyond the two UID/GID
 // string conversions. Safe to call on the hot path.
 func attrToStat(a proto.Attr) p9u.Stat {
 	return p9u.Stat{
@@ -54,13 +54,12 @@ func attrToStat(a proto.Attr) p9u.Stat {
 // converts the result via [attrToStat]. On 9P2000.u connections, Stat
 // issues Tstat and returns the resulting stat directly.
 //
-// The return type is [p9u.Stat] on both dialects — a dialect-neutral
-// shape per D-16/D-18 in 21-CONTEXT.md (Pitfall 4 Option A). Fields
-// present only in .L's richer [proto.Attr] (NLink, Blocks, BTime,
-// Gen, DataVersion) are discarded; callers that need them call
+// The return type is [p9u.Stat] on both dialects - a dialect-neutral
+// shape. Fields present only in .L's richer [proto.Attr] (NLink, Blocks,
+// BTime, Gen, DataVersion) are discarded; callers that need them call
 // [File.Getattr] directly on a .L Conn.
 //
-// Stat does NOT mutate f.cachedSize — that side effect lives in
+// Stat does NOT mutate f.cachedSize -- that side effect lives in
 // [File.Sync] so [File.Seek] with [io.SeekEnd] has a predictable
 // refresh primitive.
 //
@@ -88,7 +87,7 @@ func (f *File) Stat(ctx context.Context) (p9u.Stat, error) {
 // [proto.Attr] struct. Exposed for callers that need fields attrToStat
 // discards: NLink, Blocks, BTime, Gen, DataVersion.
 //
-// Common masks: [proto.AttrBasic] (mode through blocks — the
+// Common masks: [proto.AttrBasic] (mode through blocks -- the
 // recommended default), [proto.AttrAll] (every defined attribute), or a
 // narrower bitmask when the caller only needs one field
 // (e.g. AttrSize for a size refresh).

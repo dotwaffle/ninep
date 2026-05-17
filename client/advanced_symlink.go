@@ -8,11 +8,10 @@ import (
 )
 
 // Symlink creates a symbolic link at linkPath with the given target string
-// and returns a stat-only [*File] handle bound to the new symlink. Per D-01
-// (21-CONTEXT.md), symlink creation is path-rooted, so the method lives on
-// [*Conn] rather than [*File]. The returned handle is NOT opened — 9P has
-// no "open a symlink" op; the fid is useful for [File.Readlink] and
-// [File.Close] only.
+// and returns a stat-only [*File] handle bound to the new symlink. Symlink
+// creation is path-rooted, so the method lives on [*Conn] rather than
+// [*File]. The returned handle is NOT opened - 9P has no "open a symlink"
+// op; the fid is useful for [File.Readlink] and [File.Close] only.
 //
 // The linkPath must be non-root. The parent directories along linkPath
 // must exist (this method does not recursively create parents); a missing
@@ -25,7 +24,7 @@ import (
 // required).
 //
 // Requires a 9P2000.L-negotiated Conn; returns a wrapped [ErrNotSupported]
-// on .u (9P2000.u has no Tsymlink wire op — .u callers must use Tcreate
+// on .u (9P2000.u has no Tsymlink wire op -- .u callers must use Tcreate
 // with the DMSYMLINK bit set and the target in the create extension field,
 // which is out of scope for this high-level surface).
 //
@@ -58,7 +57,7 @@ func (c *Conn) Symlink(ctx context.Context, linkPath, target string) (*File, err
 		return nil, err
 	}
 	if len(parents) > 0 && len(qids) != len(parents) {
-		// Partial walk — dirFid is NOT server-bound, so no Clunk.
+		// Partial walk -- dirFid is NOT server-bound, so no Clunk.
 		c.fids.release(dirFid)
 		return nil, fmt.Errorf("client: partial walk to parent (%d of %d steps)", len(qids), len(parents))
 	}
@@ -74,7 +73,7 @@ func (c *Conn) Symlink(ctx context.Context, linkPath, target string) (*File, err
 
 	// Walk from dirFid to the newly-created symlink via a fresh fid so
 	// the caller gets a *File handle. dirFid is clunked regardless of
-	// the post-Tsymlink walk outcome — the symlink already exists on the
+	// the post-Tsymlink walk outcome -- the symlink already exists on the
 	// server either way.
 	symFid, err := c.fids.acquire()
 	if err != nil {
@@ -105,9 +104,9 @@ func (c *Conn) Symlink(ctx context.Context, linkPath, target string) (*File, err
 // carry symlink targets, which is out of scope for this high-level
 // surface).
 //
-// Rename-while-open preservation (21-RESEARCH.md Pitfall 5) applies: if
-// the underlying symlink is renamed concurrently, the fid continues to
-// point at the same inode and Readlink returns the same target.
+// Rename-while-open preservation applies: if the underlying symlink is
+// renamed concurrently, the fid continues to point at the same inode and
+// Readlink returns the same target.
 func (f *File) Readlink(ctx context.Context) (string, error) {
 	if err := f.conn.requireDialect(protocolL, "Readlink"); err != nil {
 		return "", err

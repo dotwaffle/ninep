@@ -728,7 +728,7 @@ func TestBuilderFreshNodes(t *testing.T) {
 		AddFile("file1", data).
 		AddFile("file2", data)
 
-	// Each AddFile creates a distinct node (Pitfall 8).
+	// Each AddFile creates a distinct node.
 	child1, err := root.Lookup(t.Context(), "file1")
 	if err != nil {
 		t.Fatalf("Lookup file1: %v", err)

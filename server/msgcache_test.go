@@ -4,20 +4,21 @@
 // message type cached in msgcache_pools.go (the seven pool.Cache[T]
 // instances backed by the generic primitive in internal/pool/cache.go).
 //
-// Why this test exists (Phase 13, D-06 / D-07):
+// Why this test exists:
 //
-//   - D-06: lock a structural guardrail that every cached struct, once
-//     returned to its bounded-chan cache and re-borrowed by a later decode,
-//     does not leak prior-decode slice/string data into the new decode's
-//     fields.
-//   - D-07: the comment in msgcache_pools.go's putCachedMsg (Twalk case)
-//     claims "Names is overwritten via make in DecodeFrom so no zeroing
-//     needed." This test turns that claim into a CI-enforced contract by
-//     asserting, via unsafe.SliceData, that the Twalk.Names backing array
-//     is a fresh allocation on every decode. If a future edit replaces
-//     `m.Names = make(...)` with `m.Names = append(m.Names[:0], ...)` —
-//     which would alias across reuses — the backing-array identity check
-//     catches the regression.
+//   - Lock a structural guardrail that every cached struct, once
+//     returned to its bounded-chan cache and re-borrowed by a later
+//     decode, does not leak prior-decode slice/string data into the
+//     new decode's fields.
+//   - The comment in msgcache_pools.go's putCachedMsg (Twalk case)
+//     claims "Names is overwritten via make in DecodeFrom so no
+//     zeroing needed." This test turns that claim into a CI-enforced
+//     contract by asserting, via unsafe.SliceData, that the
+//     Twalk.Names backing array is a fresh allocation on every decode.
+//     If a future edit replaces `m.Names = make(...)` with
+//     `m.Names = append(m.Names[:0], ...)` - which would alias across
+//     reuses - the backing-array identity check catches the
+//     regression.
 //
 // unsafe.SliceData is the stdlib replacement for the deprecated
 // reflect.SliceHeader (available since Go 1.20; this module requires
@@ -28,8 +29,7 @@
 // helpers). The cache instances in msgcache_pools.go are package-global
 // state; running these in parallel would race with each other and with
 // any other server test that touches newMessage / {t*}Cache.Get() /
-// putCachedMsg. Correctness trumps speed here
-// (CLAUDE.md §Testing, 13-PATTERNS.md §subtest-parallel discipline).
+// putCachedMsg. Correctness trumps speed here.
 package server
 
 import (
@@ -42,7 +42,7 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9l"
 )
 
-// encodeBody encodes msg via p9l.Encode and returns only the message body —
+// encodeBody encodes msg via p9l.Encode and returns only the message body --
 // the 7-byte wire header (size[4] + type[1] + tag[2]) is stripped so the
 // returned bytes feed directly into a DecodeFrom call without needing to
 // reconstruct a LimitReader around the framing layer.
@@ -69,13 +69,13 @@ func decodeBody(tb testing.TB, dst proto.Message, wireBody []byte) {
 	}
 }
 
-// TestCachedMsgReuseDoesNotAliasFields is the table-driven guardrail for
-// every currently-cached message type (see msgcache_pools.go). Each
-// subtest exercises the full decode → putCachedMsg → {t*}Cache.Get()
-// → decode cycle and asserts that the second decode's fields reflect
-// only the second payload.
+// TestCachedMsgReuseDoesNotAliasFields is the table-driven guardrail
+// for every currently-cached message type (see msgcache_pools.go).
+// Each subtest exercises the full decode -> putCachedMsg ->
+// {t*}Cache.Get() -> decode cycle and asserts that the second
+// decode's fields reflect only the second payload.
 //
-// Intentionally not parallel — see the package-level comment above.
+// Intentionally not parallel - see the package-level comment above.
 func TestCachedMsgReuseDoesNotAliasFields(t *testing.T) {
 	cases := []struct {
 		name string
@@ -101,11 +101,10 @@ func TestCachedMsgReuseDoesNotAliasFields(t *testing.T) {
 	}
 }
 
-// TestTwalkReuseDoesNotAliasStrings is the handoff-named entry point
-// (ninep-handoff 02-msg-struct-chan-cache.md names this sketch explicitly).
-// It delegates to the table-driven cover so that
-// `go test -run TestTwalkReuseDoesNotAliasStrings` is a valid invocation
-// per the ROADMAP Phase 13 success-criterion text.
+// TestTwalkReuseDoesNotAliasStrings is a named entry point that
+// delegates to the table-driven cover so that
+// `go test -run TestTwalkReuseDoesNotAliasStrings` is a valid
+// invocation.
 func TestTwalkReuseDoesNotAliasStrings(t *testing.T) {
 	testTwalkAliasing(t)
 }
@@ -113,12 +112,12 @@ func TestTwalkReuseDoesNotAliasStrings(t *testing.T) {
 // testTwalkAliasing is the critical case: Twalk.Names is a []string field
 // whose claim in msgcache_pools.go putCachedMsg (Twalk case) is
 // "overwritten via make in DecodeFrom."
-// The backing-array pointer check (via unsafe.SliceData) turns that claim
-// into a test contract — if DecodeFrom ever regresses to
-// append(m.Names[:0], ...) semantics, the pointer would match and this
-// subtest would fail.
+// The backing-array pointer check (via unsafe.SliceData) turns that
+// claim into a test contract - if DecodeFrom ever regresses to
+// append(m.Names[:0], ...) semantics, the pointer would match and
+// this subtest would fail.
 func testTwalkAliasing(t *testing.T) {
-	// Step 1: first decode — 3-element Names slice.
+	// Step 1: first decode - 3-element Names slice.
 	m1 := twalkCache.Get()
 	body1 := encodeBody(t, &proto.Twalk{
 		Fid:    1,
@@ -133,8 +132,8 @@ func testTwalkAliasing(t *testing.T) {
 
 	// Step 2: return to cache, re-borrow, decode a shorter Names slice.
 	// The re-borrow may hit the cached slot (same pointer) or may fall
-	// through to a fresh allocation; either is valid — the invariant is
-	// "no aliasing," not "must be the same pointer."
+	// through to a fresh allocation; either is valid - the invariant
+	// is "no aliasing," not "must be the same pointer."
 	putCachedMsg(m1)
 	m2 := twalkCache.Get()
 	t.Cleanup(func() { putCachedMsg(m2) })
@@ -154,7 +153,7 @@ func testTwalkAliasing(t *testing.T) {
 		t.Errorf("cache reuse leaked Fid/NewFid: got Fid=%d NewFid=%d, want Fid=3 NewFid=4", m2.Fid, m2.NewFid)
 	}
 
-	// Pointer identity check: fresh backing array (D-07 — the "make"
+	// Pointer identity check: fresh backing array (the "make"
 	// invariant locked into CI). If this ever fires, DecodeFrom has
 	// regressed to append-semantics and needs either reverting or a
 	// matching explicit zero-out in putCachedMsg.
@@ -166,7 +165,7 @@ func testTwalkAliasing(t *testing.T) {
 }
 
 // testTwriteAliasing verifies the Put-side nil-out in msgcache_pools.go
-// putCachedMsg (Twrite case) —
+// putCachedMsg (Twrite case) --
 // Twrite.Data aliases pooled bufpool memory on the live request path, so
 // leaving it non-nil in the cache would let the next borrower observe a
 // recycled bucket buffer on any decode error that aborts before the data
@@ -188,7 +187,7 @@ func testTwriteAliasing(t *testing.T) {
 		t.Fatalf("first decode: got Data len=%d, want 16", len(m1.Data))
 	}
 
-	// Step 2: Put — must nil Data per msgcache_pools.go putCachedMsg (Twrite case).
+	// Step 2: Put -- must nil Data per msgcache_pools.go putCachedMsg (Twrite case).
 	putCachedMsg(m1)
 	if m1.Data != nil {
 		t.Errorf("putCachedMsg(*Twrite) did not nil Data: len=%d, cap=%d", len(m1.Data), cap(m1.Data))
@@ -276,8 +275,8 @@ func testTgetattrAliasing(t *testing.T) {
 
 // testTlcreateAliasing exercises the zero-reset for the Tlcreate cache
 // (added in 13-05). Fields: Fid, Name, Flags, Mode, GID. Name is a Go string,
-// which is immutable — the shared backing store cannot be mutated through the
-// cached struct — so the zero-struct reset in tlcreateCache.Get() is the full
+// which is immutable -- the shared backing store cannot be mutated through the
+// cached struct -- so the zero-struct reset in tlcreateCache.Get() is the full
 // aliasing defence. The test encodes two distinct Tlcreate frames with
 // different Name values and verifies the second decode reflects ONLY the
 // second payload's values.

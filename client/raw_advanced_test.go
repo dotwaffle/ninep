@@ -72,8 +72,8 @@ func (n *rawTestXattrNode) RemoveXattr(_ context.Context, name string) error {
 
 // rawTestLockerNode implements NodeLocker. Lock() returns
 // LockStatusOK unconditionally; GetLock() reports the region is free
-// (LockTypeUnlck). Wave 2 plan 21-04 ships a richer fixture with a
-// call-log and a programmable status queue.
+// (LockTypeUnlck). The richer fixture with a call-log and a
+// programmable status queue lives next to the high-level Lock tests.
 type rawTestLockerNode struct {
 	server.Inode
 }
@@ -534,7 +534,7 @@ func TestRaw_Tmknod_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tmknod: %v", err)
 	}
-	// QID.Type for a device is QTFILE (0x00) — sanity: not a symlink/dir.
+	// QID.Type for a device is QTFILE (0x00) -- sanity: not a symlink/dir.
 	if qid.Type&proto.QTDIR != 0 {
 		t.Errorf("Tmknod QID.Type = %#x, unexpected dir bit", qid.Type)
 	}
@@ -545,13 +545,13 @@ func TestRaw_Tmknod_RoundTrip(t *testing.T) {
 
 // TestRaw_Tremove_RoundTrip exercises the wire-level Raw.Tremove path.
 //
-// ninep's server does not implement a Tremove handler (Phase 21 clients
-// prefer Tunlinkat; the server falls through to ENOSYS). The test
-// verifies the round-trip machinery works: write Tremove, read Rlerror,
-// surface a *client.Error — the full toError path. Once a server-side
+// ninep's server does not implement a Tremove handler (clients prefer
+// Tunlinkat; the server falls through to ENOSYS). The test verifies
+// the round-trip machinery works: write Tremove, read Rlerror,
+// surface a *client.Error - the full toError path. Once a server-side
 // Tremove handler lands, this test can be re-pointed at it to assert
-// success + fid invalidation; the Raw wire primitive is unchanged either
-// way.
+// success + fid invalidation; the Raw wire primitive is unchanged
+// either way.
 func TestRaw_Tremove_RoundTrip(t *testing.T) {
 	t.Parallel()
 	root := newRawRUDir(t)
@@ -570,7 +570,7 @@ func TestRaw_Tremove_RoundTrip(t *testing.T) {
 	defer cancel()
 	err := cli.Raw().Tremove(ctx, 2)
 	if err == nil {
-		// Server grew Tremove support — fall through to the
+		// Server grew Tremove support -- fall through to the
 		// fid-invalidation assertion (9P spec: Tremove clunks fid
 		// regardless of success).
 		if _, ok := root.Children()["gone"]; ok {
@@ -592,7 +592,7 @@ func TestRaw_Tremove_RoundTrip(t *testing.T) {
 	}
 }
 
-// -- dialect gate tests (external package — can't reach internal
+// -- dialect gate tests (external package -- can't reach internal
 // protocolL/U constants, so we dial a .u mock server and invoke each
 // .L-only method; Conn.Dialect() confirms the dialect)---
 
@@ -755,7 +755,7 @@ func TestRaw_Tstat_NotSupportedOnL(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
 	defer cleanup()
-	// Default buildTestRoot pair negotiates .L — no Attach needed for
+	// Default buildTestRoot pair negotiates .L -- no Attach needed for
 	// the gate test.
 	ctx, cancel := rawAdvCtx(t)
 	defer cancel()

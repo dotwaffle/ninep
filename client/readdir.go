@@ -13,7 +13,7 @@ import (
 )
 
 // readDir is the internal body of [File.ReadDir]. Takes ctx explicitly
-// so a future Phase 22 ReadDirCtx variant can thread caller-supplied
+// so a future ReadDirCtx variant can thread caller-supplied
 // cancellation through without touching the public API.
 //
 // Loop structure:
@@ -23,10 +23,9 @@ import (
 //     readdirOffset to the final entry's Offset for the next call.
 //   - Stop on first error; return whatever we accumulated so far.
 //
-// The dialect gate fires before any wire activity per Q4 resolution:
-// .u uses a different directory-enumeration wire op (Tread on a
-// directory fid returning packed Stat.u entries) which is out of
-// scope for Phase 20.
+// The dialect gate fires before any wire activity: .u uses a different
+// directory-enumeration wire op (Tread on a directory fid returning
+// packed Stat.u entries) which is out of scope here.
 func (f *File) readDir(ctx context.Context, n int) ([]os.DirEntry, error) {
 	if f.conn.dialect != protocolL {
 		return nil, fmt.Errorf("%w: File.ReadDir requires 9P2000.L", ErrNotSupported)
@@ -104,9 +103,9 @@ func (f *File) readDir(ctx context.Context, n int) ([]os.DirEntry, error) {
 //	Type[1]       = Linux DT_* dirent type byte
 //	Name[s]       = len[2] + bytes[len]    (little-endian uint16 length prefix)
 //
-// Bounds-checked at every field extraction -- T-20-04 mitigation.
-// Returns the partial slice on decode error so the caller can surface
-// whatever entries arrived before the corruption.
+// Bounds-checked at every field extraction. Returns the partial slice
+// on decode error so the caller can surface whatever entries arrived
+// before the corruption.
 func parseDirents(data []byte) ([]proto.Dirent, uint64, error) {
 	const minEntrySize = 13 + 8 + 1 + 2 // QID + Offset + Type + NameLen
 	out := make([]proto.Dirent, 0, 8)
@@ -173,7 +172,7 @@ func parseDirents(data []byte) ([]proto.Dirent, uint64, error) {
 
 // direntEntry wraps a proto.Dirent so it satisfies [os.DirEntry]. Name
 // and Type() are filled from the Dirent's server-provided fields;
-// Info() returns [ErrNotSupported] until Phase 21 wires Tgetattr.
+// Info() returns [ErrNotSupported] since Tgetattr is not wired here.
 type direntEntry struct {
 	d proto.Dirent
 }
@@ -193,9 +192,9 @@ func (e direntEntry) IsDir() bool {
 }
 
 // Type returns an [fs.FileMode] carrying only the file-type bits that
-// correspond to the Linux DT_* byte. Permission bits are zero until
-// Phase 21 ships Tgetattr; callers that need mode bits should combine
-// Type() with a separate Stat call in a future phase.
+// correspond to the Linux DT_* byte. Permission bits are zero;
+// callers that need mode bits should combine Type() with a separate
+// Stat call.
 //
 // DT_REG (regular file) and any unknown type byte map to 0, matching
 // the [os.DirEntry] convention of zero for regular files.
@@ -218,10 +217,8 @@ func (e direntEntry) Type() fs.FileMode {
 	}
 }
 
-// Info returns [fs.FileInfo] for the entry. Not supported in Phase 20
-// -- Phase 21 wires Tgetattr which will populate size, mode, and
-// timestamps. Callers that need FileInfo before Phase 21 must walk to
-// the entry and use a future [File.Stat] helper.
+// Info returns [fs.FileInfo] for the entry. Not supported; callers
+// that need FileInfo should walk to the entry and use [File.Stat].
 func (e direntEntry) Info() (fs.FileInfo, error) {
 	return nil, ErrNotSupported
 }

@@ -23,11 +23,11 @@ type config struct {
 	lockPollSchedule []time.Duration
 	// requestTimeout is the default ctx timeout applied by File.Read,
 	// File.Write, File.ReadAt, File.WriteAt (the non-ctx io.* methods).
-	// Zero (the default) means infinite wait — matches the Linux v9fs
-	// kernel client for trans=tcp mounts (Pitfall 9 / D-22). Values
-	// < 0 are coerced to 0 by WithRequestTimeout. Mutates behaviour
-	// only of the non-ctx io.* methods; the *Ctx variants honor the
-	// caller-supplied ctx verbatim.
+	// Zero (the default) means infinite wait - matches the Linux v9fs
+	// kernel client for trans=tcp mounts. Values < 0 are coerced to 0
+	// by WithRequestTimeout. Mutates behaviour only of the non-ctx
+	// io.* methods; the *Ctx variants honor the caller-supplied ctx
+	// verbatim.
 	requestTimeout time.Duration
 	tracerProvider trace.TracerProvider
 	meterProvider  metric.MeterProvider
@@ -36,7 +36,7 @@ type config struct {
 // Defaults for Conn configuration.
 const (
 	// defaultMsize is the proposed maximum message size. 1 MiB matches the
-	// Linux kernel v9fs client default for trans=tcp mounts (D-14).
+	// Linux kernel v9fs client default for trans=tcp mounts.
 	defaultMsize uint32 = 1 << 20
 
 	// defaultMaxInflight is the number of concurrent outstanding requests
@@ -82,7 +82,7 @@ func WithVersion(v proto.Version) Option {
 // (see package documentation). The server's Rversion msize caps the proposal;
 // the negotiated msize is min(client proposal, server cap).
 //
-// No clamping is performed on the input — callers that proposed 0 or a value
+// No clamping is performed on the input -- callers that proposed 0 or a value
 // smaller than [proto.HeaderSize] will surface [ErrMsizeTooSmall] at Dial
 // time, not here.
 func WithMsize(n uint32) Option {
@@ -91,7 +91,7 @@ func WithMsize(n uint32) Option {
 
 // WithMaxInflight sets the maximum number of concurrent outstanding requests
 // on the Conn. The free-list tag allocator uses this as its channel capacity,
-// so back-pressure kicks in at this value — once saturated, new requests
+// so back-pressure kicks in at this value -- once saturated, new requests
 // block until an in-flight tag is released.
 //
 // Values less than 1 are clamped to 1. Values greater than 65534 are clamped
@@ -110,7 +110,7 @@ func WithMaxInflight(n int) Option {
 }
 
 // WithLogger sets the structured logger used by the Conn for diagnostic
-// output. A nil logger is ignored — the existing logger (by default
+// output. A nil logger is ignored - the existing logger (by default
 // [slog.Default]) is preserved.
 func WithLogger(logger *slog.Logger) Option {
 	return func(c *config) {
@@ -147,12 +147,11 @@ func WithLockPollSchedule(schedule []time.Duration) Option {
 // [File.Read], [File.Write], [File.ReadAt], and [File.WriteAt] methods.
 // When set to a positive duration d, each call builds a context via
 // [context.WithTimeout] with that duration; timeout expiry triggers
-// Tflush via the standard roundTrip cancellation pipeline (Plan 22-02)
-// and returns an error chain where [errors.Is] matches
-// [context.DeadlineExceeded].
+// Tflush via the standard roundTrip cancellation pipeline and returns
+// an error chain where [errors.Is] matches [context.DeadlineExceeded].
 //
-// The default (zero) means infinite wait — matches the Linux kernel
-// v9fs client for trans=tcp mounts (Pitfall 9 / D-22). Callers that need
+// The default (zero) means infinite wait - matches the Linux kernel
+// v9fs client for trans=tcp mounts. Callers that need
 // per-op deadlines without a Conn-wide default use [File.ReadCtx],
 // [File.WriteCtx], [File.ReadAtCtx], [File.WriteAtCtx] with a
 // caller-supplied ctx instead of this option.
@@ -163,7 +162,7 @@ func WithLockPollSchedule(schedule []time.Duration) Option {
 // zero-value or a subtraction overflow.
 //
 // Per-op precedence: if a caller passes a ctx WITH a deadline to a *Ctx
-// variant (e.g. [File.ReadCtx]), that ctx is used verbatim —
+// variant (e.g. [File.ReadCtx]), that ctx is used verbatim -
 // WithRequestTimeout is ignored on the *Ctx methods.
 func WithRequestTimeout(d time.Duration) Option {
 	return func(c *config) {
