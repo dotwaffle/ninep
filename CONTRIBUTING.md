@@ -58,33 +58,31 @@ For a quick tour of the codebase layout and runtime architecture, see
 
 ## Commit Message Conventions
 
-Commits follow a Conventional Commits-style prefix. Look at `git log` for the
-established pattern:
+Commits follow the Linux kernel style: a `subsystem: summary` subject line
+in imperative mood. Look at `git log` for the established pattern.
 
 ```
-<type>(<scope>): <subject>
+subsystem: short imperative summary
+
+Optional body explaining what the patch solves and why. Wrap at about
+74 columns. Plain text only -- no links.
 ```
 
-Common types used in this repo:
-
-- `feat` -- new user-visible capability, interface, or API surface
-- `fix` -- bug fix
-- `perf` -- performance improvement (benchmark evidence appreciated)
-- `refactor` -- internal restructuring with no behavior change
-- `test` -- test-only changes (new coverage, harness work, benchmarks)
-- `docs` -- documentation-only changes (godoc, `docs/`, README)
-- `style` -- formatting, `gofmt`, import ordering -- no logic changes
-
-Scope is optional and typically names a package or subsystem (e.g. `server`,
-`proto/p9l`, `passthrough`). Keep subjects short, imperative, and
-lower-case. Example:
+The subsystem identifies the affected area without requiring the reader
+to inspect the diff (e.g. `server`, `client`, `passthrough`, `proto/p9l`,
+`memfs`, `bufpool`). Keep subjects around 50 columns when practical and
+lower-case.
 
 ```
-perf(server): zero-copy Rread payload via Payloader interface
+server: zero-copy Rread payload via Payloader interface
+client: reject oversized peer counts
+passthrough: pin opens to resolved fds
 ```
 
-Do **not** add `Co-Authored-By` trailers. Do not reference internal planning
-artifacts in commit messages -- cite the architectural reason inline.
+Prefer one logical change per patch; each commit should compile and pass
+the relevant tests on its own so `git bisect` stays useful. Do **not**
+use Conventional Commits prefixes, and do **not** add `Co-Authored-By`
+trailers.
 
 ## Testing Expectations
 
