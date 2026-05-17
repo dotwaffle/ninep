@@ -1,4 +1,3 @@
-<!-- generated-by: gsd-doc-writer -->
 # Configuration
 
 ninep is a Go library. All configuration is done programmatically through functional options passed to constructors. There are no config files, environment variables, or CLI flags.

@@ -1,4 +1,3 @@
-<!-- generated-by: gsd-doc-writer -->
 # Contributing to ninep
 
 Thanks for your interest in contributing. ninep is a Go library implementing

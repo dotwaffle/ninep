@@ -1,4 +1,3 @@
-<!-- generated-by: gsd-doc-writer -->
 # API Reference
 
 `github.com/dotwaffle/ninep` -- a Go library for the 9P2000.L and 9P2000.u network filesystem protocols with a capability-based API.

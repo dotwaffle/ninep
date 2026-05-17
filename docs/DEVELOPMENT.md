@@ -1,4 +1,3 @@
-<!-- generated-by: gsd-doc-writer -->
 # Development Guide
 
 This document covers everything needed to contribute to ninep: environment setup, building, testing, coding conventions, and how to extend the server with new 9P operations or middleware.

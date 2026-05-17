@@ -1,4 +1,3 @@
-<!-- generated-by: gsd-doc-writer -->
 # Testing
 
 This document covers how to run, write, and maintain tests for the ninep library.
