@@ -138,17 +138,13 @@ Recommended mount options:
 - `version=9p2000.L`: Use the Linux-optimized protocol extensions.
 - `msize=65536`: Match a server memory pool bucket for optimal resource reuse.
 
-These options help leverage the high-performance design of the `ninep` library.
+## Performance Notes
 
-## Performance at Scale
+A few properties worth knowing when sizing buffers or reasoning about throughput:
 
-`ninep` is built from the ground up for high-concurrency, low-latency workloads:
-
-- **Zero-Allocation Hot Paths:** Structural message pooling (via the `internal/pool.Cache` type) ensures that standard operations (Read, Write, Walk, Clunk) and metadata updates (Setattr, Mkdir, etc.) occur with zero heap allocations in the steady state.
-- **Concurrent Receive Loop:** The server uses a dynamic worker pool that scales with in-flight requests, ensuring that multiple clients can progress without blocking each other on the receive loop.
-- **Streaming Codecs:** All messages are encoded and decoded directly via `io.Writer` and `io.Reader` interfaces to minimize intermediate buffering.
-
-To achieve this performance while maintaining a simple developer experience, `ninep` uses a few key abstractions.
+- **Pooled hot-path requests.** `internal/pool.Cache` recycles structs for the common operations (Read, Write, Walk, Clunk, Setattr, Mkdir, ...) so steady-state dispatch avoids per-request heap allocations.
+- **Recv-mutex worker model.** Each connection runs goroutines bounded by `WithMaxInflight`; readers lazy-spawn successors so multiple in-flight requests dispatch concurrently without a dedicated worker pool.
+- **Streaming codecs.** Wire encoding works directly against `io.Reader` / `io.Writer` to keep intermediate buffering off the hot path.
 
 ## Core Concepts
 
@@ -166,8 +162,6 @@ Every entry in your filesystem is a `Node`. For most use cases, you should embed
 
 ### File Handles
 For stateful I/O (like tracking an OS file descriptor), `NodeOpener.Open` can return a `FileHandle`. If the returned handle implements `FileReader` or `FileWriter`, those methods will be used for subsequent I/O on that specific open instance.
-
-With these concepts in hand, you're ready to build complex, high-performance filesystems.
 
 ## Next Steps
 - Explore the [API Reference](API.md) for a full list of capability interfaces.
