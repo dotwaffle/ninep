@@ -503,12 +503,11 @@ Benchmarks live in `server/*_bench_test.go`. The expected local workflow:
    GODEBUG=gctrace=1 go test -bench=BenchmarkRead_ -run=^$ ./server/ 2>&1 | head -40
    ```
 
-3. **Alloc attribution (memprofile)** -- use `-memprofile` to locate allocation sites. In sandboxed execution the default `/tmp` is not writable; write profiles under `/tmp/claude/` instead.
+3. **Alloc attribution (memprofile)** -- use `-memprofile` to locate allocation sites.
 
    ```bash
-   mkdir -p /tmp/claude
-   go test -bench=BenchmarkRead_ -benchmem -memprofile=/tmp/claude/mem.prof -run=^$ ./server/
-   go tool pprof -text -alloc_objects -lines /tmp/claude/mem.prof
+   go test -bench=BenchmarkRead_ -benchmem -memprofile=mem.prof -run=^$ ./server/
+   go tool pprof -text -alloc_objects -lines mem.prof
    ```
 
 4. **Transport choice matters for writev** -- `net.Pipe` does NOT implement `io.ReaderFrom`/`net.Buffers` fast paths, so `net.Buffers.WriteTo` falls back to sequential writes. Benchmarks using `net.Pipe` will miss the writev savings. Use the `unixPair` helper in `writev_bench_test.go` for an honest comparison against `pipePair`.
@@ -517,7 +516,7 @@ Benchmarks live in `server/*_bench_test.go`. The expected local workflow:
    go test -bench=BenchmarkWriteApproach -run=^$ ./server/
    ```
 
-5. **CPU profile for hot loops** -- pair with `-cpuprofile=/tmp/claude/cpu.prof` when the `allocs/op` delta is small but `ns/op` regresses.
+5. **CPU profile for hot loops** -- pair with `-cpuprofile=cpu.prof` when the `allocs/op` delta is small but `ns/op` regresses.
 
 ## Benchmark Helpers
 
