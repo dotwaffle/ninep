@@ -27,16 +27,14 @@ import (
 //
 // The middleware always constructs its three slog.Attr values
 // (op/duration/error) before calling logger.LogAttrs, regardless of
-// whether the handler will keep the record. Audit Fix #8 proposes
-// gating the LogAttrs call behind logger.Enabled(ctx, slog.LevelDebug)
-// to skip that construction when the level is filtered. This benchmark
-// quantifies the headroom available for that guard.
+// whether the handler will keep the record. Gating the LogAttrs call
+// behind logger.Enabled(ctx, slog.LevelDebug) would skip that
+// construction when the level is filtered. This benchmark quantifies
+// the headroom available for that guard.
 //
 // Workload mirrors BenchmarkRead's 4 KiB sequential read, identical to
 // BenchmarkOTelMiddleware in otel_bench_test.go, so the two
 // middleware-overhead benches are directly comparable.
-//
-// Per CLAUDE.md: bench output goes to /tmp/claude/, not /tmp.
 func BenchmarkLoggingMiddleware(b *testing.B) {
 	const readSize uint32 = 4096
 
