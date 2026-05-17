@@ -142,8 +142,9 @@ func TestReadLoop_DispatchesRwalkAndRclunkOutOfOrder(t *testing.T) {
 
 // TestReadLoop_UsesBytesReaderReset sanity-checks the bytes.Reader reuse:
 // dispatch 50 frames, confirm all are delivered, and no per-frame alloc
-// behaviour regresses. This isn't a true alloc benchmark (that lives in
-// Plan 24) but it exercises the Reset call path under -race.
+// behaviour regresses. This isn't a true alloc benchmark (those live
+// alongside the bench helpers) but it exercises the Reset call path
+// under -race.
 func TestReadLoop_UsesBytesReaderReset(t *testing.T) {
 	t.Parallel()
 
@@ -200,11 +201,11 @@ func TestReadLoop_UsesBytesReaderReset(t *testing.T) {
 	}
 }
 
-// TestNewRMessage_Phase21_DialectL_All asserts that every new .L R-type
-// introduced by Phase 21 decodes to the correct *p9l.R<x> pointer on a
-// protocolL-negotiated Conn. The newGateConn helper assembles a *Conn
-// without a live wire; newRMessage only consults c.dialect.
-func TestNewRMessage_Phase21_DialectL_All(t *testing.T) {
+// TestNewRMessage_DialectL_All asserts that every .L-only R-type decodes
+// to the correct *p9l.R<x> pointer on a protocolL-negotiated Conn. The
+// newGateConn helper assembles a *Conn without a live wire; newRMessage
+// only consults c.dialect.
+func TestNewRMessage_DialectL_All(t *testing.T) {
 	t.Parallel()
 	c := newGateConn(t, protocolL)
 
@@ -300,9 +301,9 @@ func TestNewRMessage_Phase21_DialectL_All(t *testing.T) {
 	}
 }
 
-// TestNewRMessage_Phase21_DialectU_All asserts .u-only R-types decode to
+// TestNewRMessage_DialectU_All asserts .u-only R-types decode to
 // their *p9u.R<x> concrete pointers on a protocolU-negotiated Conn.
-func TestNewRMessage_Phase21_DialectU_All(t *testing.T) {
+func TestNewRMessage_DialectU_All(t *testing.T) {
 	t.Parallel()
 	c := newGateConn(t, protocolU)
 
@@ -338,12 +339,12 @@ func TestNewRMessage_Phase21_DialectU_All(t *testing.T) {
 	}
 }
 
-// TestNewRMessage_Phase21_CrossDialect_Rejects confirms defense-in-depth:
+// TestNewRMessage_CrossDialect_Rejects confirms defense-in-depth:
 // on a protocolL Conn, a .u-only R-type returns error (dropped into the
 // default arm). Same for protocolU + a .L-only R-type. A malicious peer
 // emitting cross-dialect traffic triggers signalShutdown in readLoop, not
 // a decode-misalignment crash.
-func TestNewRMessage_Phase21_CrossDialect_Rejects(t *testing.T) {
+func TestNewRMessage_CrossDialect_Rejects(t *testing.T) {
 	t.Parallel()
 
 	cL := newGateConn(t, protocolL)
@@ -379,12 +380,12 @@ func TestNewRMessage_Phase21_CrossDialect_Rejects(t *testing.T) {
 	}
 }
 
-// TestNewRMessage_Phase21_Rstat_On_L_ReturnsError is the explicit,
-// single-case assertion that a .u stat type on a .L Conn never decodes —
-// a duplicate of the cross-dialect table but called out independently
+// TestNewRMessage_Rstat_On_L_ReturnsError is the explicit, single-case
+// assertion that a .u stat type on a .L Conn never decodes -- a
+// duplicate of the cross-dialect table but called out independently
 // because the read-loop misalignment risk for Rstat/Rwstat is the
 // specific hazard the dialect gate protects against.
-func TestNewRMessage_Phase21_Rstat_On_L_ReturnsError(t *testing.T) {
+func TestNewRMessage_Rstat_On_L_ReturnsError(t *testing.T) {
 	t.Parallel()
 	c := newGateConn(t, protocolL)
 	if _, err := c.newRMessage(proto.TypeRstat); err == nil {

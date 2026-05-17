@@ -99,14 +99,14 @@ func TestClient_Create_NotSupportedOnL(t *testing.T) {
 	}
 }
 
-// TestClient_Phase21_DialectGates is the belt-and-braces check that every
-// Phase 21 dialect-gated method returns ErrNotSupported on the wrong
-// dialect without touching the wire. Per-method gate tests elsewhere
+// TestClient_DialectGates_All is the belt-and-braces check that every
+// dialect-gated method returns ErrNotSupported on the wrong dialect
+// without touching the wire. Per-method gate tests elsewhere
 // (advanced_xattr_test.go etc.) cover the same ground; this table
-// exists to catch any new .L-only / .u-only op added in a future phase
-// that forgets the requireDialect check.
+// exists to catch any new .L-only / .u-only op added later that
+// forgets the requireDialect check.
 //
-// Method selection (per 21-06-PLAN.md Task 2):
+// Method selection:
 //
 //   - .L-only ops exercised on a protocolU Conn: Symlink, Readlink,
 //     XattrGet/Set/List/Remove, Lock/Unlock/TryLock/GetLock, Statfs,
@@ -115,12 +115,10 @@ func TestClient_Create_NotSupportedOnL(t *testing.T) {
 //     public .u-only primitive; File.Stat dispatches internally).
 //
 // Conn.Attach / Conn.Rename / Conn.Remove are NOT in this table.
-// Attach is dialect-neutral. Rename and Remove are gated to .L in
-// Phase 21 execution, but their per-method tests
-// (advanced_rename_test.go, advanced_remove_test.go) cover the gate;
-// omitting them here keeps the "belt-and-braces" scope aligned with
-// the plan's enumeration.
-func TestClient_Phase21_DialectGates(t *testing.T) {
+// Attach is dialect-neutral. Rename and Remove are gated to .L, but
+// their per-method tests (advanced_rename_test.go,
+// advanced_remove_test.go) cover the gate.
+func TestClient_DialectGates_All(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
