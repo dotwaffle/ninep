@@ -4,7 +4,7 @@
 
 ## Building a Minimal Filesystem
 
-To build a filesystem, you define a struct that embeds `*server.Inode`. By embedding `Inode`, your node automatically returns `ENOSYS` for any operation you don't explicitly implement.
+To build a filesystem, you define a struct that embeds `server.Inode`. By embedding `Inode`, your node automatically returns `ENOSYS` for any operation you don't explicitly implement.
 
 Here is a complete server that serves a single read-only file:
 
@@ -22,7 +22,7 @@ import (
 
 // HelloFile implements a read-only file.
 type HelloFile struct {
-	*server.Inode
+	server.Inode
 }
 
 // Read implements the NodeReader interface.
@@ -46,9 +46,9 @@ func main() {
 
 	// 3. Create our "hello.txt" file node and add it to the root.
 	helloQID := gen.Next(proto.QTFILE)
-	hello := &HelloFile{Inode: &server.Inode{}}
+	hello := &HelloFile{}
 	hello.Init(helloQID, hello)
-	root.AddChild("hello.txt", hello.Inode)
+	root.AddChild("hello.txt", &hello.Inode)
 
 	// 4. Start the server on TCP port 5640.
 	s := server.New(root)
@@ -149,7 +149,7 @@ A few properties worth knowing when sizing buffers or reasoning about throughput
 ## Core Concepts
 
 ### Nodes and Inodes
-Every entry in your filesystem is a `Node`. For most use cases, you should embed `*server.Inode` in your node struct. The `Inode` handles:
+Every entry in your filesystem is a `Node`. For most use cases, you should embed `server.Inode` in your node struct. The `Inode` handles:
 - **Default errors**: Returns `ENOSYS` for unimplemented operations.
 - **Tree management**: Provides `AddChild`, `RemoveChild`, and a default `Lookup` implementation.
 

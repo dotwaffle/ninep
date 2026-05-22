@@ -9,7 +9,7 @@ import (
 )
 
 // Inode provides default implementations for all capability interfaces,
-// returning ENOSYS for unimplemented operations. Embed *Inode in your
+// returning ENOSYS for unimplemented operations. Embed [Inode] (or *Inode) in your
 // node struct and call Init to set up the QID and back-reference.
 //
 // Inode also manages the filesystem tree: parent/child relationships,
@@ -54,7 +54,7 @@ var (
 // embedding node. If node is nil, the Inode references itself.
 //
 // The back-reference must also implement Node. This is satisfied
-// automatically when the embedder embeds *Inode (which promotes the
+// automatically when the embedder embeds [Inode] or *Inode (which promotes the
 // QID() method). Init panics if node is non-nil and does not
 // implement Node so that the misuse surfaces at construction time
 // rather than later from Lookup.
@@ -65,7 +65,7 @@ func (i *Inode) Init(qid proto.QID, node InodeEmbedder) {
 		return
 	}
 	if _, ok := node.(Node); !ok {
-		panic("server.Inode.Init: node argument must implement Node (typically by embedding *Inode)")
+		panic("server.Inode.Init: node argument must implement Node (typically by embedding Inode)")
 	}
 	i.node = node
 }

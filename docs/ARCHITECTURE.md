@@ -185,11 +185,11 @@ Additionally, `RawXattrer` provides protocol-level control over the xattr two-ph
 
 `Inode` (`server/inode.go`) serves dual purposes:
 
-1. **ENOSYS default provider** -- Implements all 23 capability interfaces with methods that return `proto.ENOSYS`. When users embed `*Inode` and override only the methods they need, unimplemented operations automatically fail with the correct error.
+1. **ENOSYS default provider** -- Implements all 23 capability interfaces with methods that return `proto.ENOSYS`. When users embed `Inode` and override only the methods they need, unimplemented operations automatically fail with the correct error.
 
 2. **Tree management** -- Maintains parent/child relationships via a `sync.Mutex`-protected `map[string]*Inode`. Provides `AddChild`, `RemoveChild`, `Children`, `Parent`, and a default `Lookup` that resolves children from this map.
 
-Users embed `*Inode` in their node struct and call `Init(qid, self)` during construction. The bridge layer uses `InodeEmbedder` to access the embedded Inode for tree operations.
+Users embed `Inode` in their node struct and call `Init(qid, self)` during construction. The bridge layer uses `InodeEmbedder` to access the embedded Inode for tree operations.
 
 ### FileHandle
 

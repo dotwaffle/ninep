@@ -18,7 +18,7 @@
 
 ## Capability Interfaces (`server/node.go`)
 
-The library uses a capability-based pattern inspired by `go-fuse/v2/fs`. Implement only the interfaces your node needs; unimplemented operations return `proto.ENOSYS` via the embedded `*Inode` defaults.
+The library uses a capability-based pattern inspired by `go-fuse/v2/fs`. Implement only the interfaces your node needs; unimplemented operations return `proto.ENOSYS` via the embedded `Inode` defaults.
 
 ### Core Interfaces
 
@@ -113,7 +113,7 @@ type XattrWriter interface {
 
 ## Inode (`server/inode.go`)
 
-`Inode` provides default implementations for all capability interfaces (returning `proto.ENOSYS`) and manages the filesystem tree: parent/child relationships, child lookup, and child enumeration. Embed `*Inode` in your node struct and call `Init` to set up the QID and back-reference.
+`Inode` provides default implementations for all capability interfaces (returning `proto.ENOSYS`) and manages the filesystem tree: parent/child relationships, child lookup, and child enumeration. Embed `Inode` in your node struct and call `Init` to set up the QID and back-reference.
 
 ### Methods
 

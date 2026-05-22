@@ -123,7 +123,7 @@ ninep/
 
 ### Capability Interfaces
 
-The core pattern in ninep: define small, single-method interfaces in `server/node.go`. Each interface maps to one 9P operation. Nodes implement only the interfaces they need; `*Inode` provides ENOSYS defaults for everything else.
+The core pattern in ninep: define small, single-method interfaces in `server/node.go`. Each interface maps to one 9P operation. Nodes implement only the interfaces they need; `Inode` provides ENOSYS defaults for everything else.
 
 ```go
 // In server/node.go

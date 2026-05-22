@@ -1,11 +1,11 @@
 // Package server implements a 9P2000.L file server with a capability-based
-// API inspired by go-fuse/v2/fs. Filesystem authors embed [*Inode] in their
+// API inspired by go-fuse/v2/fs. Filesystem authors embed [Inode] in their
 // node types and implement only the capability interfaces they need; all
 // unimplemented operations automatically return ENOSYS.
 //
 // # Capability Pattern
 //
-// Define a struct, embed [*Inode], and implement capability interfaces such as
+// Define a struct, embed [Inode], and implement capability interfaces such as
 // [NodeReader], [NodeWriter], [NodeOpener], [NodeGetattrer], [NodeReaddirer],
 // and others. The server's dispatch layer detects implemented interfaces at
 // runtime and routes 9P messages accordingly.
