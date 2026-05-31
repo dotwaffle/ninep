@@ -226,7 +226,11 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (_ *Conn, retErr err
 	c.probeMeter(cfg)
 	if c.meterEnabled {
 		c.meter = cfg.meterProvider.Meter(instrumentationName)
-		c.inst = newOTelInstruments(cfg.meterProvider)
+		inst, ierr := newOTelInstruments(cfg.meterProvider)
+		if ierr != nil {
+			return nil, fmt.Errorf("client.Dial: otel instruments: %w", ierr)
+		}
+		c.inst = inst
 		c.opNameAttrs = buildOpNameAttrs()
 	}
 

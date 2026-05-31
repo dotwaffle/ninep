@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
@@ -25,26 +26,43 @@ type otelInstruments struct {
 	activeReqs metric.Int64UpDownCounter
 }
 
-func newOTelInstruments(mp metric.MeterProvider) *otelInstruments {
+func newOTelInstruments(mp metric.MeterProvider) (*otelInstruments, error) {
 	meter := mp.Meter(instrumentationName)
 
-	return &otelInstruments{
-		duration: must(meter.Float64Histogram("ninep.client.duration",
-			metric.WithUnit("s"),
-			metric.WithDescription("Duration of 9P client operations"),
-		)),
-		reqSize: must(meter.Int64Counter("ninep.client.request.size",
-			metric.WithUnit("By"),
-			metric.WithDescription("Size of 9P request messages"),
-		)),
-		respSize: must(meter.Int64Counter("ninep.client.response.size",
-			metric.WithUnit("By"),
-			metric.WithDescription("Size of 9P response messages"),
-		)),
-		activeReqs: must(meter.Int64UpDownCounter("ninep.client.active_requests",
-			metric.WithDescription("Number of active 9P requests"),
-		)),
+	duration, err := meter.Float64Histogram("ninep.client.duration",
+		metric.WithUnit("s"),
+		metric.WithDescription("Duration of 9P client operations"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create duration histogram: %w", err)
 	}
+	reqSize, err := meter.Int64Counter("ninep.client.request.size",
+		metric.WithUnit("By"),
+		metric.WithDescription("Size of 9P request messages"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create request.size counter: %w", err)
+	}
+	respSize, err := meter.Int64Counter("ninep.client.response.size",
+		metric.WithUnit("By"),
+		metric.WithDescription("Size of 9P response messages"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create response.size counter: %w", err)
+	}
+	activeReqs, err := meter.Int64UpDownCounter("ninep.client.active_requests",
+		metric.WithDescription("Number of active 9P requests"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create active_requests counter: %w", err)
+	}
+
+	return &otelInstruments{
+		duration:   duration,
+		reqSize:    reqSize,
+		respSize:   respSize,
+		activeReqs: activeReqs,
+	}, nil
 }
 
 // probeMeter latches c.meterEnabled from a one-time Enabled() probe of the
@@ -257,11 +275,4 @@ func fidFromMessage(msg proto.Message) (proto.Fid, bool) {
 	default:
 		return 0, false
 	}
-}
-
-func must[T any](v T, err error) T {
-	if err != nil {
-		panic("otel instrument creation: " + err.Error())
-	}
-	return v
 }
