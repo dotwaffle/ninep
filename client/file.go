@@ -222,17 +222,17 @@ const ioFrameOverhead uint32 = 24
 
 // maxChunk returns the largest count the File should request in a
 // single Tread or pass in a single Twrite. Clamps by min(iounit,
-// msize - ioFrameOverhead). iounit==0 (server says "use msize")
-// collapses to the msize-only clamp.
+// msize - ioFrameOverhead, [proto.MaxDataSize]). iounit==0 (server says
+// "use msize") collapses to the msize-only clamp. The proto.MaxDataSize
+// cap only bites when a peer negotiates an msize above 16 MiB: a count
+// past that ceiling would be rejected by the receiver's decoder and tear
+// down the connection.
 func (f *File) maxChunk() uint32 {
 	msizeLimit := f.conn.Msize() - ioFrameOverhead
-	if f.iounit == 0 {
-		return msizeLimit
+	if f.iounit != 0 && f.iounit < msizeLimit {
+		msizeLimit = f.iounit
 	}
-	if f.iounit < msizeLimit {
-		return f.iounit
-	}
-	return msizeLimit
+	return min(msizeLimit, proto.MaxDataSize)
 }
 
 // ReadCtx is the ctx-taking variant of [File.Read]. Satisfies the same

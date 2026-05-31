@@ -304,3 +304,57 @@ func TestClient_Msize_RreadExactMsize(t *testing.T) {
 		t.Errorf("Read got %q, want 'hello world\\n'", data)
 	}
 }
+
+// TestClient_MaxChunk_ClampsToMaxDataSize verifies maxChunk never returns a
+// count above proto.MaxDataSize, even when a peer negotiates an msize larger
+// than 16 MiB. A Tread/Twrite count past MaxDataSize would be rejected by the
+// receiver's decoder and tear down the connection.
+func TestClient_MaxChunk_ClampsToMaxDataSize(t *testing.T) {
+	t.Parallel()
+
+	// Negotiate an msize above proto.MaxDataSize + ioFrameOverhead so the
+	// msize-only clamp would exceed MaxDataSize without the extra cap.
+	const big = (1 << 24) + 1024 // 16 MiB + 1 KiB
+	cli, cleanup := newClientServerPairMsize(t, buildTestRoot(t), big)
+	defer cleanup()
+
+	if got := cli.Msize(); got != big {
+		t.Fatalf("negotiated msize = %d, want %d", got, big)
+	}
+
+	// iounit == 0 (server says "use msize") must clamp to MaxDataSize, not
+	// msize - ioFrameOverhead.
+	fMsize := client.NewFileWrappingFidForTest(cli, proto.Fid(5), 0)
+	if got := client.MaxChunk(fMsize); got != proto.MaxDataSize {
+		t.Errorf("iounit=0: maxChunk = %d, want MaxDataSize = %d", got, proto.MaxDataSize)
+	}
+
+	// A server-advertised iounit above MaxDataSize must also clamp down.
+	fIounit := client.NewFileWrappingFidForTest(cli, proto.Fid(6), big)
+	if got := client.MaxChunk(fIounit); got != proto.MaxDataSize {
+		t.Errorf("iounit>MaxDataSize: maxChunk = %d, want MaxDataSize = %d", got, proto.MaxDataSize)
+	}
+}
+
+// TestClient_MaxChunk_BelowCap verifies the MaxDataSize cap is a no-op for the
+// common case: a sub-16-MiB msize still clamps by msize minus the per-message
+// frame overhead (24 bytes), and a smaller iounit still wins.
+func TestClient_MaxChunk_BelowCap(t *testing.T) {
+	t.Parallel()
+
+	const msize = 65536
+	cli, cleanup := newClientServerPairMsize(t, buildTestRoot(t), msize)
+	defer cleanup()
+
+	// iounit == 0: msize minus ioFrameOverhead (24).
+	fMsize := client.NewFileWrappingFidForTest(cli, proto.Fid(5), 0)
+	if got, want := client.MaxChunk(fMsize), uint32(msize-24); got != want {
+		t.Errorf("iounit=0: maxChunk = %d, want %d", got, want)
+	}
+
+	// An iounit below the msize limit wins.
+	fIounit := client.NewFileWrappingFidForTest(cli, proto.Fid(6), 4096)
+	if got := client.MaxChunk(fIounit); got != 4096 {
+		t.Errorf("iounit<msizeLimit: maxChunk = %d, want 4096", got)
+	}
+}
