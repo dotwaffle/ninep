@@ -425,7 +425,13 @@ func (c *conn) readdirSimple(ctx context.Context, fs *fidState, m *p9l.Treaddir,
 	// above only replaces the whole slice, never mutates entries in place),
 	// so encoding from view outside the lock is safe and avoids holding
 	// fs.mu across O(n) work for large directories.
-	start := min(int(m.Offset), len(fs.dirCache))
+	// Clamp the untrusted wire offset in the uint64 domain before narrowing to
+	// int. int(m.Offset) for Offset >= 2^63 is negative, and min(negative, len)
+	// would then panic the slice expression below.
+	start := len(fs.dirCache)
+	if m.Offset < uint64(start) {
+		start = int(m.Offset)
+	}
 	view := fs.dirCache[start:]
 	fs.mu.Unlock()
 

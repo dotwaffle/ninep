@@ -833,6 +833,41 @@ func TestBridge_ReaddirRejectsInvalidRawCount(t *testing.T) {
 	}
 }
 
+// TestBridge_ReaddirClampsHugeOffset asserts an untrusted Treaddir.Offset at
+// or above 2^63 is clamped past the end of the directory rather than wrapping
+// to a negative slice index and panicking.
+func TestBridge_ReaddirClampsHugeOffset(t *testing.T) {
+	t.Parallel()
+
+	dir := &bridgeDir{}
+	dir.Init(proto.QID{Type: proto.QTDIR, Path: 10}, dir)
+	for i, name := range []string{"alpha", "beta"} {
+		child := &bridgeDir{}
+		child.Init(proto.QID{Type: proto.QTDIR, Path: uint64(11 + i)}, child)
+		dir.AddChild(name, child.EmbeddedInode())
+	}
+
+	c := &conn{fids: newFidTable(), msize: 1024}
+	if err := c.fids.add(1, &fidState{node: dir, state: fidOpened}, 0); err != nil {
+		t.Fatalf("add fid: %v", err)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("handleReaddir panicked on huge offset: %v", r)
+		}
+	}()
+
+	msg := c.handleReaddir(t.Context(), &p9l.Treaddir{Fid: 1, Offset: 1 << 63, Count: 256})
+	rr, ok := msg.(*pooledRreaddir)
+	if !ok {
+		t.Fatalf("handleReaddir returned %T, want *pooledRreaddir", msg)
+	}
+	if len(rr.Data) != 0 {
+		t.Fatalf("huge offset returned %d bytes, want empty (past end of directory)", len(rr.Data))
+	}
+}
+
 func TestBridge_Create(t *testing.T) {
 	t.Parallel()
 
