@@ -394,8 +394,9 @@ func expectRgetlock(t *testing.T, msg proto.Message) *p9l.Rgetlock {
 	return rgl
 }
 
-// NewTestTree constructs the standard test tree using memfs for use with
-// Check. The tree layout matches ExpectedTree:
+// NewTestTree constructs the standard test tree for use with Check using
+// the low-level server.Inode API, so the fstest package takes no
+// dependency on memfs. The tree layout matches ExpectedTree:
 //
 //	root/
 //	  file.txt  (content: "hello world")
@@ -404,12 +405,8 @@ func expectRgetlock(t *testing.T, msg proto.Message) *p9l.Rgetlock {
 //	    nested.txt (content: "nested content")
 //
 // This function is exported so users can create test trees for their own
-// test suites. It requires the memfs package, but is defined here as a
-// convenience. Users may also construct their own root Node matching the
+// test suites. Users may also construct their own root Node matching the
 // expected layout.
-//
-// Note: This uses the memfs builder API. Import is via the exported
-// function to avoid circular dependencies.
 func NewTestTree(gen *server.QIDGenerator) server.Node {
 	// Build using low-level Inode API instead of builder to avoid import
 	// of memfs (which would create a test dependency that this package
