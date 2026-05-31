@@ -8,6 +8,28 @@ import (
 	"github.com/dotwaffle/ninep/proto"
 )
 
+func TestEncodeDirentsInto_SkipsOversizedName(t *testing.T) {
+	t.Parallel()
+
+	huge := proto.Dirent{QID: proto.QID{Path: 1}, Type: 4, Name: string(make([]byte, 0x10000))}
+	ok := proto.Dirent{QID: proto.QID{Path: 2}, Type: 8, Name: "normal"}
+
+	dst := make([]byte, 1<<20)
+	n, count := EncodeDirentsInto(dst, []proto.Dirent{huge, ok})
+	if count != 1 {
+		t.Fatalf("count = %d, want 1 (oversized name skipped)", count)
+	}
+
+	// Only the normal entry is encoded; its 2-byte name length must be exact.
+	const nameLenOff = proto.QIDSize + 8 + 1
+	if gotLen := binary.LittleEndian.Uint16(dst[nameLenOff:]); int(gotLen) != len("normal") {
+		t.Fatalf("encoded name length = %d, want %d", gotLen, len("normal"))
+	}
+	if want := proto.QIDSize + 8 + 1 + 2 + len("normal"); n != want {
+		t.Fatalf("encoded bytes = %d, want %d", n, want)
+	}
+}
+
 func TestEncodeDirentsSingle(t *testing.T) {
 	t.Parallel()
 

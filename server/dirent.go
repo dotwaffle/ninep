@@ -45,6 +45,15 @@ func EncodeDirentsInto(dst []byte, dirents []proto.Dirent) (int, int) {
 	off := 0
 	count := 0
 	for _, d := range dirents {
+		// The name length is a 2-byte wire field. A name that does not fit
+		// would wrap on PutUint16 while the body still advances by the full
+		// length, desyncing the dirent stream. Skip such entries (names are
+		// NAME_MAX-bounded in practice, so this is defensive) rather than
+		// emitting a corrupt record.
+		if len(d.Name) > 0xFFFF {
+			continue
+		}
+
 		entrySize := proto.QIDSize + 8 + 1 + 2 + len(d.Name)
 		if off+entrySize > len(dst) {
 			break
