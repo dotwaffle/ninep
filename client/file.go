@@ -533,12 +533,17 @@ func (f *File) Sync() error {
 // The returned entries' [os.DirEntry.Info] method returns a populated
 // [fs.FileInfo] via Tgetattr.
 //
+// Like the non-ctx io methods, ReadDir honors the Conn's
+// [WithRequestTimeout]; with no timeout configured it has no deadline.
+//
 // Thread safety: takes f.mu and mutates the internal
 // readdirOffset cursor. Concurrent ReadDir on the same *File
 // serializes. Use [File.Clone] for parallel enumeration if that is
 // ever needed (rare -- directory enumeration is typically sequential).
 func (f *File) ReadDir(n int) ([]os.DirEntry, error) {
-	return f.readDir(context.Background(), n)
+	ctx, cancel := f.conn.opCtx(context.Background())
+	defer cancel()
+	return f.readDir(ctx, n)
 }
 
 // WriteAtCtx is the ctx-taking variant of [File.WriteAt]. Chunks p
