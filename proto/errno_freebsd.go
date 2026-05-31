@@ -8,9 +8,10 @@ import "golang.org/x/sys/unix"
 // 9P2000.L defines errno numbers as the Linux UAPI values; without translation
 // a FreeBSD server would send wrong wire values (e.g. EAGAIN=35 instead of 11).
 //
-// Errnos 1..34 are POSIX-stable and shared between Linux and FreeBSD; they
-// pass through unchanged. The freebsdToLinuxErrno table covers errnos that
-// diverge between the two platforms. Unmapped FreeBSD-only errnos (EPROCLIM,
+// Errnos 1..34 are POSIX-stable across Linux and FreeBSD and pass through
+// unchanged, with one trap: EDEADLK is 11 on FreeBSD but 35 on Linux (which
+// uses 11 for EAGAIN), so the table maps it explicitly ahead of the
+// pass-through. The freebsdToLinuxErrno table covers all such divergences. Unmapped FreeBSD-only errnos (EPROCLIM,
 // EBADRPC, ERPCMISMATCH, EPROGUNAVAIL, EPROGMISMATCH, EPROCUNAVAIL, EFTYPE,
 // EAUTH, ENEEDAUTH, EDOOFUS) fall through to EIO. ENOATTR maps to ENODATA
 // so an xattr "not found" surfaces as the Linux wire value the v9fs
@@ -39,6 +40,7 @@ func ErrnoFromUnix(e unix.Errno) Errno {
 // EAGAIN on FreeBSD (both = 35); the EWOULDBLOCK key is the only one used to
 // avoid a duplicate-map-key compile error.
 var freebsdToLinuxErrno = map[unix.Errno]Errno{
+	unix.EDEADLK:         EDEADLK,         // 11 -> 35 (BSD slot 11; Linux uses 11 for EAGAIN)
 	unix.EWOULDBLOCK:     EAGAIN,          // 35 -> 11 (EAGAIN aliases EWOULDBLOCK on FreeBSD)
 	unix.EINPROGRESS:     EINPROGRESS,     // 36 -> 115
 	unix.EALREADY:        EALREADY,        // 37 -> 114

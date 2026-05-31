@@ -20,7 +20,7 @@ func TestErrnoFromUnixDivergence(t *testing.T) {
 		// Divergent errnos (FreeBSD value -> Linux wire value).
 		{"EAGAIN", unix.EAGAIN, EAGAIN},
 		{"EWOULDBLOCK", unix.EWOULDBLOCK, EAGAIN},
-		{"EDEADLK", unix.EDEADLK, EDEADLK}, // POSIX-stable: 11 on both.
+		{"EDEADLK", unix.EDEADLK, EDEADLK}, // FreeBSD slot 11 -> Linux 35; only the name is shared, not the value.
 		{"ENAMETOOLONG", unix.ENAMETOOLONG, ENAMETOOLONG},
 		{"ENOLCK", unix.ENOLCK, ENOLCK},
 		{"ENOSYS", unix.ENOSYS, ENOSYS},

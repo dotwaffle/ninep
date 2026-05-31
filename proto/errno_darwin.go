@@ -9,9 +9,10 @@ import "golang.org/x/sys/unix"
 // translation a macOS-hosted server would send BSD-numbered errnos (e.g.
 // EAGAIN=35 instead of 11) that a Linux v9fs client misreads.
 //
-// Errnos 1..34 are POSIX-stable and shared between Linux and Darwin; they
-// pass through unchanged. The darwinToLinuxErrno table covers errnos that
-// diverge. Darwin-only errnos with no Linux equivalent (EPROCLIM, EBADRPC,
+// Errnos 1..34 are POSIX-stable across Linux and Darwin and pass through
+// unchanged, with one trap: EDEADLK is 11 on Darwin but 35 on Linux (which
+// uses 11 for EAGAIN), so the table maps it explicitly ahead of the
+// pass-through. The darwinToLinuxErrno table covers all such divergences. Darwin-only errnos with no Linux equivalent (EPROCLIM, EBADRPC,
 // ERPCMISMATCH, EPROGUNAVAIL, EPROGMISMATCH, EPROCUNAVAIL, EFTYPE, EAUTH,
 // ENEEDAUTH, EPWROFF, EDEVERR, EBADEXEC, EBADARCH, ESHLIBVERS, EBADMACHO,
 // ENOPOLICY, EQFULL) fall through to EIO.
@@ -40,6 +41,7 @@ func ErrnoFromUnix(e unix.Errno) Errno {
 // on Darwin (both 0x23); the EWOULDBLOCK key is the only one used to avoid a
 // duplicate-map-key compile error.
 var darwinToLinuxErrno = map[unix.Errno]Errno{
+	unix.EDEADLK:         EDEADLK,         // 0xb 11 -> 35 (BSD slot 11; Linux uses 11 for EAGAIN)
 	unix.EWOULDBLOCK:     EAGAIN,          // 0x23 35 -> 11 (EAGAIN aliases EWOULDBLOCK)
 	unix.EINPROGRESS:     EINPROGRESS,     // 0x24 36 -> 115
 	unix.EALREADY:        EALREADY,        // 0x25 37 -> 114
