@@ -560,6 +560,66 @@ func TestLookup_DotDotCannotEscapeRoot(t *testing.T) {
 	assertContained("sub/../..", up2)
 }
 
+// TestSetattr_DotDotFromRootCannotEscape asserts that a Setattr on the node
+// reached by walking ".." from the export root acts on the root itself, not
+// the host parent. The ".." clamp fixes the child's fd, but the child also
+// carried a parent anchor of (rootFd, "..") that Setattr's chown/utimes paths
+// use; before the clamp cleared that anchor, UtimesNanoAt(rootFd, "..")
+// rewrote the host parent's timestamps, a sandbox escape on a privileged
+// server.
+func TestSetattr_DotDotFromRootCannotEscape(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	rootDir := filepath.Join(parent, "export")
+	if err := os.Mkdir(rootDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := NewRoot(rootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close(t.Context()) })
+	ctx := t.Context()
+
+	var parentBefore unix.Stat_t
+	if err := unix.Stat(parent, &parentBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	up, err := root.Lookup(ctx, "..")
+	if err != nil {
+		t.Fatalf("Lookup(..): %v", err)
+	}
+	child := up.(*Node)
+	t.Cleanup(func() { _ = child.Close(ctx) })
+
+	// A distinctive mtime, well clear of "now", set via the clamped child.
+	const wantMTime = int64(1_000_000_000)
+	if err := child.Setattr(ctx, proto.SetAttr{Valid: proto.SetAttrMTime, MTimeSec: uint64(wantMTime)}); err != nil {
+		t.Fatalf("Setattr: %v", err)
+	}
+
+	// The host parent must be untouched.
+	var parentAfter unix.Stat_t
+	if err := unix.Stat(parent, &parentAfter); err != nil {
+		t.Fatal(err)
+	}
+	if parentAfter.Mtim != parentBefore.Mtim {
+		t.Fatalf("host parent mtime changed: Setattr escaped the export via %q", "..")
+	}
+
+	// The operation must have landed on the export root.
+	var rootAfter unix.Stat_t
+	if err := unix.Stat(rootDir, &rootAfter); err != nil {
+		t.Fatal(err)
+	}
+	if int64(rootAfter.Mtim.Sec) != wantMTime {
+		t.Errorf("export root mtime sec = %d, want %d (clamped %q Setattr must act on the root)", int64(rootAfter.Mtim.Sec), wantMTime, "..")
+	}
+}
+
 // TestMknod_DeniesDeviceNodesByDefault asserts a default passthrough server
 // refuses block and character device creation before reaching the kernel, so a
 // privileged (CAP_MKNOD) server cannot be coerced into seeding host device

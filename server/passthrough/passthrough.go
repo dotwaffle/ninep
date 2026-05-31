@@ -74,7 +74,8 @@ func (n *Node) lookupParent() (server.Node, error) {
 		return nil, toProtoErr(err)
 	}
 	target := ".."
-	if uint64(st.Dev) == n.root.dev && st.Ino == n.root.ino {
+	clampToRoot := uint64(st.Dev) == n.root.dev && st.Ino == n.root.ino
+	if clampToRoot {
 		target = "."
 	}
 	fd, err := unix.Openat(n.fd, target, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
@@ -87,6 +88,16 @@ func (n *Node) lookupParent() (server.Node, error) {
 		return nil, toProtoErr(err)
 	}
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: ".."}
+	if clampToRoot {
+		// The clamped child IS the export root. Clear the parent anchor so
+		// parent-anchored *at operations (Setattr chown/utimes, Readlink,
+		// FreeBSD reopen) treat it as a root node and act on the held fd or
+		// the root's host path, never resolving rootFd/".." up into the host
+		// parent outside the export. Clamping only the fd left these ops
+		// pointed at the host parent.
+		child.parentFd = 0
+		child.name = ""
+	}
 	child.Init(statToQID(&cst), child)
 	return child, nil
 }
