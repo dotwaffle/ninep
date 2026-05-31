@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log/slog"
+	"net"
 	"testing"
 	"time"
 
@@ -311,4 +312,76 @@ func TestNewLoggingMiddlewareNotInfoLevel(t *testing.T) {
 	// Debug level by checking the previous test. Here we just ensure
 	// the middleware doesn't crash with a disabled handler.
 	_ = time.Now() // ensure import is used
+}
+
+// sinkHandler captures every record into one shared slice, including those
+// from WithAttrs/WithGroup clones. The per-connection logger is
+// s.logger.With(remote), a clone, so its records must funnel back to a
+// single store for assertions (unlike recordingHandler, which forks a fresh
+// records slice per clone).
+type sinkHandler struct{ records *[]slog.Record }
+
+func (h *sinkHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *sinkHandler) Handle(_ context.Context, r slog.Record) error {
+	*h.records = append(*h.records, r)
+	return nil
+}
+func (h *sinkHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *sinkHandler) WithGroup(string) slog.Handler      { return h }
+
+// TestWithRequestLogging verifies the option installs per-request logging
+// that reuses the server's trace-wrapped logger: a request handled inside
+// an active OTel span produces a "9p request" record carrying trace_id,
+// which the bring-your-own-logger NewLoggingMiddleware path would miss when
+// handed an unwrapped logger.
+func TestWithRequestLogging(t *testing.T) {
+	t.Parallel()
+
+	var records []slog.Record
+	sink := &sinkHandler{records: &records}
+	tp, _ := NewTestTracerProvider(t)
+
+	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
+	s := New(root,
+		WithLogger(slog.New(sink)),
+		WithTracer(tp),
+		WithRequestLogging(),
+	)
+
+	// newConn assembles the middleware chain. Invoke it directly so the
+	// assertion stays single-goroutine and deterministic.
+	client, server := net.Pipe()
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = server.Close()
+	})
+	c := newConn(s, server)
+	c.protocol = protocolL
+
+	resp := c.handler(t.Context(), 1, &proto.Tattach{
+		Fid:   0,
+		Afid:  proto.NoFid,
+		Uname: "test",
+	})
+	if _, ok := resp.(*proto.Rattach); !ok {
+		t.Fatalf("handler response = %T, want *proto.Rattach", resp)
+	}
+
+	var reqRec *slog.Record
+	for i := range records {
+		if records[i].Message == "9p request" {
+			reqRec = &records[i]
+			break
+		}
+	}
+	if reqRec == nil {
+		t.Fatal("WithRequestLogging produced no '9p request' log record")
+	}
+	attrs := recordAttrs(*reqRec)
+	if op, ok := attrs["op"]; !ok || op.String() != proto.TypeTattach.String() {
+		t.Errorf("request log op = %q (present=%v), want %s", op.String(), ok, proto.TypeTattach)
+	}
+	if _, ok := attrs["trace_id"]; !ok {
+		t.Error("request log missing trace_id; WithRequestLogging must log through the trace-wrapped logger inside the OTel span")
+	}
 }

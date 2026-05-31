@@ -74,6 +74,18 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
+// WithRequestLogging installs per-request Debug logging that reuses the
+// server's own logger, the one configured by WithLogger (or the default)
+// and already wrapped for trace-ID correlation. Unlike
+// WithMiddleware(NewLoggingMiddleware(logger)), which logs through a
+// caller-supplied logger that may lack trace correlation, this routes
+// request logs through the wrapped, per-connection logger so they carry
+// trace_id and span_id. The request-logging middleware runs inside any
+// OTel span, so the span context is populated when each line is emitted.
+func WithRequestLogging() Option {
+	return func(s *Server) { s.requestLogging = true }
+}
+
 // WithAnames sets a map of aname strings to root nodes for vhost-style
 // attach dispatch. When set, Tattach uses the aname field to select the
 // root node. An empty aname falls back to the default root.

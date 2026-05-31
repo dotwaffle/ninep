@@ -58,6 +58,7 @@
 //   - [WithMaxMsize] -- maximum negotiated message size (default 1MiB)
 //   - [WithMaxInflight] -- concurrent request limit per connection (default 64)
 //   - [WithLogger] -- structured logger with automatic trace ID correlation
+//   - [WithRequestLogging] -- per-request Debug logging via the trace-correlated logger
 //   - [WithIdleTimeout] -- per-connection idle timeout
 //   - [WithAnames] -- vhost-style root dispatch by attach name
 //   - [WithAttacher] -- full-control attach handling

@@ -211,6 +211,14 @@ func newConn(s *Server, nc net.Conn) *conn {
 		mws = append([]Middleware{newOTelMiddleware(s.tracerProvider, s.meterProvider, c)}, mws...)
 		c.otelInst = newConnOTelInstruments(s.meterProvider)
 	}
+	if s.requestLogging {
+		// Append (innermost) so the log fires inside any OTel span and the
+		// per-conn logger, which is already trace-wrapped and carries the
+		// remote address, emits trace_id/span_id with each request. Cap the
+		// slice to its length so the append allocates a fresh array instead
+		// of writing into s.middlewares' shared backing store.
+		mws = append(mws[:len(mws):len(mws)], NewLoggingMiddleware(c.logger))
+	}
 
 	c.handler = chain(inner, mws)
 	return c

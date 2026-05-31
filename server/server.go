@@ -38,6 +38,7 @@ type Server struct {
 	anames           map[string]Node
 	attacher         Attacher
 	middlewares      []Middleware
+	requestLogging   bool // install per-request logging using the wrapped s.logger
 	tracerProvider   trace.TracerProvider
 	meterProvider    metric.MeterProvider
 	otelInst         *serverOTelInstruments // server-level metrics (nil if no MeterProvider)
