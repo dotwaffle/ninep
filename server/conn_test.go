@@ -3,10 +3,12 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -304,6 +306,95 @@ func (l *blockingListener) Close() error {
 
 func (l *blockingListener) Addr() net.Addr {
 	return &net.TCPAddr{}
+}
+
+// flakyListener returns EMFILE a fixed number of times, then yields one real
+// conn (signalling served), then blocks on Accept until Close.
+type flakyListener struct {
+	mu       sync.Mutex
+	emfile   int
+	realConn net.Conn
+	served   chan struct{}
+	block    chan struct{}
+}
+
+func (l *flakyListener) Accept() (net.Conn, error) {
+	l.mu.Lock()
+	switch {
+	case l.emfile > 0:
+		l.emfile--
+		l.mu.Unlock()
+		return nil, &net.OpError{Op: "accept", Net: "tcp", Err: syscall.EMFILE}
+	case l.realConn != nil:
+		c := l.realConn
+		l.realConn = nil
+		l.mu.Unlock()
+		close(l.served)
+		return c, nil
+	default:
+		l.mu.Unlock()
+		<-l.block
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *flakyListener) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	select {
+	case <-l.block:
+	default:
+		close(l.block)
+	}
+	return nil
+}
+
+func (l *flakyListener) Addr() net.Addr { return &net.TCPAddr{} }
+
+// TestServe_RetriesTransientAcceptErrors asserts a transient EMFILE from Accept
+// does not tear down Serve: it backs off, retries, and goes on to accept the
+// next connection. Serve returns only when ctx is cancelled.
+func TestServe_RetriesTransientAcceptErrors(t *testing.T) {
+	t.Parallel()
+
+	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
+	srv := New(root, WithLogger(discardLogger()))
+
+	// A pre-closed pipe peer makes the accepted conn's first read return
+	// immediately, so its serve goroutine exits and wg.Wait does not block.
+	cli, srvConn := net.Pipe()
+	_ = cli.Close()
+
+	ln := &flakyListener{
+		emfile:   2,
+		realConn: srvConn,
+		served:   make(chan struct{}),
+		block:    make(chan struct{}),
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Serve(ctx, ln) }()
+
+	select {
+	case <-ln.served:
+		// Serve retried past the EMFILE errors and accepted the connection.
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("Serve did not accept the real connection after transient EMFILE")
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Serve returned %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not return after ctx cancel")
+	}
 }
 
 func TestServeConn(t *testing.T) {

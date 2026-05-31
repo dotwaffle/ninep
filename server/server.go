@@ -2,17 +2,26 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"go.opentelemetry.io/otel/metric"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/trace"
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
+)
+
+// Accept backoff bounds for transient errors (fd exhaustion). Mirrors the
+// capped exponential backoff in net/http.Server.Serve.
+const (
+	acceptBackoffStart = 5 * time.Millisecond
+	acceptBackoffMax   = 1 * time.Second
 )
 
 // Server serves the 9P protocol over network connections. Create with New.
@@ -94,18 +103,51 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		wg.Wait()
 	}()
 
+	var backoff time.Duration
 	for {
 		nc, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			// Transient fd exhaustion (EMFILE/ENFILE) must not tear down the
+			// whole server: internal/poll does not retry these, so a single
+			// occurrence would otherwise stop accepting every future
+			// connection. Back off and keep accepting so existing peers
+			// survive and new ones resume once descriptors free up.
+			if isTransientAcceptError(err) {
+				if backoff == 0 {
+					backoff = acceptBackoffStart
+				} else {
+					backoff = min(backoff*2, acceptBackoffMax)
+				}
+				s.logger.Warn("accept: transient error, backing off",
+					slog.Duration("delay", backoff),
+					slog.Any("error", err),
+				)
+				select {
+				case <-time.After(backoff):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				continue
+			}
 			return fmt.Errorf("accept: %w", err)
 		}
+		backoff = 0
 		wg.Go(func() {
 			s.ServeConn(ctx, nc)
 		})
 	}
+}
+
+// isTransientAcceptError reports whether an Accept error is transient resource
+// exhaustion (EMFILE/ENFILE) that should be retried rather than treated as
+// fatal. ECONNABORTED is already retried inside internal/poll, and a
+// deadline-less listener never returns a timeout, so those need no handling
+// here.
+func isTransientAcceptError(err error) bool {
+	return errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE)
 }
 
 // ServeConn serves a single 9P connection. It blocks until the connection is
