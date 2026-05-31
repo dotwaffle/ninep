@@ -36,6 +36,9 @@ func TestErrnoFromUnixDivergence(t *testing.T) {
 		{"EREMOTE", unix.EREMOTE, EREMOTE},
 		{"EPROTO", unix.EPROTO, EPROTO},
 		{"EMSGSIZE", unix.EMSGSIZE, EMSGSIZE},
+		{"ENOATTR", unix.ENOATTR, ENODATA}, // xattr "not found" -> Linux ENODATA.
+		// FreeBSD-only errno with no Linux equivalent falls through to EIO.
+		{"EFTYPE", unix.EFTYPE, EIO},
 		// POSIX-stable: pass-through (1..34).
 		{"EPERM", unix.EPERM, EPERM},
 		{"ENOENT", unix.ENOENT, ENOENT},

@@ -12,7 +12,9 @@ import "golang.org/x/sys/unix"
 // pass through unchanged. The freebsdToLinuxErrno table covers errnos that
 // diverge between the two platforms. Unmapped FreeBSD-only errnos (EPROCLIM,
 // EBADRPC, ERPCMISMATCH, EPROGUNAVAIL, EPROGMISMATCH, EPROCUNAVAIL, EFTYPE,
-// EAUTH, ENEEDAUTH, ENOATTR, EDOOFUS) fall through to EIO.
+// EAUTH, ENEEDAUTH, EDOOFUS) fall through to EIO. ENOATTR maps to ENODATA
+// so an xattr "not found" surfaces as the Linux wire value the v9fs
+// client expects.
 //
 // Verified against
 // /home/dotwaffle/go/pkg/mod/golang.org/x/sys@v0.42.0/unix/zerrors_freebsd_amd64.go
@@ -84,9 +86,7 @@ var freebsdToLinuxErrno = map[unix.Errno]Errno{
 	unix.EOVERFLOW: EOVERFLOW, // 84 -> 75
 	unix.ECANCELED: ECANCELED, // 85 -> 125
 	unix.EILSEQ:    EILSEQ,    // 86 -> 84
-	// ENOATTR (87) is FreeBSD-only; xattr "attribute not found". Falls through
-	// to EIO; could later be mapped to ENODATA (61) if client compatibility
-	// requires it -- see follow-ups.
+	unix.ENOATTR:   ENODATA,   // 87 -> 61 (xattr "attribute not found")
 	// EDOOFUS (88) is FreeBSD-only -> falls through.
 	unix.EBADMSG:   EBADMSG,   // 89 -> 74
 	unix.EMULTIHOP: EMULTIHOP, // 90 -> 72
