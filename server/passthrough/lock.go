@@ -16,9 +16,14 @@ import (
 var _ server.NodeLocker = (*Node)(nil)
 
 // Lock acquires, tests, or releases a POSIX byte-range lock via fcntl.
-// Uses F_SETLK for non-blocking and F_SETLKW for blocking requests.
-// Blocking locks respect context cancellation via deadline.
-func (n *Node) Lock(_ context.Context, lockType proto.LockType, flags proto.LockFlags, start, length uint64, _ uint32, _ string) (proto.LockStatus, error) {
+//
+// It always issues the non-blocking F_SETLK. A contended lock returns
+// LockStatusBlocked so the client retries, rather than parking a bounded
+// server worker in F_SETLKW where no Tflush could cancel it and a single peer
+// could pin every worker on the connection. This follows the 9P2000.L model,
+// in which the client implements blocking by re-issuing Tlock after a BLOCKED
+// response; the LockFlagBlock flag is therefore advisory here.
+func (n *Node) Lock(_ context.Context, lockType proto.LockType, _ proto.LockFlags, start, length uint64, _ uint32, _ string) (proto.LockStatus, error) {
 	flock := unix.Flock_t{
 		Type:   lockTypeToFcntl(lockType),
 		Whence: 0, // SEEK_SET
@@ -26,12 +31,7 @@ func (n *Node) Lock(_ context.Context, lockType proto.LockType, flags proto.Lock
 		Len:    int64(length),
 	}
 
-	cmd := unix.F_SETLK
-	if flags&proto.LockFlagBlock != 0 {
-		cmd = unix.F_SETLKW
-	}
-
-	if err := unix.FcntlFlock(uintptr(n.fd), cmd, &flock); err != nil {
+	if err := unix.FcntlFlock(uintptr(n.fd), unix.F_SETLK, &flock); err != nil {
 		if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EACCES) {
 			return proto.LockStatusBlocked, nil
 		}

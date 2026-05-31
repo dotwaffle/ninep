@@ -1002,6 +1002,45 @@ func TestLock_NonBlocking(t *testing.T) {
 	}
 }
 
+// TestLock_BlockFlagDoesNotWait asserts the block flag no longer maps to the
+// blocking F_SETLKW. On a free lock it returns OK promptly; the server must
+// never park a worker waiting for the lock.
+func TestLock_BlockFlagDoesNotWait(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lockfile")
+	if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fd, err := syscall.Open(path, syscall.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = syscall.Close(fd) }()
+
+	root, err := NewRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close(t.Context()) })
+
+	node := &Node{fd: fd, root: root}
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		t.Fatal(err)
+	}
+	node.Init(statToQID(&st), node)
+
+	status, err := node.Lock(t.Context(), proto.LockTypeWrLck, proto.LockFlagBlock, 0, 0, 1, "test")
+	if err != nil {
+		t.Fatalf("Lock with block flag: %v", err)
+	}
+	if status != proto.LockStatusOK {
+		t.Errorf("Lock status = %d, want OK (%d)", status, proto.LockStatusOK)
+	}
+}
+
 func TestGetLock_NoConflict(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
