@@ -932,6 +932,36 @@ func TestBridge_OpenReleasesHandleOnLostClunkRace(t *testing.T) {
 	}
 }
 
+// TestBridge_XattrcreateRejectsOpenedFid asserts Txattrcreate on an already
+// opened fid is refused instead of orphaning the fid's live handle, so the
+// later clunk still releases it.
+func TestBridge_XattrcreateRejectsOpenedFid(t *testing.T) {
+	t.Parallel()
+
+	h := &testHandle{}
+	node := &raceOpenNode{handle: h}
+	node.Init(proto.QID{Type: proto.QTFILE, Path: 1}, node)
+
+	c := &conn{fids: newFidTable(), msize: 1024, protocol: protocolL}
+	if err := c.fids.add(1, &fidState{node: node, state: fidOpened, handle: h}, 0); err != nil {
+		t.Fatalf("add fid: %v", err)
+	}
+
+	msg := c.handleXattrcreate(t.Context(), &p9l.Txattrcreate{Fid: 1, Name: "user.x", AttrSize: 4})
+	rlerr, ok := msg.(*p9l.Rlerror)
+	if !ok || rlerr.Ecode != proto.EBADF {
+		t.Fatalf("got %T (%v), want Rlerror EBADF", msg, msg)
+	}
+
+	// The opened fid must clunk normally and release its handle.
+	if _, ok := c.handleClunk(t.Context(), &proto.Tclunk{Fid: 1}).(*proto.Rclunk); !ok {
+		t.Fatal("clunk after rejected xattrcreate did not succeed")
+	}
+	if !h.released.Load() {
+		t.Fatal("handle leaked: xattrcreate orphaned the opened fid's handle")
+	}
+}
+
 func TestBridge_Create(t *testing.T) {
 	t.Parallel()
 

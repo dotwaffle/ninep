@@ -1044,6 +1044,15 @@ func (c *conn) handleXattrcreate(ctx context.Context, m *p9l.Txattrcreate) proto
 	if fs == nil {
 		return c.errorMsg(proto.EBADF)
 	}
+	// Txattrcreate is only valid on a freshly walked fid, like the open and
+	// create handlers. Without this check a peer could send it on an already
+	// opened fid: the unconditional transition to fidXattrWrite below would
+	// orphan the live FileHandle, and the following Tclunk would take the
+	// xattr branch and return before releaseHandle, leaking one fd per crafted
+	// clunk (an fd-exhaustion vector).
+	if fs.currentState() != fidAllocated {
+		return c.errorMsg(proto.EBADF)
+	}
 
 	// Clamp xattr buffer to msize to prevent oversized allocations (T-04-06).
 	if m.AttrSize > uint64(c.msize) {
