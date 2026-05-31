@@ -310,6 +310,12 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read version size: %w", err)
 	}
+	// msize is not negotiated yet, so bound the frame against the largest
+	// msize this server will ever accept; this keeps the body allocation
+	// below safe against an oversized declared size.
+	if size > c.server.maxMsize {
+		return fmt.Errorf("version frame size %d exceeds maximum %d", size, c.server.maxMsize)
+	}
 
 	msgType, err := proto.ReadUint8(c.nc)
 	if err != nil {
@@ -325,10 +331,17 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 		return fmt.Errorf("read version tag: %w", err)
 	}
 
-	// Decode Tversion body.
-	bodySize := int64(size) - int64(proto.HeaderSize)
+	// Read the full declared body before decoding, so any bytes the decoder
+	// does not consume are still drained from the stream. Decoding straight
+	// from an io.LimitReader would leave surplus bytes that the next ReadSize
+	// would misparse as a frame prefix. Mirrors handleReVersion, which decodes
+	// from a fully-read body buffer.
+	body := make([]byte, int(size-proto.HeaderSize))
+	if _, err := io.ReadFull(c.nc, body); err != nil {
+		return fmt.Errorf("read tversion body: %w", err)
+	}
 	var tver proto.Tversion
-	if err := tver.DecodeFrom(io.LimitReader(c.nc, bodySize)); err != nil {
+	if err := tver.DecodeFrom(bytes.NewReader(body)); err != nil {
 		return fmt.Errorf("decode tversion: %w", err)
 	}
 

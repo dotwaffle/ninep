@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"log/slog"
@@ -281,6 +282,62 @@ func newDirNode(qid proto.QID) *dirNode {
 	n := &dirNode{}
 	n.Init(qid, n)
 	return n
+}
+
+// TestNegotiateVersion_DrainsOversizedTversionBody asserts the cold
+// negotiation path consumes the full declared Tversion body, including bytes
+// the decoder does not read, so trailing padding cannot desync the next frame.
+func TestNegotiateVersion_DrainsOversizedTversionBody(t *testing.T) {
+	t.Parallel()
+
+	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
+	root := newDirNode(rootQID)
+	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
+
+	client, server := net.Pipe()
+	defer func() { _ = client.Close() }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); srv.ServeConn(ctx, server) }()
+
+	// Tversion whose declared body carries 5 trailing padding bytes beyond
+	// msize+version. The decoder reads only the real fields; the server must
+	// still drain the padding so the following Tattach frame parses.
+	const version = "9P2000.L"
+	var body []byte
+	body = binary.LittleEndian.AppendUint32(body, 65536)
+	body = binary.LittleEndian.AppendUint16(body, uint16(len(version)))
+	body = append(body, version...)
+	body = append(body, make([]byte, 5)...) // padding
+
+	size := uint32(7 + len(body)) // 4 size + 1 type + 2 tag + body
+	var frame []byte
+	frame = binary.LittleEndian.AppendUint32(frame, size)
+	frame = append(frame, byte(proto.TypeTversion))
+	frame = binary.LittleEndian.AppendUint16(frame, uint16(proto.NoTag))
+	frame = append(frame, body...)
+	if _, err := client.Write(frame); err != nil {
+		t.Fatalf("write oversized Tversion: %v", err)
+	}
+
+	if rv := readRversion(t, client); rv.Version != version {
+		t.Fatalf("version = %q, want %q", rv.Version, version)
+	}
+
+	// The next frame must parse cleanly; a desync would corrupt it.
+	sendMessage(t, client, 1, &proto.Tattach{Fid: 0, Afid: proto.NoFid, Uname: "test"})
+	tag, msg := readResponse(t, client)
+	if tag != 1 {
+		t.Fatalf("attach tag = %d, want 1 (stream desynced?)", tag)
+	}
+	if _, ok := msg.(*proto.Rattach); !ok {
+		t.Fatalf("got %T, want Rattach (stream desynced by padding?)", msg)
+	}
+
+	_ = client.Close()
+	<-done
 }
 
 type blockingListener struct {
