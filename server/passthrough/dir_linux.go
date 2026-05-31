@@ -55,6 +55,12 @@ func (n *Node) Lookup(_ context.Context, name string) (server.Node, error) {
 
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
 	child.Init(statToQID(&st), child)
+	// The child is recorded in the parent's Inode tree so the server can map
+	// names to nodes for Trename/Trenameat. Entries persist for the parent
+	// node's lifetime (pruned only on Unlink/Rename), bounded by the number of
+	// distinct real names walked. They are not pruned on clunk: a node may be
+	// shared by several fids via walk-clone, so safe pruning would require
+	// per-node fid refcounting the server does not track.
 	n.EmbeddedInode().AddChild(name, child.EmbeddedInode())
 
 	return child, nil

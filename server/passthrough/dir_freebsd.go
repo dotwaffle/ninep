@@ -53,6 +53,10 @@ func (n *Node) Lookup(_ context.Context, name string) (server.Node, error) {
 
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
 	child.Init(statToQID(&st), child)
+	// See dir_linux.go Lookup: the child is recorded for Trename/Trenameat name
+	// resolution and persists for the parent's lifetime (bounded by distinct
+	// names walked); it is not pruned on clunk because a node may be shared by
+	// several fids and the server tracks no per-node fid refcount.
 	n.EmbeddedInode().AddChild(name, child.EmbeddedInode())
 
 	return child, nil
