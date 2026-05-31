@@ -719,12 +719,13 @@ func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message
 		}
 	}
 
-	// LIFO: registered FIRST so it runs LAST - after finish() removes
-	// the tag from the inflight map. A concurrent Tflush must be able
-	// to look up `tag` in the inflight map until finish() removes it;
-	// only then is it safe to recycle rctx back to the pool.
-	// Violating this ordering causes Tflush to call flush() on a
-	// pool-recycled requestCtx belonging to an unrelated later request.
+	// LIFO: registered FIRST so it runs LAST - after the tag has been
+	// removed from the inflight map (by remove() on the success path or
+	// finish() in the deferred fallback). A concurrent Tflush must be able
+	// to look up `tag` in the inflight map until then; only once the tag is
+	// gone is it safe to recycle rctx back to the pool. Violating this
+	// ordering causes Tflush to call flush() on a pool-recycled requestCtx
+	// belonging to an unrelated later request.
 	defer putRequestCtx(rctx)
 
 	defer func() {
@@ -739,9 +740,12 @@ func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message
 				slog.Any("panic", r),
 				slog.String("message_type", msg.Type().String()),
 			)
-			finish()
 			c.sendResponse(tag, c.errorMsg(proto.EIO))
 		}
+		// Fallback for the resp == nil and handler-panic paths, where the
+		// success path below did not already remove the tag. finish() both
+		// removes the tag and closes the done channel; on those paths there
+		// is no separate write to order a waiting Tflush after.
 		finish()
 	}()
 
@@ -755,8 +759,19 @@ func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message
 		if r, ok := resp.(releaser); ok {
 			release = r
 		}
-		finish()
+		// Remove the tag BEFORE the write so a client that reuses the tag
+		// the instant it receives this response cannot collide with the
+		// still-registered entry. Close the captured done channel AFTER the
+		// write so a Tflush that was waiting on this request is released
+		// only once the flushed response is on the wire, keeping Rflush
+		// ordered after it. finished=true makes the deferred finish() above
+		// a no-op for this path.
+		doneCh := c.inflight.remove(tag)
+		finished = true
 		c.sendResponseInline(tag, resp, release)
+		if doneCh != nil {
+			close(doneCh)
+		}
 	}
 }
 

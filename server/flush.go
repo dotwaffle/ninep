@@ -52,22 +52,36 @@ func (im *inflightMap) start(tag proto.Tag, rctx *requestCtx) bool {
 	return true
 }
 
-// finish removes the tag from the inflight map and signals the drain
-// channel if no requests remain. Must be called exactly once per start call.
-// It is invoked after the handler's response has been written, so closing the
-// entry's done channel here orders a waiting Tflush after that response.
+// finish removes the tag and closes its done channel, releasing any waiting
+// Tflush. Use it on paths with no separate response write (resp == nil, the
+// handler-panic fallback), where there is nothing to order the Tflush after.
+// Must be called exactly once per start call.
 func (im *inflightMap) finish(tag proto.Tag) {
+	if done := im.remove(tag); done != nil {
+		close(done)
+	}
+}
+
+// remove drops the tag from the map and signals the drain channel if no
+// requests remain, returning the entry's done channel WITHOUT closing it (nil
+// if no Tflush was waiting). dispatchInline calls remove BEFORE writing the
+// response, then closes the returned channel AFTER the write. Removing early
+// frees the tag before the client can receive the response and reuse it (a
+// reused tag arriving while the entry was still registered would be rejected
+// as a duplicate and tear the connection down); deferring the close keeps a
+// waiting Tflush ordered after the flushed response. Like finish, must be
+// paired with exactly one start.
+func (im *inflightMap) remove(tag proto.Tag) chan struct{} {
 	im.mu.Lock()
 	defer im.mu.Unlock()
-	if entry, ok := im.entries[tag]; ok && entry.done != nil {
-		close(entry.done)
-	}
+	entry := im.entries[tag]
 	delete(im.entries, tag)
 	im.count--
 	if im.count == 0 && im.drained != nil {
 		close(im.drained)
 		im.drained = nil
 	}
+	return entry.done
 }
 
 // drainChan returns a channel that is closed when count reaches zero, or

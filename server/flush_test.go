@@ -667,3 +667,77 @@ func TestHandleFlush_WaitsForFlushedResponse(t *testing.T) {
 		t.Fatal("handleFlush did not return after the flushed request finished")
 	}
 }
+
+// TestDispatchInline_ClosesFlushDoneAfterResponse drives the real
+// dispatchInline path and asserts the inflight entry's done channel (which
+// releases a waiting Tflush) closes only AFTER the flushed response is on
+// the wire. A handler blocks the request in flight so a Tflush can register
+// a waiter; the response write then blocks on an unread pipe, so a
+// premature done-close would let Rflush race ahead of the response.
+func TestDispatchInline_ClosesFlushDoneAfterResponse(t *testing.T) {
+	t.Parallel()
+
+	client, server := net.Pipe()
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = server.Close()
+	})
+
+	c := &conn{
+		server:   &Server{}, // idleTimeout 0: sendResponseInline sets no deadline
+		nc:       server,
+		inflight: newInflightMap(),
+		logger:   discardLogger(),
+		protocol: protocolL,
+	}
+	// The handler blocks until released (request genuinely in flight) and
+	// returns a non-empty body (Rwalk carries QIDs) so the framed write has
+	// no trailing zero-length buffer; an empty net.Pipe write would block
+	// waiting for a read that drainResponse never issues.
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	c.handler = func(_ context.Context, _ proto.Tag, _ proto.Message) proto.Message {
+		close(entered)
+		<-release
+		return &proto.Rwalk{QIDs: []proto.QID{{Type: proto.QTFILE}}}
+	}
+
+	rctx := getRequestCtx(t.Context())
+	if !c.inflight.start(1, rctx) {
+		t.Fatal("inflight.start failed")
+	}
+	go c.dispatchInline(rctx, 1, &proto.Twalk{Fid: 0, NewFid: 1}, nil)
+
+	// Register a Tflush waiter while the request is in flight.
+	<-entered
+	done := c.inflight.flushWait(1)
+	if done == nil {
+		t.Fatal("flushWait returned nil; tag 1 not in flight")
+	}
+	select {
+	case <-done:
+		t.Fatal("flush done closed while the handler was still running")
+	default:
+	}
+
+	// Release the handler: dispatchInline removes the tag, then blocks in
+	// sendResponseInline writing the response (no reader yet), then closes
+	// done. While the write is pending, done must still be open.
+	close(release)
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("flush done closed before the response was written; Rflush could ship ahead of it")
+	default:
+	}
+
+	// Consume the response, unblocking the write so dispatchInline closes done.
+	if err := drainResponse(client); err != nil {
+		t.Fatalf("drainResponse: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("flush done not closed after the response was written")
+	}
+}
