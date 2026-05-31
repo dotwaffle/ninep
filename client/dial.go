@@ -43,6 +43,30 @@ const minMsize = 256
 // On any error Dial leaves nc in whatever state the caller provided: it
 // does NOT close nc on its own, so a caller may reuse the connection
 // (e.g. re-dial with a different proposed version).
+// Keepalive parameters for TCP connections. A silently dead peer is detected
+// after roughly Idle + Interval*Count (~60s) with no application traffic.
+const (
+	keepAliveIdle     = 30 * time.Second
+	keepAliveInterval = 10 * time.Second
+	keepAliveCount    = 3
+)
+
+// enableKeepAlive turns on TCP keepalive probes for a *net.TCPConn. It is a
+// best-effort no-op for non-TCP transports and if the platform rejects the
+// configuration.
+func enableKeepAlive(nc net.Conn) {
+	tcp, ok := nc.(*net.TCPConn)
+	if !ok {
+		return
+	}
+	_ = tcp.SetKeepAliveConfig(net.KeepAliveConfig{
+		Enable:   true,
+		Idle:     keepAliveIdle,
+		Interval: keepAliveInterval,
+		Count:    keepAliveCount,
+	})
+}
+
 func Dial(ctx context.Context, nc net.Conn, opts ...Option) (_ *Conn, retErr error) {
 	cfg := newConfig()
 	for _, opt := range opts {
@@ -169,6 +193,12 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (_ *Conn, retErr err
 	if err := nc.SetDeadline(time.Time{}); err != nil {
 		return nil, fmt.Errorf("client.Dial: clear deadline: %w", err)
 	}
+
+	// Enable TCP keepalive so a silently dead peer (no FIN/RST, the common
+	// NAT/cloud idle-drop case) is eventually detected at the transport layer.
+	// Without it the read goroutine could block forever on a half-open
+	// connection and a SessionManager would never reconnect.
+	enableKeepAlive(nc)
 
 	// 8. Construct the Conn + spawn the read goroutine.
 	c := &Conn{
