@@ -203,18 +203,20 @@ func (c *Conn) readLoop() {
 			c.inflight.mu.RUnlock()
 		}
 
-		// Pre-validate Rread count against the actual body length before
-		// entering the non-ZC decode path. proto.Rread.DecodeFrom would
-		// otherwise make([]byte, count) ahead of io.ReadFull, allowing
-		// a malicious peer to amplify a tiny short-body frame into a
-		// large allocation (count is bounded only by MaxDataSize, which
-		// is independent of negotiated msize). The ZC fast path above
-		// applies the same check at line 174; mirror it here for the
+		// Pre-validate the count-prefixed payloads (Rread and Rreaddir)
+		// against the actual body length before entering the decode path.
+		// Both encode count[4] + data[count] at the start of the body, and
+		// their DecodeFrom would make([]byte, count) ahead of io.ReadFull,
+		// letting a peer amplify a tiny short-body frame into a large
+		// allocation (count is bounded only by MaxDataSize, independent of
+		// the negotiated msize). The ZC fast path above applies the same
+		// check at line 174; mirror it here for Rreaddir and for the Rread
 		// path where entry.dst is nil.
-		if msgType == proto.TypeRread {
+		if msgType == proto.TypeRread || msgType == proto.TypeRreaddir {
 			if len(b) < 7 {
 				bufpool.PutMsgBuf(bufPtr)
-				c.logger.Warn("client: Rread body too short",
+				c.logger.Warn("client: count-prefixed body too short",
+					slog.String("type", msgType.String()),
 					slog.Int("len", len(b)),
 				)
 				c.signalShutdown()
@@ -223,7 +225,8 @@ func (c *Conn) readLoop() {
 			count := binary.LittleEndian.Uint32(b[3:7])
 			if int(count) > len(b)-7 {
 				bufpool.PutMsgBuf(bufPtr)
-				c.logger.Warn("client: Rread count exceeds body",
+				c.logger.Warn("client: count exceeds body",
+					slog.String("type", msgType.String()),
 					slog.Uint64("count", uint64(count)),
 					slog.Int("body_remaining", len(b)-7),
 				)

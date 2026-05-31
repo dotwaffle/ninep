@@ -400,6 +400,64 @@ func TestNewRMessage_Rstat_On_L_ReturnsError(t *testing.T) {
 // srvNC) pair via net.Pipe + a tight Tversion exchange, returns the
 // internal *Conn (not *client.Conn) so tests can poke unexported fields
 // like inflight + closeCh.
+// TestReadLoop_RreaddirGuardsAmplification asserts the count-prefix guard
+// covers Rreaddir, not just Rread: a tiny frame declaring a huge count is
+// rejected by the guard rather than by a post-allocation decode error, so no
+// oversized buffer is allocated before the short body is detected. The guard's
+// distinctive log line proves the guard path (not DecodeFrom) handled it.
+func TestReadLoop_RreaddirGuardsAmplification(t *testing.T) {
+	t.Parallel()
+	cliNC, srvNC := net.Pipe()
+	t.Cleanup(func() { _ = srvNC.Close() })
+
+	// Answer the Tversion handshake, then go quiet.
+	go func() {
+		var sizeBuf [4]byte
+		if _, err := io.ReadFull(srvNC, sizeBuf[:]); err != nil {
+			return
+		}
+		size := binary.LittleEndian.Uint32(sizeBuf[:])
+		body := make([]byte, int(size)-4)
+		if _, err := io.ReadFull(srvNC, body); err != nil {
+			return
+		}
+		_ = p9l.Encode(srvNC, proto.NoTag, &proto.Rversion{Msize: 65536, Version: "9P2000.L"})
+	}()
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	cli, err := Dial(ctx, cliNC, WithMsize(65536), WithLogger(logger))
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	t.Cleanup(func() { _ = cli.Close() })
+
+	// Rreaddir frame: size=11, declaring an 8 MiB count with an empty body.
+	frame := make([]byte, 11)
+	binary.LittleEndian.PutUint32(frame[0:4], 11)
+	frame[4] = byte(proto.TypeRreaddir)
+	binary.LittleEndian.PutUint16(frame[5:7], 1)
+	binary.LittleEndian.PutUint32(frame[7:11], 1<<23)
+	if _, err := srvNC.Write(frame); err != nil {
+		t.Fatalf("write Rreaddir frame: %v", err)
+	}
+
+	select {
+	case <-cli.closeCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("read loop did not shut down on amplified Rreaddir")
+	}
+
+	// The Warn write happens-before signalShutdown closes closeCh, so reading
+	// the buffer after the receive is safe and complete.
+	if !bytes.Contains(logBuf.Bytes(), []byte("count exceeds body")) {
+		t.Fatalf("guard did not fire (a decode error would not log this); log: %q", logBuf.String())
+	}
+}
+
 func dialMockL(t *testing.T) (*Conn, net.Conn) {
 	t.Helper()
 	cliNC, srvNC := net.Pipe()
