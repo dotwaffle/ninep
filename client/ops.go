@@ -301,6 +301,10 @@ func (c *Conn) Flush(ctx context.Context, oldTag proto.Tag) error {
 		putCachedRMsg(resp)
 		return err
 	}
+	// Rflush is not cached today (it falls to the default arm of
+	// putCachedRMsg), but route it through anyway so a future
+	// cache addition does not silently miss this success path.
+	putCachedRMsg(resp)
 	return nil
 }
 
