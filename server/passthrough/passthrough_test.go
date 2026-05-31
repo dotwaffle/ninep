@@ -677,34 +677,6 @@ func TestRoot_Close(t *testing.T) {
 	}
 }
 
-func TestDirentType(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		mode uint32
-		want uint8
-	}{
-		{"regular", syscall.S_IFREG, 8},
-		{"directory", syscall.S_IFDIR, 4},
-		{"symlink", syscall.S_IFLNK, 10},
-		{"block", syscall.S_IFBLK, 6},
-		{"char", syscall.S_IFCHR, 2},
-		{"fifo", syscall.S_IFIFO, 1},
-		{"socket", syscall.S_IFSOCK, 12},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := direntType(tt.mode)
-			if got != tt.want {
-				t.Errorf("direntType(%#x) = %d, want %d", tt.mode, got, tt.want)
-			}
-		})
-	}
-}
-
 // --- Directory operations tests ---
 
 func TestLookup_ExistingChild(t *testing.T) {

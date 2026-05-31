@@ -69,9 +69,3 @@ func toProtoErr(err error) error {
 	}
 	return proto.EIO
 }
-
-// direntType converts a file mode to the DT_* type value used in readdir
-// responses. The type is extracted by shifting the S_IFMT bits.
-func direntType(mode uint32) uint8 {
-	return uint8((mode & unix.S_IFMT) >> 12)
-}
