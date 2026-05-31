@@ -55,7 +55,6 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 		c.inst.activeReqs.Add(ctx, 1)
 		defer c.inst.activeReqs.Add(ctx, -1)
 	}
-	c.recordRequest(ctx, msg)
 
 	c.callerWG.Add(1)
 	defer c.callerWG.Done()
@@ -70,7 +69,8 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 	// Register BEFORE writeT.
 	respCh := c.inflight.register(tag)
 
-	if err := c.writeT(tag, msg); err != nil {
+	frameSize, err := c.writeT(tag, msg)
+	if err != nil {
 		// Unregister-before-release ordering preserved on error paths.
 		c.inflight.unregister(tag)
 		c.tags.release(tag)
@@ -86,6 +86,7 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 		c.recordError(span, err)
 		return nil, err
 	}
+	c.recordRequestSize(ctx, frameSize)
 
 	// Wait for response.
 	var resp proto.Message
@@ -408,8 +409,8 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 	entry := c.inflight.registerZC(tag, dst)
 
 	req := &proto.Tread{Fid: fid, Offset: offset, Count: count}
-	c.recordRequest(ctx, req)
-	if err := c.writeT(tag, req); err != nil {
+	frameSize, err := c.writeT(tag, req)
+	if err != nil {
 		// Unregister-before-release ordering preserved on error paths.
 		c.inflight.unregister(tag)
 		c.tags.release(tag)
@@ -420,6 +421,7 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 		c.recordError(span, err)
 		return 0, err
 	}
+	c.recordRequestSize(ctx, frameSize)
 
 	// Wait for response, ctx cancel, or shutdown - same shape as roundTrip.
 	var resp proto.Message

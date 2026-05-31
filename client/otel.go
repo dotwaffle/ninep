@@ -103,15 +103,14 @@ func (c *Conn) startSpan(ctx context.Context, opName string, msg proto.Message) 
 	return c.tracer.Start(ctx, opName, opts...)
 }
 
-func (c *Conn) recordRequest(ctx context.Context, msg proto.Message) {
+// recordRequestSize records the request body size from the frame size writeT
+// already computed, avoiding a re-encode. frameSize is header + body + payload;
+// the metric counts the message body, matching the prior EncodeTo-based count.
+func (c *Conn) recordRequestSize(ctx context.Context, frameSize uint32) {
 	if !c.meterEnabled {
 		return
 	}
-
-	var reqBytes proto.ByteCounter
-	if err := msg.EncodeTo(&reqBytes); err == nil {
-		c.inst.reqSize.Add(ctx, int64(reqBytes))
-	}
+	c.inst.reqSize.Add(ctx, int64(frameSize)-int64(proto.HeaderSize))
 }
 
 func (c *Conn) recordResponse(ctx context.Context, opType proto.MessageType, elapsed float64, resp proto.Message) {

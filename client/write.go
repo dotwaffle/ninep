@@ -26,9 +26,12 @@ import (
 // capacity of the receiver on full consumption. Passing a hoisted
 // net.Buffers field would silently write zero bytes after the first
 // call.
-func (c *Conn) writeT(tag proto.Tag, msg proto.Message) error {
+// writeT frames and sends a single T-message. On success it returns the full
+// wire frame size (header + body + payload) so callers can record the request
+// size metric without re-encoding the message.
+func (c *Conn) writeT(tag proto.Tag, msg proto.Message) (uint32, error) {
 	if c.isClosed() {
-		return fmt.Errorf("client: writeT: %w", ErrClosed)
+		return 0, fmt.Errorf("client: writeT: %w", ErrClosed)
 	}
 
 	body := bufpool.GetBuf()
@@ -40,24 +43,24 @@ func (c *Conn) writeT(tag proto.Tag, msg proto.Message) error {
 		usePatternB = true
 		payload = pl.Payload()
 		if err := pl.EncodeFixed(body); err != nil {
-			return fmt.Errorf("client: encode %s (fixed): %w", msg.Type(), err)
+			return 0, fmt.Errorf("client: encode %s (fixed): %w", msg.Type(), err)
 		}
 	} else {
 		if err := msg.EncodeTo(body); err != nil {
-			return fmt.Errorf("client: encode %s: %w", msg.Type(), err)
+			return 0, fmt.Errorf("client: encode %s: %w", msg.Type(), err)
 		}
 	}
 
 	size := uint32(proto.HeaderSize) + uint32(body.Len()) + uint32(len(payload))
 	if size > c.msize {
-		return fmt.Errorf("client: frame size %d exceeds negotiated msize %d", size, c.msize)
+		return 0, fmt.Errorf("client: frame size %d exceeds negotiated msize %d", size, c.msize)
 	}
 
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 
 	if c.isClosed() {
-		return fmt.Errorf("client: writeT: %w", ErrClosed)
+		return 0, fmt.Errorf("client: writeT: %w", ErrClosed)
 	}
 
 	binary.LittleEndian.PutUint32(c.encHdr[0:4], size)
@@ -74,7 +77,7 @@ func (c *Conn) writeT(tag proto.Tag, msg proto.Message) error {
 	bufs := net.Buffers(c.encBufsArr[:nBufs])
 
 	if err := wire.WriteFramesLocked(c.nc, &bufs); err != nil {
-		return fmt.Errorf("client: write %s: %w", msg.Type(), err)
+		return 0, fmt.Errorf("client: write %s: %w", msg.Type(), err)
 	}
-	return nil
+	return size, nil
 }

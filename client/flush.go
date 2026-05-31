@@ -105,7 +105,7 @@ func (c *Conn) flushAndWait(
 	// + the signalShutdown race at write time. We use writeT directly
 	// instead of [Conn.Flush] to avoid recursing through roundTrip on
 	// an already-Done ctx.
-	if err := c.writeT(flushTag, &proto.Tflush{OldTag: oldTag}); err != nil {
+	if _, err := c.writeT(flushTag, &proto.Tflush{OldTag: oldTag}); err != nil {
 		if c.isClosed() {
 			return nil, ErrClosed
 		}

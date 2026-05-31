@@ -77,7 +77,7 @@ func TestWriteT_SingleRequest(t *testing.T) {
 		Names:  []string{"dir", "file"},
 	}
 	writeErr := make(chan error, 1)
-	go func() { writeErr <- cli.writeT(proto.Tag(7), tw) }()
+	go func() { _, werr := cli.writeT(proto.Tag(7), tw); writeErr <- werr }()
 
 	frame := readOneFrame(t, srvNC)
 	if err := <-writeErr; err != nil {
@@ -154,7 +154,7 @@ func TestWriteT_ConcurrentCalls_NoInterleaving(t *testing.T) {
 				Offset: uint64(i),
 				Data:   payload,
 			}
-			if err := cli.writeT(proto.Tag(100+i), tw); err != nil {
+			if _, err := cli.writeT(proto.Tag(100+i), tw); err != nil {
 				t.Errorf("writeT[%d]: %v", i, err)
 			}
 		})
@@ -203,7 +203,7 @@ func TestWriteT_AfterClose(t *testing.T) {
 	cli.signalShutdown()
 
 	tw := &proto.Twalk{Fid: 1, NewFid: 2}
-	err := cli.writeT(proto.Tag(7), tw)
+	_, err := cli.writeT(proto.Tag(7), tw)
 	if err == nil {
 		t.Fatal("writeT succeeded after signalShutdown, want error")
 	}
@@ -241,7 +241,7 @@ func TestWriteT_NetBuffersReslice(t *testing.T) {
 
 	for i := range N {
 		tw := &proto.Twalk{Fid: proto.Fid(i), NewFid: proto.Fid(i + N), Names: nil}
-		if err := cli.writeT(proto.Tag(i+1), tw); err != nil {
+		if _, err := cli.writeT(proto.Tag(i+1), tw); err != nil {
 			t.Fatalf("writeT[%d]: %v", i, err)
 		}
 	}
@@ -277,7 +277,7 @@ func TestWriteT_SizeExceedsMsize(t *testing.T) {
 		Offset: 0,
 		Data:   make([]byte, 2048),
 	}
-	err := cli.writeT(proto.Tag(1), tw)
+	_, err := cli.writeT(proto.Tag(1), tw)
 	if err == nil {
 		t.Fatal("writeT accepted oversize frame, want error")
 	}
