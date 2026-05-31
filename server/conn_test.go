@@ -340,6 +340,31 @@ func TestNegotiateVersion_DrainsOversizedTversionBody(t *testing.T) {
 	<-done
 }
 
+// TestNegotiateVersion_HandshakeDeadlineClosesStalledPeer asserts that even
+// with no idle timeout configured, a peer that connects and never sends
+// Tversion is closed by the always-on handshake deadline rather than pinning
+// the serve goroutine forever.
+func TestNegotiateVersion_HandshakeDeadlineClosesStalledPeer(t *testing.T) {
+	t.Parallel()
+
+	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
+	srv := New(root, WithLogger(discardLogger()))
+	srv.handshakeTimeout = 50 * time.Millisecond // idleTimeout stays 0
+
+	client, server := net.Pipe()
+	defer func() { _ = client.Close() }()
+
+	done := make(chan struct{})
+	go func() { defer close(done); srv.ServeConn(t.Context(), server) }()
+
+	// Never send Tversion; the handshake deadline must tear the conn down.
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not close a stalled handshake within the deadline")
+	}
+}
+
 type blockingListener struct {
 	closed chan struct{}
 	once   sync.Once

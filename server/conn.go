@@ -32,6 +32,13 @@ const (
 	// negotiationRateLimit is the minimum time between Tversion requests
 	// from the same connection.
 	negotiationRateLimit = 100 * time.Millisecond
+
+	// defaultHandshakeTimeout bounds the initial version handshake when no
+	// idle timeout is configured, so a peer that connects and then stalls
+	// cannot pin a goroutine, fd, and buffer indefinitely (slow-loris). It
+	// applies only to the handshake; established connections without an idle
+	// timeout remain deadline-free.
+	defaultHandshakeTimeout = 30 * time.Second
 )
 
 // String returns the version string for the protocol.
@@ -295,10 +302,19 @@ func (c *conn) signalRecvShutdown() {
 // protocol version and msize. On success, c.protocol, c.msize, and c.codec
 // are set.
 func (c *conn) negotiateVersion(ctx context.Context) error {
-	// Set read deadline for the initial negotiation if idle timeout is configured.
-	if c.server.idleTimeout > 0 {
-		if err := c.nc.SetReadDeadline(time.Now().Add(c.server.idleTimeout)); err != nil {
-			return fmt.Errorf("set initial read deadline: %w", err)
+	// Bound the whole handshake (reading Tversion and writing Rversion) with a
+	// deadline even when no idle timeout is configured, so a peer that opens a
+	// connection and then stalls cannot pin a goroutine, fd, and buffer
+	// forever. Established connections keep their idleTimeout-governed
+	// behavior; the deadline is cleared below on success when no idle timeout
+	// applies. writeRaw re-arms its own write deadline when idleTimeout > 0.
+	handshakeTimeout := c.server.idleTimeout
+	if handshakeTimeout <= 0 {
+		handshakeTimeout = c.server.handshakeTimeout
+	}
+	if handshakeTimeout > 0 {
+		if err := c.nc.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
+			return fmt.Errorf("set handshake deadline: %w", err)
 		}
 	}
 
@@ -360,6 +376,15 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 
 	if res.selected == protocolNone {
 		return ErrNotNegotiated
+	}
+
+	// Without an idle timeout the established connection is deadline-free, so
+	// clear the handshake deadline; otherwise it would expire mid-session. The
+	// hot read loop re-arms the deadline itself when idleTimeout > 0.
+	if c.server.idleTimeout <= 0 {
+		if err := c.nc.SetDeadline(time.Time{}); err != nil {
+			return fmt.Errorf("clear handshake deadline: %w", err)
+		}
 	}
 
 	c.msize = res.msize

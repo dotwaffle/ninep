@@ -26,20 +26,21 @@ const (
 
 // Server serves the 9P protocol over network connections. Create with New.
 type Server struct {
-	root           Node
-	maxMsize       uint32
-	maxInflight    int
-	maxConnections int64         // 0 = unlimited
-	connCount      atomic.Int64  // active connections (internal bookkeeping)
-	maxFids        int           // 0 = unlimited (per-connection cap)
-	idleTimeout    time.Duration // 0 = no timeout (GO-SEC-1)
-	logger         *slog.Logger
-	anames         map[string]Node
-	attacher       Attacher
-	middlewares    []Middleware
-	tracerProvider trace.TracerProvider
-	meterProvider  metric.MeterProvider
-	otelInst       *serverOTelInstruments // server-level metrics (nil if no MeterProvider)
+	root             Node
+	maxMsize         uint32
+	maxInflight      int
+	maxConnections   int64         // 0 = unlimited
+	connCount        atomic.Int64  // active connections (internal bookkeeping)
+	maxFids          int           // 0 = unlimited (per-connection cap)
+	idleTimeout      time.Duration // 0 = no timeout (GO-SEC-1)
+	handshakeTimeout time.Duration // bounds the initial version handshake when idleTimeout is 0
+	logger           *slog.Logger
+	anames           map[string]Node
+	attacher         Attacher
+	middlewares      []Middleware
+	tracerProvider   trace.TracerProvider
+	meterProvider    metric.MeterProvider
+	otelInst         *serverOTelInstruments // server-level metrics (nil if no MeterProvider)
 
 	// tracerRecording is true when the configured TracerProvider produces
 	// recording spans. Populated once by probeOTelProviders in New(), then
@@ -55,10 +56,11 @@ type Server struct {
 // The root must implement NodeLookuper for walk resolution.
 func New(root Node, opts ...Option) *Server {
 	s := &Server{
-		root:        root,
-		maxMsize:    1024 * 1024, // 1MiB default
-		maxInflight: 64,
-		logger:      slog.New(NewTraceHandler(slog.Default().Handler())),
+		root:             root,
+		maxMsize:         1024 * 1024, // 1MiB default
+		maxInflight:      64,
+		logger:           slog.New(NewTraceHandler(slog.Default().Handler())),
+		handshakeTimeout: defaultHandshakeTimeout,
 		// idleTimeout: 0 (zero value = no timeout)
 	}
 	for _, opt := range opts {
