@@ -47,16 +47,14 @@ func newOTelInstruments(mp metric.MeterProvider) *otelInstruments {
 	}
 }
 
-// probeOTel populates c.tracerRecording and c.meterEnabled via a one-time probe
-// of the configured providers.
-func (c *Conn) probeOTel(cfg *config) {
-	if cfg.tracerProvider != nil {
-		tracer := cfg.tracerProvider.Tracer(instrumentationName)
-		_, span := tracer.Start(context.Background(), "probe")
-		c.tracerRecording = span.IsRecording()
-		span.End()
-	}
-
+// probeMeter latches c.meterEnabled from a one-time Enabled() probe of the
+// configured meter provider, a cheap gate the metric path uses to skip
+// attribute computation. The tracer is deliberately NOT probed: a sampler's
+// decision is per-span, so caching one probe span's IsRecording would freeze
+// the sampling decision for the connection's whole life (dropping every span,
+// or recording every span, regardless of the sampler). startSpan instead calls
+// the tracer on each operation and lets the SDK sampler decide.
+func (c *Conn) probeMeter(cfg *config) {
 	if cfg.meterProvider != nil {
 		meter := cfg.meterProvider.Meter(instrumentationName)
 		counter, err := meter.Int64Counter("probe")
@@ -67,7 +65,7 @@ func (c *Conn) probeOTel(cfg *config) {
 }
 
 func (c *Conn) startSpan(ctx context.Context, opName string, msg proto.Message) (context.Context, trace.Span) {
-	if !c.tracerRecording {
+	if c.tracer == nil {
 		return ctx, trace.SpanFromContext(ctx)
 	}
 
@@ -131,7 +129,7 @@ func (c *Conn) recordZCResponse(ctx context.Context, opType proto.MessageType, e
 }
 
 func (c *Conn) recordError(span trace.Span, err error) {
-	if !c.tracerRecording || err == nil {
+	if c.tracer == nil || err == nil {
 		return
 	}
 	span.SetStatus(codes.Error, err.Error())

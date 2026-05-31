@@ -12,8 +12,64 @@ import (
 
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
+
+// TestClientOTel_TracingRespectsParentSampling asserts the tracer honors the
+// SDK sampler per span rather than latching a one-time probe. The client tracer
+// only samples a span whose parent is sampled (root spans, like the old probe,
+// are never sampled); an operation carrying a sampled parent must still be
+// recorded.
+func TestClientOTel_TracingRespectsParentSampling(t *testing.T) {
+	t.Parallel()
+
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSyncer(exporter),
+		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.NeverSample())),
+	)
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	gen := new(server.QIDGenerator)
+	root := memfs.NewDir(gen).AddFile("hello.txt", []byte("hello"))
+	srv := server.New(root)
+	cliNC, srvNC := net.Pipe()
+	defer func() { _ = cliNC.Close() }()
+	defer func() { _ = srvNC.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go srv.ServeConn(ctx, srvNC)
+
+	cli, err := Dial(ctx, cliNC, WithTracer(tp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cli.Close() }()
+
+	// A sampled parent span from an independent always-sample provider. The
+	// client's ParentBased sampler must record the op span because the parent
+	// is sampled, not freeze on a one-time probe decision.
+	parentTP := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	t.Cleanup(func() { _ = parentTP.Shutdown(context.Background()) })
+	opCtx, parent := parentTP.Tracer("test").Start(ctx, "parent")
+	defer parent.End()
+
+	if _, err := cli.Attach(opCtx, "nobody", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	var found bool
+	for _, s := range exporter.GetSpans() {
+		if s.Name == "Tattach" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("Tattach span not recorded; tracing was frozen by the probe instead of honoring per-span sampling")
+	}
+}
 
 func TestClientOTel_Tracing(t *testing.T) {
 	t.Parallel()

@@ -216,10 +216,14 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (_ *Conn, retErr err
 		flushGrace:       defaultFlushGrace,
 	}
 
-	c.probeOTel(cfg)
-	if c.tracerRecording {
+	// Assign the tracer unconditionally when a provider is configured and let
+	// the SDK sampler decide per span; do NOT gate on a one-time probe (that
+	// would freeze the sampling decision for the connection). The meter path
+	// keeps its Enabled() probe as a cheap attribute-computation gate.
+	if cfg.tracerProvider != nil {
 		c.tracer = cfg.tracerProvider.Tracer(instrumentationName)
 	}
+	c.probeMeter(cfg)
 	if c.meterEnabled {
 		c.meter = cfg.meterProvider.Meter(instrumentationName)
 		c.inst = newOTelInstruments(cfg.meterProvider)

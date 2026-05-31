@@ -140,12 +140,11 @@ type Conn struct {
 	// defaultFlushGrace; an internal field so tests can shorten it.
 	flushGrace time.Duration
 
-	tracer          trace.Tracer
-	meter           metric.Meter
-	inst            *otelInstruments
-	opNameAttrs     map[proto.MessageType]metric.MeasurementOption
-	tracerRecording bool
-	meterEnabled    bool
+	tracer       trace.Tracer
+	meter        metric.Meter
+	inst         *otelInstruments
+	opNameAttrs  map[proto.MessageType]metric.MeasurementOption
+	meterEnabled bool
 }
 
 // isClosed returns true once signalShutdown has fired. Non-blocking
