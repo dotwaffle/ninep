@@ -22,13 +22,15 @@ func (f *File) Setattr(ctx context.Context, attr proto.SetAttr) error {
 	return f.conn.Raw().Tsetattr(ctx, f.fid, attr)
 }
 
-// Chmod changes the [File]'s permissions to mode.
+// Chmod changes the [File]'s permissions to mode. The low 12 mode bits are
+// honored (mode & 0o7777), including the setuid, setgid, and sticky bits,
+// matching [Conn.Create]; the os.FileMode type bits are ignored.
 //
 // Requires 9P2000.L; returns a wrapped [ErrNotSupported] on a .u Conn.
 func (f *File) Chmod(ctx context.Context, mode os.FileMode) error {
 	attr := proto.SetAttr{
 		Valid: proto.SetAttrMode,
-		Mode:  uint32(mode & os.ModePerm),
+		Mode:  uint32(mode) & 0o7777,
 	}
 	return f.Setattr(ctx, attr)
 }

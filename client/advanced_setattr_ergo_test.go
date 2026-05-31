@@ -39,6 +39,36 @@ func TestClient_Ergo_Chmod(t *testing.T) {
 	}
 }
 
+// TestClient_Ergo_Chmod_PreservesSpecialBits asserts Chmod keeps the setuid,
+// setgid, and sticky bits instead of masking them off like the old os.ModePerm
+// mask did.
+func TestClient_Ergo_Chmod_PreservesSpecialBits(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	c, _ := newClientServerPair(t, buildTestRoot(t))
+
+	if _, err := c.Attach(ctx, "nobody", ""); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	f, err := c.OpenFile(ctx, "rw.bin", os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	// 0o4755 carries the setuid bit; it must survive the round trip.
+	if err := f.Chmod(ctx, 0o4755); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	attr, err := f.Getattr(ctx, proto.AttrMode)
+	if err != nil {
+		t.Fatalf("Getattr: %v", err)
+	}
+	if got := attr.Mode & 0o7777; got != 0o4755 {
+		t.Errorf("Mode = %o, want %o (special bits dropped?)", got, 0o4755)
+	}
+}
+
 func TestClient_Ergo_Chown(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
