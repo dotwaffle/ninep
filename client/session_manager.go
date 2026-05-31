@@ -23,6 +23,10 @@ type Session struct {
 	// holding the dial. Lets concurrent Conn callers wait cancellably instead
 	// of blocking on the dial under s.mu.
 	dialing chan struct{}
+	// closeCh is closed exactly once by Close. dialWithBackoff selects on it
+	// so Close stops an in-progress retry loop even when the caller passed a
+	// context that never cancels (e.g. context.Background()).
+	closeCh chan struct{}
 	closed  bool
 
 	onReconnect func(context.Context, *Conn) error
@@ -45,8 +49,9 @@ func WithOnReconnect(fn func(context.Context, *Conn) error) SessionOption {
 // establish connections.
 func NewSession(dialer func(ctx context.Context) (net.Conn, error), opts ...Option) *Session {
 	return &Session{
-		dialer: dialer,
-		opts:   opts,
+		dialer:  dialer,
+		opts:    opts,
+		closeCh: make(chan struct{}),
 	}
 }
 
@@ -54,8 +59,9 @@ func NewSession(dialer func(ctx context.Context) (net.Conn, error), opts ...Opti
 // and session options.
 func NewSessionWithOptions(dialer func(ctx context.Context) (net.Conn, error), opts []Option, sopts ...SessionOption) *Session {
 	s := &Session{
-		dialer: dialer,
-		opts:   opts,
+		dialer:  dialer,
+		opts:    opts,
+		closeCh: make(chan struct{}),
 	}
 	for _, opt := range sopts {
 		opt(s)
@@ -141,12 +147,23 @@ func (s *Session) dialWithBackoff(ctx context.Context) (*Conn, error) {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
+		// Close stops the loop even when ctx never cancels (e.g.
+		// context.Background()), so a permanently failing dialer cannot pin
+		// this goroutine for the process lifetime.
+		select {
+		case <-s.closeCh:
+			return nil, ErrSessionClosed
+		default:
+		}
 		t := time.NewTimer(backoffFor(defaultLockBackoff, i))
 		select {
 		case <-t.C:
 		case <-ctx.Done():
 			t.Stop()
 			return nil, ctx.Err()
+		case <-s.closeCh:
+			t.Stop()
+			return nil, ErrSessionClosed
 		}
 	}
 }
@@ -185,6 +202,7 @@ func (s *Session) Close() error {
 		return nil
 	}
 	s.closed = true
+	close(s.closeCh) // stops an in-progress dialWithBackoff retry loop
 	c := s.conn
 	s.conn = nil
 	s.mu.Unlock()

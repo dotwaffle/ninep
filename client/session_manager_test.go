@@ -364,3 +364,48 @@ func TestSession_ConnCancellableDuringSlowDial(t *testing.T) {
 	}
 	close(releaseDial)
 }
+
+// TestSession_CloseStopsRetryLoop verifies Close ends an in-progress dial
+// retry loop even when the caller passed a context that never cancels. A
+// permanently failing dialer would otherwise pin the dial goroutine for the
+// life of the process.
+func TestSession_CloseStopsRetryLoop(t *testing.T) {
+	t.Parallel()
+
+	dialed := make(chan struct{}, 1)
+	dialer := func(_ context.Context) (net.Conn, error) {
+		select {
+		case dialed <- struct{}{}:
+		default:
+		}
+		return nil, errors.New("dial always fails")
+	}
+	s := NewSession(dialer)
+
+	connErr := make(chan error, 1)
+	go func() {
+		// context.Background never cancels, so only Close can end the loop.
+		_, err := s.Conn(context.Background())
+		connErr <- err
+	}()
+
+	// Wait until the dialer has run at least once (loop is spinning).
+	select {
+	case <-dialed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dialer never called")
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	select {
+	case err := <-connErr:
+		if !errors.Is(err, ErrSessionClosed) {
+			t.Fatalf("Conn after Close = %v, want ErrSessionClosed", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Conn did not return after Close; dial goroutine leaked")
+	}
+}
