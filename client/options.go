@@ -83,8 +83,8 @@ func WithVersion(v proto.Version) Option {
 // the negotiated msize is min(client proposal, server cap).
 //
 // No clamping is performed on the input -- callers that proposed 0 or a value
-// smaller than [proto.HeaderSize] will surface [ErrMsizeTooSmall] at Dial
-// time, not here.
+// below the negotiated minimum (256 bytes) will surface [ErrMsizeTooSmall] at
+// Dial time, not here.
 func WithMsize(n uint32) Option {
 	return func(c *config) { c.msize = n }
 }
