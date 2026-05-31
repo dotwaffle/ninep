@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -362,6 +363,52 @@ func TestNegotiateVersion_HandshakeDeadlineClosesStalledPeer(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("server did not close a stalled handshake within the deadline")
+	}
+}
+
+// failingWriteConn wraps a net.Conn and fails all writes once fail is set,
+// while reads continue to work (a write-half-closed peer).
+type failingWriteConn struct {
+	net.Conn
+	fail atomic.Bool
+}
+
+func (c *failingWriteConn) Write(b []byte) (int, error) {
+	if c.fail.Load() {
+		return 0, errors.New("simulated write failure")
+	}
+	return c.Conn.Write(b)
+}
+
+// TestSendResponse_WriteErrorTearsDownConn asserts a write failure tears the
+// connection down (via shutdown signalling) instead of dropping responses and
+// lingering until an unrelated read failure.
+func TestSendResponse_WriteErrorTearsDownConn(t *testing.T) {
+	t.Parallel()
+
+	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
+	srv := New(root, WithLogger(discardLogger()))
+
+	client, serverRaw := net.Pipe()
+	server := &failingWriteConn{Conn: serverRaw}
+	defer func() { _ = client.Close() }()
+
+	done := make(chan struct{})
+	go func() { defer close(done); srv.ServeConn(t.Context(), server) }()
+
+	// Handshake succeeds (writes still allowed).
+	sendTversion(t, client, 65536, "9P2000.L")
+	_ = readRversion(t, client)
+
+	// Fail every subsequent write, then drive a request that needs a reply.
+	server.fail.Store(true)
+	sendMessage(t, client, 1, &proto.Tattach{Fid: 0, Afid: proto.NoFid, Uname: "test"})
+
+	select {
+	case <-done:
+		// ServeConn returned: the write error tore the connection down.
+	case <-time.After(2 * time.Second):
+		t.Fatal("ServeConn did not tear down after a write error")
 	}
 }
 

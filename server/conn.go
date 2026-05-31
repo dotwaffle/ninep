@@ -1033,6 +1033,11 @@ func (c *conn) sendResponseInline(tag proto.Tag, msg proto.Message, rel releaser
 			slog.String("type", msg.Type().String()),
 			slog.Any("error", err),
 		)
+		// A failed write means the connection is broken. Signal shutdown so
+		// cleanup tears it down instead of silently dropping responses until
+		// an unrelated read failure (a write-half-closed peer whose reads
+		// still block would otherwise linger forever with idleTimeout unset).
+		c.signalRecvShutdown()
 	}
 }
 
