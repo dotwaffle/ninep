@@ -44,9 +44,9 @@
 // Override with [WithMsize]. The server's Rversion msize caps the proposal;
 // the negotiated msize is the minimum of the two.
 //
-// Note that the ninep server's default maximum msize is 4 MiB -- the asymmetry
-// is intentional. Server-to-server callers (e.g. ninep→ninep local) can bump
-// with [WithMsize] if profiling shows a win.
+// The ninep server's default maximum msize is also 1 MiB. Callers can raise
+// the client proposal with [WithMsize] (and the server cap with its own
+// WithMaxMsize option) if profiling shows a win.
 //
 // # Errors
 //
