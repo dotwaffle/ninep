@@ -10,6 +10,7 @@ import (
 
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
+	"github.com/dotwaffle/ninep/proto/p9u"
 )
 
 // --- Bridge test node types ---
@@ -161,6 +162,22 @@ type invalidRawDir struct {
 
 func (d *invalidRawDir) RawReaddir(_ context.Context, _ []byte, _ uint64) (int, error) {
 	return d.n, nil
+}
+
+// raceOpenNode returns a tracked handle from Open and runs onOpen during the
+// call, used to simulate a concurrent clunk landing between the fid-state
+// check and markOpenedWithHandle.
+type raceOpenNode struct {
+	Inode
+	handle *testHandle
+	onOpen func()
+}
+
+func (n *raceOpenNode) Open(_ context.Context, _ uint32) (FileHandle, uint32, error) {
+	if n.onOpen != nil {
+		n.onOpen()
+	}
+	return n.handle, 0, nil
 }
 
 // Compile-time checks for bridge test types.
@@ -865,6 +882,53 @@ func TestBridge_ReaddirClampsHugeOffset(t *testing.T) {
 	}
 	if len(rr.Data) != 0 {
 		t.Fatalf("huge offset returned %d bytes, want empty (past end of directory)", len(rr.Data))
+	}
+}
+
+// TestBridge_OpenReleasesHandleOnLostClunkRace asserts that when a concurrent
+// clunk removes the fid during Open, the live handle returned by Open is
+// released rather than leaked (in passthrough, an open OS fd).
+func TestBridge_OpenReleasesHandleOnLostClunkRace(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		proto protocol
+		call  func(c *conn) proto.Message
+	}{
+		{"Tlopen", protocolL, func(c *conn) proto.Message {
+			return c.handleLopen(t.Context(), &p9l.Tlopen{Fid: 1})
+		}},
+		{"Topen", protocolU, func(c *conn) proto.Message {
+			return c.handleUOpen(t.Context(), &p9u.Topen{Fid: 1})
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := &testHandle{}
+			node := &raceOpenNode{handle: h}
+			node.Init(proto.QID{Type: proto.QTFILE, Path: 1}, node)
+
+			c := &conn{fids: newFidTable(), msize: 1024, protocol: tt.proto}
+			if err := c.fids.add(1, &fidState{node: node, state: fidAllocated}, 0); err != nil {
+				t.Fatalf("add fid: %v", err)
+			}
+			// The clunk lands while Open is running, after the state check.
+			node.onOpen = func() { c.fids.clunk(1) }
+
+			msg := tt.call(c)
+			if _, ok := msg.(*p9l.Rlopen); ok {
+				t.Fatal("Open succeeded despite the fid being clunked mid-open")
+			}
+			if _, ok := msg.(*p9u.Ropen); ok {
+				t.Fatal("Open succeeded despite the fid being clunked mid-open")
+			}
+			if !h.released.Load() {
+				t.Fatal("handle leaked: Release was not called after the lost open race")
+			}
+		})
 	}
 }
 

@@ -310,12 +310,23 @@ func (c *conn) handleFlush(_ context.Context, tf *proto.Tflush) proto.Message {
 // releaseHandle calls FileReleaser.Release() on the handle if present.
 // Errors are logged but do not fail the operation (per 9P spec, clunk always succeeds).
 func releaseHandle(ctx context.Context, fs *fidState, logger *slog.Logger) {
-	if fs.handle == nil {
+	releaseFileHandle(ctx, fs.handle, logger)
+}
+
+// releaseFileHandle calls FileReleaser.Release() on a bare handle if it
+// implements the interface. It is used on the lost-race paths where Open or
+// Create produced a live handle but the fid transition then failed: the handle
+// is reachable through no fidState, so without this it would leak (in
+// passthrough, an open OS fd). Errors are logged, not propagated.
+func releaseFileHandle(ctx context.Context, handle FileHandle, logger *slog.Logger) {
+	if handle == nil {
 		return
 	}
-	if rel, ok := fs.handle.(FileReleaser); ok {
+	if rel, ok := handle.(FileReleaser); ok {
 		if err := rel.Release(ctx); err != nil {
-			logger.Debug("file handle release error", slog.Any("error", err))
+			if logger != nil {
+				logger.Debug("file handle release error", slog.Any("error", err))
+			}
 		}
 	}
 }

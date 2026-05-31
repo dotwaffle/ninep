@@ -72,7 +72,9 @@ func (c *conn) handleLopen(ctx context.Context, m *p9l.Tlopen) proto.Message {
 	qid := nodeQID(fs.node)
 
 	if !c.fids.markOpenedWithHandle(m.Fid, handle) {
-		// Raced with another open or clunk; should not happen in practice.
+		// Raced with a concurrent clunk: the fid is gone and the handle is
+		// unreachable, so release it rather than leaking the open fd.
+		releaseFileHandle(ctx, handle, c.logger)
 		return c.errorMsg(proto.EBADF)
 	}
 
@@ -106,6 +108,8 @@ func (c *conn) handleUOpen(ctx context.Context, m *p9u.Topen) proto.Message {
 
 	qid := nodeQID(fs.node)
 	if !c.fids.markOpenedWithHandle(m.Fid, handle) {
+		// Raced with a concurrent clunk: release the now-unreachable handle.
+		releaseFileHandle(ctx, handle, c.logger)
 		return c.errorMsg(proto.EBADF)
 	}
 
@@ -474,12 +478,8 @@ func (c *conn) handleLcreate(ctx context.Context, m *p9l.Tlcreate) proto.Message
 	// Per 9P spec: Tlcreate creates AND opens. The fid mutates to the new child.
 	// Atomically update node and transition to fidOpened state.
 	if !c.fids.updateAndOpen(m.Fid, child, handle) {
-		// Fid was clunked during Create; release handle if present.
-		if handle != nil {
-			if rel, ok := handle.(FileReleaser); ok {
-				_ = rel.Release(ctx)
-			}
-		}
+		// Fid was clunked during Create; release the now-unreachable handle.
+		releaseFileHandle(ctx, handle, c.logger)
 		return c.errorMsg(proto.EBADF)
 	}
 
@@ -528,11 +528,8 @@ func (c *conn) handleUCreate(ctx context.Context, m *p9u.Tcreate) proto.Message 
 	}
 
 	if !c.fids.updateAndOpen(m.Fid, child, handle) {
-		if handle != nil {
-			if rel, ok := handle.(FileReleaser); ok {
-				_ = rel.Release(ctx)
-			}
-		}
+		// Fid was clunked during Create; release the now-unreachable handle.
+		releaseFileHandle(ctx, handle, c.logger)
 		return c.errorMsg(proto.EBADF)
 	}
 
