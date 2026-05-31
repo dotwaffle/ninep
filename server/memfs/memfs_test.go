@@ -367,6 +367,19 @@ func TestMemDirCreate(t *testing.T) {
 	if child != node {
 		t.Error("Lookup returned different node than Create")
 	}
+
+	// A second Create of the same name must fail with EEXIST, regardless
+	// of flags, and must not replace the existing child.
+	dup, _, _, err := dir.Create(t.Context(), "newfile", 0, 0o644, 0)
+	if !errors.Is(err, proto.EEXIST) {
+		t.Errorf("duplicate Create err = %v, want proto.EEXIST", err)
+	}
+	if dup != nil {
+		t.Errorf("duplicate Create node = %v, want nil", dup)
+	}
+	if again, err := dir.Lookup(t.Context(), "newfile"); err != nil || again != node {
+		t.Errorf("after duplicate Create, Lookup = (%v, %v), want original node", again, err)
+	}
 }
 
 func TestMemDirMkdir(t *testing.T) {
@@ -400,6 +413,16 @@ func TestMemDirMkdir(t *testing.T) {
 		}
 	} else {
 		t.Error("Mkdir node does not implement InodeEmbedder")
+	}
+
+	// A second Mkdir of the same name must fail with EEXIST and must not
+	// replace the existing child.
+	dup, err := dir.Mkdir(t.Context(), "subdir", 0o755, 0)
+	if !errors.Is(err, proto.EEXIST) {
+		t.Errorf("duplicate Mkdir err = %v, want proto.EEXIST", err)
+	}
+	if dup != nil {
+		t.Errorf("duplicate Mkdir node = %v, want nil", dup)
 	}
 }
 

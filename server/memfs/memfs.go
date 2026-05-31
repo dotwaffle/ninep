@@ -202,8 +202,13 @@ func (d *MemDir) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error
 }
 
 // Create implements server.NodeCreater. It creates a new MemFile child
-// with the given mode and registers it in the Inode tree.
-func (d *MemDir) Create(_ context.Context, name string, _ uint32, mode proto.FileMode, _ uint32) (server.Node, server.FileHandle, uint32, error) {
+// with the given mode and registers it in the Inode tree. If a child of
+// the same name already exists it returns proto.EEXIST, regardless of
+// the open flags, rather than silently replacing the entry.
+func (d *MemDir) Create(ctx context.Context, name string, _ uint32, mode proto.FileMode, _ uint32) (server.Node, server.FileHandle, uint32, error) {
+	if _, err := d.Lookup(ctx, name); err == nil {
+		return nil, nil, 0, proto.EEXIST
+	}
 	child := &MemFile{Mode: uint32(mode)}
 	child.Init(d.gen.Next(proto.QTFILE), child)
 	d.AddChild(name, child.EmbeddedInode())
@@ -211,8 +216,13 @@ func (d *MemDir) Create(_ context.Context, name string, _ uint32, mode proto.Fil
 }
 
 // Mkdir implements server.NodeMkdirer. It creates a new MemDir child and
-// registers it in the Inode tree.
-func (d *MemDir) Mkdir(_ context.Context, name string, mode proto.FileMode, _ uint32) (server.Node, error) {
+// registers it in the Inode tree. If a child of the same name already
+// exists it returns proto.EEXIST rather than silently replacing the
+// entry.
+func (d *MemDir) Mkdir(ctx context.Context, name string, mode proto.FileMode, _ uint32) (server.Node, error) {
+	if _, err := d.Lookup(ctx, name); err == nil {
+		return nil, proto.EEXIST
+	}
 	child := &MemDir{gen: d.gen, Mode: uint32(mode)}
 	child.Init(d.gen.Next(proto.QTDIR), child)
 	d.AddChild(name, child.EmbeddedInode())
