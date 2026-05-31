@@ -35,7 +35,7 @@
 //     frames, and portable errno mappings.
 //   - [github.com/dotwaffle/ninep/server/memfs] - A fully in-memory, thread-safe filesystem helper
 //     featuring a fluent builder API, designed for mock testing and virtual file systems.
-//   - [github.com/dotwaffle/ninep/server/passthrough] - A high-performance Linux-only passthrough
+//   - [github.com/dotwaffle/ninep/server/passthrough] - A high-performance Linux/FreeBSD passthrough
 //     filesystem that safely exposes host directories via modern *at syscalls.
 //   - [github.com/dotwaffle/ninep/server/fstest] - A protocol-level test harness to comprehensively
 //     validate custom 9P filesystem implementations.
