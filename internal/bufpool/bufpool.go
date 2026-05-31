@@ -46,9 +46,16 @@
 // kernel's silent 9P msize cap. Buffers above this are released to the GC
 // on Put rather than retained, so pool memory stays proportional to
 // steady-state traffic instead of growing to the largest message ever
-// seen. Messages above 1 MiB are legal in the protocol but the kernel
-// will not negotiate above this size, so retaining oversized buffers
-// would cost memory for traffic the server can never see again.
+// seen.
+//
+// The cap is a pooling boundary, not a hard limit on message size. A
+// server configured with a larger WithMaxMsize (for example a
+// ninep-to-ninep deployment that raises msize for throughput) still
+// works, but GetMsgBuf serves any buffer above the top bucket from a
+// fresh allocation that PutMsgBuf drops to the GC rather than pooling.
+// That trades buffer reuse for GC pressure on the oversized path. The
+// Linux kernel client never negotiates above 1 MiB, so it never takes
+// that path; only an explicitly raised msize does.
 //
 // # Bucket alignment caveat
 //
@@ -68,8 +75,9 @@ import (
 
 // Metrics holds counters for pool activity.
 type Metrics struct {
-	// MsgBufMisses is the count of GetMsgBuf calls that exceeded PoolMaxBufSize
-	// and required a fresh allocation.
+	// MsgBufMisses is the count of GetMsgBuf calls whose size exceeded the
+	// largest message bucket (PoolMaxBufSize) and required a fresh,
+	// un-pooled allocation.
 	MsgBufMisses uint64
 	// StringBufMisses is the count of GetStringBuf calls that exceeded the
 	// largest bucket (4 KiB) and required a fresh allocation.
@@ -161,8 +169,9 @@ func msgBucketFor(n int) int {
 }
 
 // GetMsgBuf returns a pointer to a []byte with capacity >= n, drawn from
-// the smallest bucket that fits. If n exceeds PoolMaxBufSize, a fresh
-// buffer of size n is allocated (not pooled).
+// the smallest bucket that fits. If n exceeds the largest bucket
+// (PoolMaxBufSize, 1 MiB), a fresh buffer of size n is allocated and left
+// un-pooled: PutMsgBuf drops it to the GC and MsgBufMisses counts it.
 func GetMsgBuf(n int) *[]byte {
 	idx := msgBucketFor(n)
 	if idx < 0 {
