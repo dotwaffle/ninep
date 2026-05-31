@@ -149,6 +149,9 @@ func (n *Node) Mknod(_ context.Context, name string, mode proto.FileMode, major,
 	if n.QID().Type != proto.QTDIR {
 		return nil, proto.ENOTDIR
 	}
+	if n.deviceNodeDenied(mode) {
+		return nil, proto.EPERM
+	}
 
 	dev := unix.Mkdev(major, minor)
 	if err := unix.Mknodat(n.fd, name, uint32(mode), uint64(dev)); err != nil {

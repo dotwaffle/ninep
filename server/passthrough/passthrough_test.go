@@ -5,6 +5,7 @@ package passthrough
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -557,6 +558,64 @@ func TestLookup_DotDotCannotEscapeRoot(t *testing.T) {
 	up1 := dotdot(sub) // -> export root dir
 	up2 := dotdot(up1) // must clamp at the export root
 	assertContained("sub/../..", up2)
+}
+
+// TestMknod_DeniesDeviceNodesByDefault asserts a default passthrough server
+// refuses block and character device creation before reaching the kernel, so a
+// privileged (CAP_MKNOD) server cannot be coerced into seeding host device
+// nodes inside the export. FIFOs are unaffected.
+func TestMknod_DeniesDeviceNodesByDefault(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	root, err := NewRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close(t.Context()) })
+	ctx := t.Context()
+
+	if _, err := root.Mknod(ctx, "dev", proto.FileMode(unix.S_IFCHR|0o644), 1, 3, 0); !errors.Is(err, proto.EPERM) {
+		t.Fatalf("Mknod char device: err = %v, want EPERM", err)
+	}
+	if _, serr := os.Stat(filepath.Join(dir, "dev")); !os.IsNotExist(serr) {
+		t.Fatalf("device node created despite denial: stat err = %v", serr)
+	}
+
+	// FIFOs are not device nodes; the guard must not block them.
+	if _, err := root.Mknod(ctx, "fifo", proto.FileMode(unix.S_IFIFO|0o644), 0, 0, 0); err != nil {
+		t.Fatalf("Mknod fifo: %v", err)
+	}
+}
+
+// TestDeviceNodeDenied checks the guard predicate across both config states
+// without needing CAP_MKNOD to actually create a device.
+func TestDeviceNodeDenied(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	def, err := NewRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = def.Close(t.Context()) })
+	on, err := NewRoot(dir, WithDeviceNodes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = on.Close(t.Context()) })
+
+	chr := proto.FileMode(unix.S_IFCHR | 0o644)
+	blk := proto.FileMode(unix.S_IFBLK | 0o644)
+	fifo := proto.FileMode(unix.S_IFIFO | 0o644)
+
+	if !def.deviceNodeDenied(chr) || !def.deviceNodeDenied(blk) {
+		t.Error("default root must deny block and character devices")
+	}
+	if def.deviceNodeDenied(fifo) {
+		t.Error("default root must not deny FIFOs")
+	}
+	if on.deviceNodeDenied(chr) || on.deviceNodeDenied(blk) {
+		t.Error("WithDeviceNodes must allow block and character devices")
+	}
 }
 
 func TestLookupSetattr_SizeUsesResolvedFD(t *testing.T) {

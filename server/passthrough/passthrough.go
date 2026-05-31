@@ -43,6 +43,21 @@ func NewRoot(hostPath string, opts ...Option) (*Root, error) {
 	return r, nil
 }
 
+// deviceNodeDenied reports whether mode requests a block or character device
+// node that this filesystem refuses to create. Device nodes are denied unless
+// WithDeviceNodes was set; FIFOs, sockets, and regular files are unaffected.
+func (n *Node) deviceNodeDenied(mode proto.FileMode) bool {
+	if n.root.allowDevice {
+		return false
+	}
+	switch uint32(mode) & unix.S_IFMT {
+	case unix.S_IFBLK, unix.S_IFCHR:
+		return true
+	default:
+		return false
+	}
+}
+
 // lookupParent resolves a ".." walk element. It clamps at the export root: if
 // this node's directory is the export root (matching the recorded dev/ino),
 // ".." resolves to the root directory itself instead of the host parent, so a
