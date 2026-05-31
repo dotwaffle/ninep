@@ -530,8 +530,10 @@ func (f *File) Sync() error {
 // different wire op (Tread on a directory fid returning packed .u
 // Stat entries) and is deferred to a future phase.
 //
-// The returned entries' [os.DirEntry.Info] method returns a populated
-// [fs.FileInfo] via Tgetattr.
+// The returned entries' [os.DirEntry.Info] method returns
+// (nil, [ErrNotSupported]); Tgetattr is not wired through ReadDir.
+// Callers needing an [fs.FileInfo] should walk to the entry and call
+// [File.Stat].
 //
 // Like the non-ctx io methods, ReadDir honors the Conn's
 // [WithRequestTimeout]; with no timeout configured it has no deadline.
