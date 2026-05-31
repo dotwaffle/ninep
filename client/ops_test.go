@@ -30,14 +30,15 @@ func newTestConn(t *testing.T) (*Conn, net.Conn) {
 		_ = srvNC.Close()
 	})
 	c := &Conn{
-		nc:       cliNC,
-		dialect:  protocolL,
-		msize:    65536,
-		codec:    codecL,
-		tags:     newTagAllocator(8),
-		inflight: newInflightMap(),
-		closeCh:  make(chan struct{}),
-		logger:   slog.New(slog.NewTextHandler(discardWriter{}, nil)),
+		nc:         cliNC,
+		dialect:    protocolL,
+		msize:      65536,
+		codec:      codecL,
+		tags:       newTagAllocator(8),
+		inflight:   newInflightMap(),
+		closeCh:    make(chan struct{}),
+		logger:     slog.New(slog.NewTextHandler(discardWriter{}, nil)),
+		flushGrace: defaultFlushGrace,
 	}
 	return c, srvNC
 }
