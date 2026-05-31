@@ -659,10 +659,15 @@ func (c *conn) handleRequest(ctx context.Context) {
 		// short-circuit explicitly here, AFTER recvMu unlock so a
 		// sibling can already be reading the next message.
 		if tf, ok := msg.(*proto.Tflush); ok {
-			resp := c.handleFlush(ctx, tf)
-			// sendResponseInline accepts a nil releaser; Rflush has no
-			// pooled buffers to release.
-			c.sendResponseInline(tag, resp, nil)
+			// handleFlush blocks until the flushed request's response is
+			// written, then returns Rflush. It returns nil when the
+			// connection is closing or it had to close the connection after
+			// a drain timeout; in that case no Rflush is sent.
+			if resp := c.handleFlush(ctx, tf); resp != nil {
+				// sendResponseInline accepts a nil releaser; Rflush has no
+				// pooled buffers to release.
+				c.sendResponseInline(tag, resp, nil)
+			}
 			putCachedMsg(msg)
 			// No deferredBufPtr possible here (Tflush is not Twrite),
 			// but defensively release if non-nil.

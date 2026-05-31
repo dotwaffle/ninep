@@ -25,6 +25,11 @@ type inflightMap struct {
 
 type inflightEntry struct {
 	rctx *requestCtx
+	// done is created lazily by flushWait and closed by finish. It lets a
+	// Tflush handler wait for the flushed request's response to be written
+	// before returning Rflush. Nil on the normal path, so a request that is
+	// never flushed pays no extra allocation.
+	done chan struct{}
 }
 
 // newInflightMap returns an initialized inflight map.
@@ -49,9 +54,14 @@ func (im *inflightMap) start(tag proto.Tag, rctx *requestCtx) bool {
 
 // finish removes the tag from the inflight map and signals the drain
 // channel if no requests remain. Must be called exactly once per start call.
+// It is invoked after the handler's response has been written, so closing the
+// entry's done channel here orders a waiting Tflush after that response.
 func (im *inflightMap) finish(tag proto.Tag) {
 	im.mu.Lock()
 	defer im.mu.Unlock()
+	if entry, ok := im.entries[tag]; ok && entry.done != nil {
+		close(entry.done)
+	}
 	delete(im.entries, tag)
 	im.count--
 	if im.count == 0 && im.drained != nil {
@@ -72,15 +82,36 @@ func (im *inflightMap) drainChan() chan struct{} {
 	return im.drained
 }
 
-// flush cancels the context of the request with the given tag. It does NOT
-// remove the entry -- the handler goroutine is still running and will call
-// finish when done. This prevents tag-reuse races.
+// flush cancels the context of the request with the given tag without waiting
+// for it to finish. It does NOT remove the entry -- the handler goroutine is
+// still running and will call finish when done.
 func (im *inflightMap) flush(tag proto.Tag) {
 	im.mu.Lock()
 	defer im.mu.Unlock()
 	if entry, ok := im.entries[tag]; ok {
 		entry.rctx.flush(errTflushCancelled)
 	}
+}
+
+// flushWait cancels the request with the given tag and returns a channel that
+// closes when its handler finishes (after its response is written). It does
+// NOT remove the entry -- the handler goroutine is still running and will call
+// finish when done, which both removes the entry and closes the channel,
+// preventing tag-reuse races. Returns nil if the tag is not in flight, in
+// which case the caller need not wait.
+func (im *inflightMap) flushWait(tag proto.Tag) <-chan struct{} {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	entry, ok := im.entries[tag]
+	if !ok {
+		return nil
+	}
+	entry.rctx.flush(errTflushCancelled)
+	if entry.done == nil {
+		entry.done = make(chan struct{})
+		im.entries[tag] = entry
+	}
+	return entry.done
 }
 
 // cancelAll cancels all in-flight request contexts. Used during connection

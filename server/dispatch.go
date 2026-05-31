@@ -7,6 +7,7 @@ import (
 	"path"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
@@ -299,12 +300,35 @@ func (c *conn) handleClunk(ctx context.Context, tc *proto.Tclunk) proto.Message 
 	return &proto.Rclunk{}
 }
 
-// handleFlush cancels the target request's context and returns Rflush.
-// Per spec, Rflush is always returned regardless of whether the target tag
-// was found. The handler goroutine will see ctx.Done() and should abort.
-func (c *conn) handleFlush(_ context.Context, tf *proto.Tflush) proto.Message {
-	c.inflight.flush(tf.OldTag)
-	return &proto.Rflush{}
+// handleFlush cancels the target request's context and returns Rflush, but
+// only after the flushed request's handler has written its response. 9P
+// flush(5) lets a client recycle oldtag once it sees Rflush; returning Rflush
+// before the flushed response is on the wire would let a spec-strict peer
+// alias a late response onto a freshly issued request. Per spec Rflush is
+// still returned regardless of whether the tag was found.
+//
+// Returns nil (and no response is sent) when the flushed handler does not
+// finish within the cleanup deadline, or the connection is shutting down; in
+// the deadline case the connection is closed, mirroring the Tversion drain
+// fallback, rather than risk the tag-reuse aliasing.
+func (c *conn) handleFlush(ctx context.Context, tf *proto.Tflush) proto.Message {
+	done := c.inflight.flushWait(tf.OldTag)
+	if done == nil {
+		return &proto.Rflush{}
+	}
+	select {
+	case <-done:
+		return &proto.Rflush{}
+	case <-ctx.Done():
+		return nil
+	case <-time.After(cleanupDeadline):
+		c.logger.Warn("flush: timed out waiting for flushed request; closing connection",
+			slog.Uint64("oldtag", uint64(tf.OldTag)),
+		)
+		c.signalRecvShutdown()
+		_ = c.nc.Close()
+		return nil
+	}
 }
 
 // releaseHandle calls FileReleaser.Release() on the handle if present.

@@ -631,3 +631,39 @@ var (
 	_ net.Conn
 	_ sync.Mutex
 )
+
+// TestHandleFlush_WaitsForFlushedResponse asserts handleFlush does not return
+// Rflush until the flushed request's handler has finished (its response is
+// written), so a client cannot recycle oldtag and alias a late response.
+func TestHandleFlush_WaitsForFlushedResponse(t *testing.T) {
+	t.Parallel()
+
+	c := &conn{inflight: newInflightMap(), logger: discardLogger()}
+	rctx := getRequestCtx(t.Context())
+	if !c.inflight.start(1, rctx) {
+		t.Fatal("inflight.start failed")
+	}
+
+	flushDone := make(chan proto.Message, 1)
+	go func() {
+		flushDone <- c.handleFlush(t.Context(), &proto.Tflush{OldTag: 1})
+	}()
+
+	// Rflush must not be produced while the flushed request is still running.
+	select {
+	case <-flushDone:
+		t.Fatal("handleFlush returned Rflush before the flushed request finished")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	c.inflight.finish(1)
+
+	select {
+	case resp := <-flushDone:
+		if _, ok := resp.(*proto.Rflush); !ok {
+			t.Fatalf("got %T, want Rflush", resp)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleFlush did not return after the flushed request finished")
+	}
+}
