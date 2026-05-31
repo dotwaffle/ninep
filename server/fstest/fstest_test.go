@@ -378,3 +378,34 @@ var (
 	_ server.InodeEmbedder = (*lockMockFile)(nil)
 	_ server.InodeEmbedder = (*lockMockRoot)(nil)
 )
+
+// TestTestFileConcurrentAccess exercises the testFile mutex directly.
+// The server dispatches requests for one connection concurrently, so
+// Read, Write, and Getattr can run at the same time against a single
+// node; without the guard, Write's slice reallocation races the
+// readers. The assertion is the -race detector staying quiet.
+func TestTestFileConcurrentAccess(t *testing.T) {
+	t.Parallel()
+	f := &testFile{}
+
+	const writers, readers, iters = 4, 4, 300
+	var wg sync.WaitGroup
+	for w := range writers {
+		wg.Go(func() {
+			buf := []byte{byte(w), byte(w), byte(w), byte(w)}
+			for i := range iters {
+				_, _ = f.Write(context.Background(), buf, uint64(i*4))
+			}
+		})
+	}
+	for range readers {
+		wg.Go(func() {
+			buf := make([]byte, 128)
+			for range iters {
+				_, _ = f.Read(context.Background(), buf, 0)
+				_, _ = f.Getattr(context.Background(), 0)
+			}
+		})
+	}
+	wg.Wait()
+}

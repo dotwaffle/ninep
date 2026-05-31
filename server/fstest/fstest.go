@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -489,9 +490,13 @@ func (d *testDir) Unlink(_ context.Context, name string, _ uint32) error {
 	return nil
 }
 
-// testFile is an in-memory file for test tree construction.
+// testFile is an in-memory file for test tree construction. data is
+// guarded by mu because the server dispatches requests for one
+// connection concurrently: Write reallocates data while Read and
+// Getattr read it, so an unguarded field races under -race.
 type testFile struct {
 	server.Inode
+	mu   sync.RWMutex
 	data []byte
 }
 
@@ -500,6 +505,8 @@ func (f *testFile) Open(_ context.Context, _ uint32) (server.FileHandle, uint32,
 }
 
 func (f *testFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	size := uint64(len(f.data))
 	if offset >= size {
 		return 0, nil
@@ -509,6 +516,8 @@ func (f *testFile) Read(_ context.Context, buf []byte, offset uint64) (int, erro
 }
 
 func (f *testFile) Write(_ context.Context, data []byte, offset uint64) (uint32, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	end := int(offset) + len(data)
 	if end > len(f.data) {
 		newData := make([]byte, end)
@@ -520,6 +529,8 @@ func (f *testFile) Write(_ context.Context, data []byte, offset uint64) (uint32,
 }
 
 func (f *testFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	return proto.Attr{
 		Mode:  0o644,
 		Size:  uint64(len(f.data)),
