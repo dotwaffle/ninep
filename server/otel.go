@@ -111,13 +111,15 @@ func newOTelMiddleware(tp trace.TracerProvider, mp metric.MeterProvider, c *conn
 				span.SetAttributes(attribute.String("ninep.protocol", c.protocol.String()))
 			}
 
-			// Measure request size. Uses ByteCounter so encoding never
-			// allocates or copies bytes; it just sums field widths.
-			// Gated by Enabled so noop meters skip even the counting.
+			// Measure request size. The read loop already knows the wire
+			// frame size and records it on the requestCtx, so report it
+			// directly rather than walking every field a second time
+			// through ByteCounter. The body length the old path summed is
+			// the frame size minus the fixed header. Gated by Enabled so
+			// noop meters skip even the subtraction.
 			if inst.reqSize.Enabled(ctx) {
-				var reqBytes proto.ByteCounter
-				if err := msg.EncodeTo(&reqBytes); err == nil {
-					inst.reqSize.Add(ctx, int64(reqBytes))
+				if size := requestWireSize(ctx); size >= proto.HeaderSize {
+					inst.reqSize.Add(ctx, int64(size)-int64(proto.HeaderSize))
 				}
 			}
 

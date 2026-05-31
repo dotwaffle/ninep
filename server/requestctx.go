@@ -56,6 +56,24 @@ type requestCtx struct {
 	initOnce  sync.Once       // guards done = make(chan struct{})
 	closeOnce sync.Once       // guards close(done)
 	flushed   atomic.Bool
+	wireSize  uint32 // full wire frame size of this request; 0 if unrecorded
+}
+
+// wireSizeKey is the private context key under which the read loop records
+// a request's full wire frame size on its requestCtx. The OTel middleware
+// reads it via [requestWireSize] to report request size without
+// re-encoding the message. Unexported so it is unreachable off-package.
+type wireSizeKey struct{}
+
+// requestWireSize returns the full wire frame size recorded on the
+// request's requestCtx, or 0 if the context carries none. It traverses the
+// context chain via Value, so it still resolves after middleware (the OTel
+// span in particular) has wrapped the requestCtx.
+func requestWireSize(ctx context.Context) uint32 {
+	if v, ok := ctx.Value(wireSizeKey{}).(uint32); ok {
+		return v
+	}
+	return 0
 }
 
 // Deadline always returns no deadline. The per-request path does not
@@ -86,9 +104,15 @@ func (r *requestCtx) Err() error {
 	return nil
 }
 
-// Value delegates to the parent context. parent is nilled on pool return;
-// callers must not invoke Value after putRequestCtx.
-func (r *requestCtx) Value(key any) any { return r.parent.Value(key) }
+// Value answers the private wireSizeKey from the recorded request size and
+// otherwise delegates to the parent context. parent is nilled on pool
+// return; callers must not invoke Value after putRequestCtx.
+func (r *requestCtx) Value(key any) any {
+	if key == (wireSizeKey{}) {
+		return r.wireSize
+	}
+	return r.parent.Value(key)
+}
 
 // flush marks the request cancelled and wakes any caller parked on Done().
 // Idempotent via a CAS on flushed; double-close of the done channel is
@@ -143,5 +167,6 @@ func putRequestCtx(r *requestCtx) {
 	r.initOnce = sync.Once{}
 	r.closeOnce = sync.Once{}
 	r.parent = nil
+	r.wireSize = 0
 	requestCtxPool.Put(r)
 }

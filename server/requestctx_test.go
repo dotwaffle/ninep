@@ -86,6 +86,8 @@ func TestRequestCtxPoolReuseNoPhantomCancel(t *testing.T) {
 		if err := a.Err(); err != context.Canceled {
 			t.Fatalf("A.Err() = %v, want context.Canceled", err)
 		}
+		// Dirty the recorded wire size so the reset is what clears it.
+		a.wireSize = 4096
 		putRequestCtx(a)
 
 		// Request B: borrow. Assert Err() == nil BEFORE calling Done() so
@@ -95,6 +97,9 @@ func TestRequestCtxPoolReuseNoPhantomCancel(t *testing.T) {
 		defer putRequestCtx(b)
 		if err := b.Err(); err != nil {
 			t.Fatalf("B.Err() = %v, want nil (phantom cancel from A state)", err)
+		}
+		if b.wireSize != 0 {
+			t.Fatalf("B.wireSize = %d, want 0 (stale size leaked from A)", b.wireSize)
 		}
 		doneB := b.Done()
 		select {

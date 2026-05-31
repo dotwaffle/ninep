@@ -579,6 +579,21 @@ func TestOTelMiddlewareRequestResponseSize(t *testing.T) {
 	if reqSize == nil {
 		t.Fatal("expected metric 'ninep.server.request.size', not found")
 	}
+	// Only the Tattach reaches the middleware (Tversion short-circuits
+	// before dispatch). Its .L body is fid[4] + afid[4] + uname[2+4] +
+	// aname[2+0] + n_uname[4] = 20 bytes, which equals the wire frame size
+	// minus the 7-byte header. This pins the read-loop-recorded size
+	// against the value the old ByteCounter re-encode produced.
+	reqSum, ok := reqSize.Data.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("request.size: expected Sum[int64], got %T", reqSize.Data)
+	}
+	if len(reqSum.DataPoints) == 0 {
+		t.Fatal("request.size: expected at least one data point")
+	}
+	if got := reqSum.DataPoints[0].Value; got != 20 {
+		t.Errorf("request.size = %d, want 20 (Tattach body length)", got)
+	}
 
 	respSize := findMetric(rm, "ninep.server.response.size")
 	if respSize == nil {

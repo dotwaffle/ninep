@@ -665,6 +665,9 @@ func (c *conn) handleRequest(ctx context.Context) {
 		// chain AFTER inflight.finish (LIFO ordering - putRequestCtx is
 		// registered first so it executes last).
 		rctx := getRequestCtx(ctx)
+		// Record the wire frame size so the OTel middleware can report
+		// request size without re-encoding the decoded message.
+		rctx.wireSize = size
 		if !c.inflight.start(tag, rctx) {
 			putRequestCtx(rctx)
 			if deferredBufPtr != nil {
