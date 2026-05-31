@@ -24,6 +24,12 @@ func init() {
 		{Name: "read/offset", Run: testReadOffset},
 		{Name: "read/past-eof", Run: testReadPastEOF},
 		{Name: "write/basic", Run: testWriteBasic},
+		{Name: "write/grow", Run: testWriteGrow},
+		{Name: "write/sparse", Run: testWriteSparse},
+
+		// Setattr cases
+		{Name: "setattr/truncate", Run: testSetattrTruncate},
+		{Name: "setattr/extend", Run: testSetattrExtend},
 
 		// Directory cases
 		{Name: "readdir/basic", Run: testReaddirBasic},
@@ -205,6 +211,129 @@ func testWriteBasic(t *testing.T, root server.Node) {
 	data := expectRread(t, msg)
 	if !bytes.Equal(data[:len(writeData)], writeData) {
 		t.Errorf("read after write = %q, want prefix %q", data, writeData)
+	}
+}
+
+// createScratch clones the root fid, creates a fresh read-write file
+// named on it, and returns with fid 1 left as the open created handle.
+// New write/setattr cases use a scratch file rather than file.txt so
+// they do not depend on mutations write/basic makes to a shared root.
+func createScratch(t *testing.T, tc *testConn, name string) {
+	t.Helper()
+	attach(t, tc, 1, 0, "test", "")
+	expectRwalk(t, walk(t, tc, 2, 0, 1))
+	msg := create(t, tc, 3, 1, name, syscall.O_RDWR, 0o644, 0)
+	if _, ok := msg.(*p9l.Rlcreate); !ok {
+		t.Fatalf("expected Rlcreate for %q, got %T: %+v", name, msg, msg)
+	}
+}
+
+func testWriteGrow(t *testing.T, root server.Node) {
+	tc := newTestConn(t, root)
+	createScratch(t, tc, "growfile")
+
+	// Write at offset 0, then append a second chunk past the current end
+	// of file. The reported size must cover both writes and a full read
+	// must return their concatenation.
+	first := []byte("hello")
+	if n := expectRwrite(t, write(t, tc, 4, 1, 0, first)); n != uint32(len(first)) {
+		t.Fatalf("write first: count = %d, want %d", n, len(first))
+	}
+	second := []byte("world")
+	if n := expectRwrite(t, write(t, tc, 5, 1, uint64(len(first)), second)); n != uint32(len(second)) {
+		t.Fatalf("write second: count = %d, want %d", n, len(second))
+	}
+
+	want := append(append([]byte{}, first...), second...)
+	rga := expectRgetattr(t, getattr(t, tc, 6, 1, proto.AttrAll))
+	if rga.Attr.Size != uint64(len(want)) {
+		t.Errorf("grown size = %d, want %d", rga.Attr.Size, len(want))
+	}
+	data := expectRread(t, read(t, tc, 7, 1, 0, 4096))
+	if !bytes.Equal(data, want) {
+		t.Errorf("read after grow = %q, want %q", data, want)
+	}
+}
+
+func testWriteSparse(t *testing.T, root server.Node) {
+	tc := newTestConn(t, root)
+	createScratch(t, tc, "sparsefile")
+
+	// Write at a non-zero offset on an empty file. The gap before the
+	// payload must read back as zero fill and the size must cover it.
+	const gap = 8
+	payload := []byte("tail")
+	if n := expectRwrite(t, write(t, tc, 4, 1, gap, payload)); n != uint32(len(payload)) {
+		t.Fatalf("sparse write: count = %d, want %d", n, len(payload))
+	}
+
+	wantSize := uint64(gap) + uint64(len(payload))
+	rga := expectRgetattr(t, getattr(t, tc, 5, 1, proto.AttrAll))
+	if rga.Attr.Size != wantSize {
+		t.Errorf("sparse size = %d, want %d", rga.Attr.Size, wantSize)
+	}
+
+	data := expectRread(t, read(t, tc, 6, 1, 0, 4096))
+	if uint64(len(data)) != wantSize {
+		t.Fatalf("sparse read len = %d, want %d", len(data), wantSize)
+	}
+	for i := range gap {
+		if data[i] != 0 {
+			t.Errorf("sparse gap byte %d = %d, want 0", i, data[i])
+		}
+	}
+	if !bytes.Equal(data[gap:], payload) {
+		t.Errorf("sparse tail = %q, want %q", data[gap:], payload)
+	}
+}
+
+func testSetattrTruncate(t *testing.T, root server.Node) {
+	tc := newTestConn(t, root)
+	createScratch(t, tc, "truncfile")
+
+	content := []byte("0123456789")
+	expectRwrite(t, write(t, tc, 4, 1, 0, content))
+
+	// Shrink to 4 bytes via Tsetattr(size).
+	if _, ok := setattr(t, tc, 5, 1, proto.SetAttr{Valid: proto.SetAttrSize, Size: 4}).(*p9l.Rsetattr); !ok {
+		t.Fatalf("expected Rsetattr for truncate")
+	}
+	rga := expectRgetattr(t, getattr(t, tc, 6, 1, proto.AttrAll))
+	if rga.Attr.Size != 4 {
+		t.Errorf("size after truncate = %d, want 4", rga.Attr.Size)
+	}
+	data := expectRread(t, read(t, tc, 7, 1, 0, 4096))
+	if !bytes.Equal(data, content[:4]) {
+		t.Errorf("read after truncate = %q, want %q", data, content[:4])
+	}
+}
+
+func testSetattrExtend(t *testing.T, root server.Node) {
+	tc := newTestConn(t, root)
+	createScratch(t, tc, "extendfile")
+
+	content := []byte("abc")
+	expectRwrite(t, write(t, tc, 4, 1, 0, content))
+
+	// Grow to 8 bytes via Tsetattr(size); the new tail must read as zero.
+	if _, ok := setattr(t, tc, 5, 1, proto.SetAttr{Valid: proto.SetAttrSize, Size: 8}).(*p9l.Rsetattr); !ok {
+		t.Fatalf("expected Rsetattr for extend")
+	}
+	rga := expectRgetattr(t, getattr(t, tc, 6, 1, proto.AttrAll))
+	if rga.Attr.Size != 8 {
+		t.Errorf("size after extend = %d, want 8", rga.Attr.Size)
+	}
+	data := expectRread(t, read(t, tc, 7, 1, 0, 4096))
+	if len(data) != 8 {
+		t.Fatalf("read after extend len = %d, want 8", len(data))
+	}
+	if !bytes.Equal(data[:3], content) {
+		t.Errorf("extend head = %q, want %q", data[:3], content)
+	}
+	for i := 3; i < 8; i++ {
+		if data[i] != 0 {
+			t.Errorf("extend tail byte %d = %d, want 0", i, data[i])
+		}
 	}
 }
 

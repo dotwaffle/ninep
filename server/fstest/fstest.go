@@ -263,6 +263,14 @@ func unlink(t *testing.T, tc *testConn, tag proto.Tag, dirFid proto.Fid, name st
 	return msg
 }
 
+// setattr sends Tsetattr and returns the raw response.
+func setattr(t *testing.T, tc *testConn, tag proto.Tag, fid proto.Fid, attr proto.SetAttr) proto.Message {
+	t.Helper()
+	sendMsg(t, tc.client, tag, &p9l.Tsetattr{Fid: fid, Attr: attr})
+	_, msg := readMsg(t, tc.client)
+	return msg
+}
+
 // expectRwalk asserts the response is an Rwalk and returns it.
 func expectRwalk(t *testing.T, msg proto.Message) *proto.Rwalk {
 	t.Helper()
@@ -303,6 +311,16 @@ func expectRwrite(t *testing.T, msg proto.Message) uint32 {
 		t.Fatalf("expected Rwrite, got %T: %+v", msg, msg)
 	}
 	return rw.Count
+}
+
+// expectRgetattr asserts the response is an Rgetattr and returns it.
+func expectRgetattr(t *testing.T, msg proto.Message) *p9l.Rgetattr {
+	t.Helper()
+	rga, ok := msg.(*p9l.Rgetattr)
+	if !ok {
+		t.Fatalf("expected Rgetattr, got %T: %+v", msg, msg)
+	}
+	return rga
 }
 
 // lopen sends Tlopen and returns the raw response (Rlopen or Rlerror).
@@ -533,6 +551,28 @@ func (f *testFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, err
 		Size:  uint64(len(f.data)),
 		NLink: 1,
 	}, nil
+}
+
+// Setattr implements server.NodeSetattrer. Only size changes are
+// observable on this minimal node: truncate reslices data and extend
+// grows it with zero fill, mirroring memfs's MemFile. Other valid bits
+// are accepted as no-ops.
+func (f *testFile) Setattr(_ context.Context, attr proto.SetAttr) error {
+	if attr.Valid&proto.SetAttrSize == 0 {
+		return nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	newSize := int(attr.Size)
+	switch {
+	case newSize < len(f.data):
+		f.data = f.data[:newSize]
+	case newSize > len(f.data):
+		grown := make([]byte, newSize)
+		copy(grown, f.data)
+		f.data = grown
+	}
+	return nil
 }
 
 // parseDirents parses raw Rreaddir data into a list of dirent entries.
