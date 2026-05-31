@@ -19,7 +19,9 @@ const instrumentationName = "github.com/dotwaffle/ninep/server"
 // WithTracer sets the OpenTelemetry TracerProvider for the server. When set,
 // an OTel middleware is automatically prepended to the middleware chain,
 // producing a span for every 9P operation. If not set, no tracing overhead
-// is incurred.
+// is incurred. The server never consults the OTel global provider set via
+// otel.SetTracerProvider; pass otel.GetTracerProvider() explicitly to route
+// spans to the globally installed SDK.
 func WithTracer(tp trace.TracerProvider) Option {
 	return func(s *Server) { s.tracerProvider = tp }
 }
@@ -27,7 +29,10 @@ func WithTracer(tp trace.TracerProvider) Option {
 // WithMeter sets the OpenTelemetry MeterProvider for the server. When set,
 // an OTel middleware is automatically prepended to the middleware chain,
 // recording duration, request/response sizes, and active request counts. If
-// not set, no metrics overhead is incurred.
+// not set, no metrics overhead is incurred. The server never consults the
+// OTel global provider set via otel.SetMeterProvider; pass
+// otel.GetMeterProvider() explicitly to route metrics to the globally
+// installed SDK.
 func WithMeter(mp metric.MeterProvider) Option {
 	return func(s *Server) { s.meterProvider = mp }
 }
