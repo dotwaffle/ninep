@@ -33,7 +33,8 @@ func (c *conn) cleanup() {
 	deadlineCtx, deadlineCancel := context.WithTimeout(context.Background(), cleanupDeadline)
 	defer deadlineCancel()
 
-	if err := c.inflight.waitWithDeadline(deadlineCtx); err != nil {
+	drained := c.inflight.waitWithDeadline(deadlineCtx) == nil
+	if !drained {
 		c.logger.Warn("cleanup: timed out waiting for inflight requests",
 			slog.Int("remaining", c.inflight.len()),
 		)
@@ -45,22 +46,24 @@ func (c *conn) cleanup() {
 	// already closed nc on ctx.Done, this returns ErrClosed (ignored).
 	_ = c.nc.Close()
 
-	// Wait for handleRequest goroutines to exit, bounded by the cleanup
-	// deadline. A stuck handler would already have caused step 2 to log;
-	// this step waits for the loop bodies to fall through. Same orphan
-	// semantics as before: stuck handlers remain until they eventually
-	// return.
-	recvDone := make(chan struct{})
-	go func() {
-		c.recvWG.Wait()
-		close(recvDone)
-	}()
-	select {
-	case <-recvDone:
-	case <-deadlineCtx.Done():
-		c.logger.Warn("cleanup: timed out waiting for recv goroutines to exit",
-			slog.Int("remaining_workers", int(c.workerCount.Load())),
-		)
+	// Wait for handleRequest goroutines to exit, but only when handlers
+	// drained. With nc closed, the read goroutines fall through promptly, so
+	// recvWG.Wait completes. When a handler is permanently stuck (e.g. a hung
+	// syscall ignoring ctx), recvWG never reaches zero; spawning a waiter then
+	// would leak it forever alongside the stuck handler, so we skip the wait.
+	if drained {
+		recvDone := make(chan struct{})
+		go func() {
+			c.recvWG.Wait()
+			close(recvDone)
+		}()
+		select {
+		case <-recvDone:
+		case <-deadlineCtx.Done():
+			c.logger.Warn("cleanup: timed out waiting for recv goroutines to exit",
+				slog.Int("remaining_workers", int(c.workerCount.Load())),
+			)
+		}
 	}
 
 	// Step 4: Clunk all fids and release handles.
@@ -70,6 +73,14 @@ func (c *conn) cleanup() {
 		c.otelInst.recordFidChange(-int64(len(states)))
 	}
 	for _, fs := range states {
+		// Release handles and close nodes only when handlers drained. A stuck
+		// handler may still be reading through fs.handle; closing its fd here
+		// would race that read (use-after-close on an fd that could be
+		// reused). Leaving it leaks the fd with the stuck handler, which is
+		// the safe trade.
+		if !drained {
+			continue
+		}
 		releaseHandle(context.Background(), fs, c.logger)
 		if closer, ok := fs.node.(NodeCloser); ok {
 			if err := closer.Close(context.Background()); err != nil {
