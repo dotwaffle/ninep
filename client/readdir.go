@@ -39,10 +39,11 @@ func (f *File) readDir(ctx context.Context, n int) ([]os.DirEntry, error) {
 		if n > 0 && len(entries) >= n {
 			return entries[:n], nil
 		}
+		reqOffset := f.readdirOffset
 		count := f.maxChunk()
 		req := &p9l.Treaddir{
 			Fid:    f.fid,
-			Offset: f.readdirOffset,
+			Offset: reqOffset,
 			Count:  count,
 		}
 		resp, err := f.conn.roundTrip(ctx, req)
@@ -88,6 +89,14 @@ func (f *File) readDir(ctx context.Context, n int) ([]os.DirEntry, error) {
 			if n > 0 && len(entries) >= n {
 				return entries[:n], nil
 			}
+		}
+		// The cursor must strictly advance past the offset we requested.
+		// A server returning a non-empty batch whose last entry repeats the
+		// request offset would otherwise loop forever, appending duplicate
+		// entries without bound (server cookies are monotonic, so a stuck
+		// cursor is a protocol violation, not a legitimate response).
+		if f.readdirOffset <= reqOffset {
+			return entries, fmt.Errorf("client: readdir cursor did not advance past offset %d", reqOffset)
 		}
 	}
 }
