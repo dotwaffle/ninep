@@ -30,6 +30,8 @@ func NewRoot(hostPath string, opts ...Option) (*Root, error) {
 		Node:     Node{fd: fd},
 		hostPath: hostPath,
 		mapper:   IdentityMapper(),
+		dev:      uint64(st.Dev),
+		ino:      st.Ino,
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -39,6 +41,39 @@ func NewRoot(hostPath string, opts ...Option) (*Root, error) {
 	r.Init(statToQID(&st), r)
 
 	return r, nil
+}
+
+// lookupParent resolves a ".." walk element. It clamps at the export root: if
+// this node's directory is the export root (matching the recorded dev/ino),
+// ".." resolves to the root directory itself instead of the host parent, so a
+// peer cannot walk above the exported tree. A fresh fd is always opened (never
+// shared with the root node) so a later clunk releases only that fd.
+//
+// For a non-root node the host parent is always at or below the export root,
+// because every node is reached by descending from the root through
+// single-component O_NOFOLLOW walks; no symlink or multi-component element can
+// jump outside the tree. The next ".." that reaches the root then clamps.
+func (n *Node) lookupParent() (server.Node, error) {
+	var st unix.Stat_t
+	if err := unix.Fstat(n.fd, &st); err != nil {
+		return nil, toProtoErr(err)
+	}
+	target := ".."
+	if uint64(st.Dev) == n.root.dev && st.Ino == n.root.ino {
+		target = "."
+	}
+	fd, err := unix.Openat(n.fd, target, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, toProtoErr(err)
+	}
+	var cst unix.Stat_t
+	if err := unix.Fstat(fd, &cst); err != nil {
+		_ = unix.Close(fd)
+		return nil, toProtoErr(err)
+	}
+	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: ".."}
+	child.Init(statToQID(&cst), child)
+	return child, nil
 }
 
 // Compile-time interface assertions for Root.

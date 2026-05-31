@@ -31,6 +31,10 @@ var (
 // For directories, opens with O_RDONLY|O_DIRECTORY. For symlinks and
 // other files, opens with O_PATH|O_NOFOLLOW.
 func (n *Node) Lookup(_ context.Context, name string) (server.Node, error) {
+	if name == ".." {
+		return n.lookupParent()
+	}
+
 	var st unix.Stat_t
 	if err := unix.Fstatat(n.fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return nil, toProtoErr(err)

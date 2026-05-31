@@ -494,6 +494,71 @@ func TestLookupOpen_UsesResolvedFD(t *testing.T) {
 	}
 }
 
+// TestLookup_DotDotCannotEscapeRoot asserts that walking ".." can never climb
+// above the exported root, neither directly from the attach root nor via a
+// descend-then-climb sequence. 9P permits ".." as a walk element, so the
+// passthrough FS must clamp it at the export root the way diod and Plan 9
+// fileservers do.
+func TestLookup_DotDotCannotEscapeRoot(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	rootDir := filepath.Join(parent, "export")
+	if err := os.Mkdir(rootDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(rootDir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// secret.txt lives outside the export, in its host parent. A contained
+	// server must never resolve it via "..".
+	if err := os.WriteFile(filepath.Join(parent, "secret.txt"), []byte("top secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := NewRoot(rootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close(t.Context()) })
+
+	ctx := t.Context()
+
+	dotdot := func(n *Node) *Node {
+		t.Helper()
+		up, err := n.Lookup(ctx, "..")
+		if err != nil {
+			t.Fatalf("Lookup(%q, %q): %v", n.name, "..", err)
+		}
+		child := up.(*Node)
+		t.Cleanup(func() { _ = child.Close(ctx) })
+		return child
+	}
+
+	assertContained := func(label string, n *Node) {
+		t.Helper()
+		if escaped, err := n.Lookup(ctx, "secret.txt"); err == nil {
+			_ = escaped.(*Node).Close(ctx)
+			t.Fatalf("%s resolved secret.txt outside the export (sandbox escape)", label)
+		}
+	}
+
+	// Direct ".." from the attach root must clamp.
+	assertContained("root/..", dotdot(&root.Node))
+
+	// Descend then climb twice: the climb past the export root must clamp.
+	subNode, err := root.Lookup(ctx, "sub")
+	if err != nil {
+		t.Fatalf("Lookup(sub): %v", err)
+	}
+	sub := subNode.(*Node)
+	t.Cleanup(func() { _ = sub.Close(ctx) })
+
+	up1 := dotdot(sub) // -> export root dir
+	up2 := dotdot(up1) // must clamp at the export root
+	assertContained("sub/../..", up2)
+}
+
 func TestLookupSetattr_SizeUsesResolvedFD(t *testing.T) {
 	t.Parallel()
 

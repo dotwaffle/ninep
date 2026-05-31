@@ -24,10 +24,16 @@ type Node struct {
 
 // Root is the top-level node of a passthrough filesystem. It wraps a Node
 // with configuration (host path, UID mapper). Create with NewRoot.
+//
+// dev and ino record the export root directory's identity so Lookup can clamp
+// ".." at the root: any node whose directory matches (dev, ino) resolves ".."
+// to itself rather than the host parent, preventing a walk above the export.
 type Root struct {
 	Node
 	hostPath string
 	mapper   UIDMapper
+	dev      uint64
+	ino      uint64
 }
 
 // Option configures a Root. Pass to NewRoot.
