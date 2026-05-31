@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"net"
 	"sync"
@@ -10,8 +9,6 @@ import (
 	"time"
 
 	"github.com/dotwaffle/ninep/proto"
-	"github.com/dotwaffle/ninep/proto/p9l"
-	"github.com/dotwaffle/ninep/proto/p9u"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -40,21 +37,6 @@ func (p protocol) String() string {
 	}
 }
 
-// codec mirrors server/conn.go's function-pointer codec struct. The
-// encode/decode function pointers are set once at Tversion time and are
-// the only per-op dispatch indirection on the hot path. An interface
-// method-set would add vtable indirection; the function-pointer form
-// matches the server's proven pattern.
-type codec struct {
-	encode func(w io.Writer, tag proto.Tag, msg proto.Message) error
-	decode func(r io.Reader) (proto.Tag, proto.Message, error)
-}
-
-var (
-	codecL = codec{encode: p9l.Encode, decode: p9l.Decode}
-	codecU = codec{encode: p9u.Encode, decode: p9u.Decode}
-)
-
 // Conn is a 9P client connection. Safe for concurrent use by multiple
 // goroutines; modeled on database/sql.DB. All T-message writes are
 // serialized through writeMu; all R-message reads come from a single
@@ -76,7 +58,6 @@ type Conn struct {
 	nc      net.Conn
 	dialect protocol
 	msize   uint32
-	codec   codec
 
 	tags     *tagAllocator
 	inflight *inflightMap

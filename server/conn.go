@@ -53,31 +53,19 @@ func (p protocol) String() string {
 	}
 }
 
-// codec abstracts protocol-specific encode/decode operations.
-type codec struct {
-	encode func(w io.Writer, tag proto.Tag, msg proto.Message) error
-	decode func(r io.Reader) (proto.Tag, proto.Message, error)
-}
-
-var (
-	codecL = codec{encode: p9l.Encode, decode: p9l.Decode}
-	codecU = codec{encode: p9u.Encode, decode: p9u.Decode}
-)
-
 // minMsize is the minimum acceptable negotiated msize. A message must fit at
 // least a header plus a small error response.
 const minMsize = 256
 
 // negotiationResult carries the validated outcome of a Tversion exchange:
-// the negotiated msize, the selected protocol, the codec, and the version
-// string to echo back to the client. selected == protocolNone means the
-// client requested an unsupported version; the caller still echoes
+// the negotiated msize, the selected protocol, and the version string to
+// echo back to the client. selected == protocolNone means the client
+// requested an unsupported version; the caller still echoes
 // result.version ("unknown") to the client but must NOT transition into a
 // serving state.
 type negotiationResult struct {
 	msize    uint32
 	selected protocol
-	codec    codec
 	version  string // "9P2000.L", "9P2000.u", or "unknown"
 }
 
@@ -95,13 +83,11 @@ func (c *conn) negotiate(tv *proto.Tversion) (negotiationResult, error) {
 	switch tv.Version {
 	case "9P2000.L":
 		res.selected = protocolL
-		res.codec = codecL
 	case "9P2000.u":
 		res.selected = protocolU
-		res.codec = codecU
 	default:
 		res.version = "unknown"
-		// selected stays protocolNone; codec stays zero value.
+		// selected stays protocolNone.
 	}
 	return res, nil
 }
@@ -123,7 +109,6 @@ type conn struct {
 	maxFids  int // Copied from server.maxFids; 0 = unlimited (per-connection cap).
 	protocol protocol
 	msize    uint32 // Negotiated msize (0 until version negotiation).
-	codec    codec
 
 	// writeMu serializes all writes to nc. Dispatching goroutines acquire
 	// it in sendResponseInline, and writeRaw (used during version
@@ -299,8 +284,7 @@ func (c *conn) signalRecvShutdown() {
 }
 
 // negotiateVersion reads the first Tversion from the client and negotiates
-// protocol version and msize. On success, c.protocol, c.msize, and c.codec
-// are set.
+// protocol version and msize. On success, c.protocol and c.msize are set.
 func (c *conn) negotiateVersion(ctx context.Context) error {
 	// Bound the whole handshake (reading Tversion and writing Rversion) with a
 	// deadline even when no idle timeout is configured, so a peer that opens a
@@ -367,7 +351,7 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 		return err // ErrMsizeTooSmall
 	}
 
-	// Send Rversion response manually (codec not yet selected for the first response).
+	// Send Rversion response manually (protocol not yet selected for the first response).
 	rver := &proto.Rversion{Msize: res.msize, Version: res.version}
 	if err := c.writeRaw(proto.Tag(tag), rver); err != nil {
 		return fmt.Errorf("send rversion: %w", err)
@@ -389,7 +373,6 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 
 	c.msize = res.msize
 	c.protocol = res.selected
-	c.codec = res.codec
 
 	c.logger.Debug("version negotiated",
 		slog.String("version", res.version),
@@ -400,7 +383,7 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 
 // writeRaw encodes a single message directly to the connection, bypassing
 // sendResponseInline. Used during version negotiation (both initial and
-// mid-connection re-negotiation) where the codec may not yet be selected.
+// mid-connection re-negotiation) where the protocol may not yet be selected.
 // Acquires writeMu to serialize writes against dispatching goroutines and
 // the raw negotiation path.
 func (c *conn) writeRaw(tag proto.Tag, msg proto.Message) error {
@@ -545,8 +528,8 @@ func (c *conn) handleRequest(ctx context.Context) {
 		// Spawn-replacement decision: only if a sibling is NOT already
 		// parked on recvMu AND we are below the maxInflight cap. Skip on
 		// Tversion -- handleReVersion drains all inflight and mutates
-		// c.msize/c.protocol/c.codec; a sibling reading with the old
-		// codec mid-renegotiation would corrupt the stream.
+		// c.msize/c.protocol; a sibling reading with the old protocol
+		// mid-renegotiation would corrupt the stream.
 		spawnReplacement := false
 		if msgType != proto.TypeTversion &&
 			c.recvIdle.Load() == 0 &&
@@ -783,8 +766,8 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 
 	// Cancel all inflight request contexts first, then wait for handlers
 	// to drain with a deadline before mutating connection state. This
-	// ensures no handler goroutine reads c.msize, c.protocol, or
-	// c.codec while we are updating them.
+	// ensures no handler goroutine reads c.msize or c.protocol while we
+	// are updating them.
 	c.inflight.cancelAll()
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), cleanupDeadline)
 	defer drainCancel()
@@ -793,7 +776,7 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 		// The 9P spec requires Tversion to abort all outstanding I/O; if
 		// we cannot, continuing would let the late handler write a stale
 		// response into the new tag space (tag-reuse aliasing) or read
-		// c.msize/c.protocol/c.codec mid-mutation. Close the connection
+		// c.msize/c.protocol mid-mutation. Close the connection
 		// instead and let the client reconnect cleanly.
 		c.logger.Warn("re-negotiation: inflight drain timed out; closing connection",
 			slog.Int("remaining", c.inflight.len()),
@@ -849,7 +832,6 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 
 	c.msize = res.msize
 	c.protocol = res.selected
-	c.codec = res.codec
 }
 
 // newMessage returns a zero-value message struct for the given type based on

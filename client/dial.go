@@ -158,25 +158,22 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (_ *Conn, retErr err
 		return nil, fmt.Errorf("client.Dial: decode Rversion: %w", err)
 	}
 
-	// 5. Select codec + dialect. Bare "9P2000" maps to .u (Linux v9fs
-	//    kernel convention); "9P2000.u" maps to .u; "9P2000.L" maps to
-	//    .L; anything else is ErrVersionMismatch.
+	// 5. Select dialect. Bare "9P2000" maps to .u (Linux v9fs kernel
+	//    convention); "9P2000.u" maps to .u; "9P2000.L" maps to .L;
+	//    anything else is ErrVersionMismatch.
 	if cfg.version != "" && rver.Version != string(cfg.version) {
 		return nil, fmt.Errorf("%w: exact version match failed (requested %q, server returned %q)", ErrVersionMismatch, cfg.version, rver.Version)
 	}
 
 	var dialect protocol
-	var cc codec
 	switch rver.Version {
 	case "9P2000.L":
 		dialect = protocolL
-		cc = codecL
 	case "9P2000.u", "9P2000":
 		// "9P2000.u" -- explicit Unix-extensions advertisement.
 		// "9P2000"   -- bare 9P2000; Linux v9fs treats this as .u-alias.
-		// Both paths use the p9u codec and the .u R-message factory.
+		// Both paths use the .u R-message factory.
 		dialect = protocolU
-		cc = codecU
 	default:
 		return nil, fmt.Errorf("%w: server returned %q", ErrVersionMismatch, rver.Version)
 	}
@@ -205,7 +202,6 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (_ *Conn, retErr err
 		nc:               nc,
 		dialect:          dialect,
 		msize:            negotiated,
-		codec:            cc,
 		tags:             newTagAllocator(cfg.maxInflight),
 		inflight:         newInflightMap(),
 		fids:             newFidAllocator(),

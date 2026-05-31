@@ -31,7 +31,6 @@ func newGateConn(t *testing.T, d protocol) *Conn {
 		nc:       cliNC,
 		dialect:  d,
 		msize:    65536,
-		codec:    codecL, // arbitrary — gate fires first
 		tags:     newTagAllocator(8),
 		inflight: newInflightMap(),
 		closeCh:  make(chan struct{}),

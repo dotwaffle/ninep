@@ -36,7 +36,6 @@ func FuzzConnReadLoop(f *testing.F) {
 			nc:       cliNC,
 			dialect:  protocolL,
 			msize:    1024 * 1024,
-			codec:    codecL,
 			tags:     newTagAllocator(64),
 			inflight: newInflightMap(),
 			fids:     newFidAllocator(),

@@ -33,7 +33,6 @@ func newTestConn(t *testing.T) (*Conn, net.Conn) {
 		nc:         cliNC,
 		dialect:    protocolL,
 		msize:      65536,
-		codec:      codecL,
 		tags:       newTagAllocator(8),
 		inflight:   newInflightMap(),
 		closeCh:    make(chan struct{}),
@@ -152,7 +151,6 @@ func TestRoundTrip_RerrorTranslatedByCaller(t *testing.T) {
 	t.Parallel()
 	c, srvNC := newTestConn(t)
 	c.dialect = protocolU
-	c.codec = codecU
 
 	resultCh := make(chan proto.Message, 1)
 	go func() {
