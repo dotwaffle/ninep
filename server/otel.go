@@ -104,8 +104,8 @@ func newOTelMiddleware(tp trace.TracerProvider, mp metric.MeterProvider, c *conn
 			if span.IsRecording() {
 				if fid, ok := fidFromMessage(msg); ok {
 					span.SetAttributes(attribute.Int64("ninep.fid", int64(fid)))
-					if fs := c.fids.get(fid); fs != nil {
-						span.SetAttributes(attribute.String("ninep.path", fs.path))
+					if p := c.fids.getPath(fid); p != "" {
+						span.SetAttributes(attribute.String("ninep.path", p))
 					}
 				}
 				span.SetAttributes(attribute.String("ninep.protocol", c.protocol.String()))

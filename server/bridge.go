@@ -330,7 +330,9 @@ func (c *conn) handleUStat(ctx context.Context, m *p9u.Tstat) proto.Message {
 	}
 
 	qid := nodeQID(fs.node)
-	return &p9u.Rstat{Stat: statFromAttr(fs.path, qid, attr)}
+	// Read the path under the table lock: an in-place Twalk on this fid can
+	// rewrite it concurrently (see fidTable.getPath).
+	return &p9u.Rstat{Stat: statFromAttr(c.fids.getPath(m.Fid), qid, attr)}
 }
 
 // handleReaddir dispatches to raw or simple readdir interfaces with

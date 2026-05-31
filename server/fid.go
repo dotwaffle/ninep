@@ -125,6 +125,20 @@ func (ft *fidTable) setPath(fid proto.Fid, p string) {
 	}
 }
 
+// getPath returns the path recorded for fid, or "" if the fid is absent. The
+// read is taken under the table lock so it is synchronized against setPath,
+// which rewrites fs.path under the write lock during an in-place Twalk
+// (Fid==NewFid). Reading fs.path after get() has released the lock is a data
+// race on the string header. Safe for concurrent use.
+func (ft *fidTable) getPath(fid proto.Fid) string {
+	ft.mu.RLock()
+	defer ft.mu.RUnlock()
+	if fs, ok := ft.fids[fid]; ok {
+		return fs.path
+	}
+	return ""
+}
+
 // update replaces the node on an existing fid. Returns false if the fid is not
 // present. Safe for concurrent use.
 func (ft *fidTable) update(fid proto.Fid, node Node) bool {

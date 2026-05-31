@@ -5,6 +5,7 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -178,6 +179,13 @@ func (n *raceOpenNode) Open(_ context.Context, _ uint32) (FileHandle, uint32, er
 		n.onOpen()
 	}
 	return n.handle, 0, nil
+}
+
+// statOnlyNode implements NodeGetattrer for path-locking race tests.
+type statOnlyNode struct{ Inode }
+
+func (*statOnlyNode) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {
+	return proto.Attr{}, nil
 }
 
 // Compile-time checks for bridge test types.
@@ -935,6 +943,34 @@ func TestBridge_OpenReleasesHandleOnLostClunkRace(t *testing.T) {
 // TestBridge_XattrcreateRejectsOpenedFid asserts Txattrcreate on an already
 // opened fid is refused instead of orphaning the fid's live handle, so the
 // later clunk still releases it.
+// TestBridge_StatPathReadIsLocked drives handleUStat concurrently with an
+// in-place path rewrite; under -race it catches an unsynchronized fs.path read.
+func TestBridge_StatPathReadIsLocked(t *testing.T) {
+	t.Parallel()
+
+	node := &statOnlyNode{}
+	node.Init(proto.QID{Type: proto.QTFILE, Path: 1}, node)
+
+	c := &conn{fids: newFidTable(), msize: 1024, protocol: protocolU}
+	if err := c.fids.add(1, &fidState{node: node, state: fidAllocated, path: "/start"}, 0); err != nil {
+		t.Fatalf("add fid: %v", err)
+	}
+	ctx := t.Context()
+
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for range 2000 {
+			c.fids.setPath(1, "/path/that/keeps/changing/length")
+		}
+	})
+	wg.Go(func() {
+		for range 2000 {
+			_ = c.handleUStat(ctx, &p9u.Tstat{Fid: 1})
+		}
+	})
+	wg.Wait()
+}
+
 func TestBridge_XattrcreateRejectsOpenedFid(t *testing.T) {
 	t.Parallel()
 
