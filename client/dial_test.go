@@ -9,6 +9,7 @@ import (
 	"net"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,50 @@ import (
 // goroutine keeps srvNC open after responding (blocking in a sink-read) so
 // the client-side SetDeadline/SetReadDeadline calls do not race against a
 // peer-initiated close on net.Pipe. t.Cleanup closes srvNC.
+// deadlineConn records the most recent SetDeadline value so a test can verify
+// the negotiation deadline is cleared on a failed Dial.
+type deadlineConn struct {
+	net.Conn
+	mu   sync.Mutex
+	last time.Time
+}
+
+func (c *deadlineConn) SetDeadline(t time.Time) error {
+	c.mu.Lock()
+	c.last = t
+	c.mu.Unlock()
+	return c.Conn.SetDeadline(t)
+}
+
+func (c *deadlineConn) lastDeadline() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.last
+}
+
+// TestDial_ClearsDeadlineOnError asserts a failed Dial does not leave a stale
+// negotiation deadline on the caller's conn, so the conn can be reused (the
+// documented re-dial case).
+func TestDial_ClearsDeadlineOnError(t *testing.T) {
+	t.Parallel()
+	cliNC, srvNC := net.Pipe()
+	// Server returns a version the client did not request, so Dial fails after
+	// the negotiation deadline has been set.
+	runMockVersionServer(t, srvNC, proto.Rversion{Msize: 65536, Version: "9P9999"})
+
+	conn := &deadlineConn{Conn: cliNC}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	if _, err := client.Dial(ctx, conn, client.WithMsize(65536)); err == nil {
+		t.Fatal("Dial succeeded; expected a version mismatch")
+	}
+	if d := conn.lastDeadline(); !d.IsZero() {
+		t.Fatalf("conn still carries deadline %v after failed Dial; want cleared", d)
+	}
+	_ = cliNC.Close()
+}
+
 func runMockVersionServer(tb testing.TB, srvNC net.Conn, resp proto.Rversion) {
 	tb.Helper()
 	tb.Cleanup(func() { _ = srvNC.Close() })

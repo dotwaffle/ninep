@@ -43,7 +43,7 @@ const minMsize = 256
 // On any error Dial leaves nc in whatever state the caller provided: it
 // does NOT close nc on its own, so a caller may reuse the connection
 // (e.g. re-dial with a different proposed version).
-func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
+func Dial(ctx context.Context, nc net.Conn, opts ...Option) (_ *Conn, retErr error) {
 	cfg := newConfig()
 	for _, opt := range opts {
 		opt(cfg)
@@ -61,6 +61,16 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error) {
 		if err := nc.SetDeadline(deadline); err != nil {
 			return nil, fmt.Errorf("client.Dial: set negotiation deadline: %w", err)
 		}
+		// Clear the negotiation deadline on every error path so a caller that
+		// reuses nc (the documented re-dial case) does not inherit a stale,
+		// usually already-expired deadline. The success path clears it
+		// explicitly below before spawning the read goroutine, so this defer
+		// is a no-op there.
+		defer func() {
+			if retErr != nil {
+				_ = nc.SetDeadline(time.Time{})
+			}
+		}()
 	}
 
 	// 1. Encode Tversion body into a cold-path buffer. No bufpool -- this
