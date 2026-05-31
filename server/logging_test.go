@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dotwaffle/ninep/internal/otelutil"
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
 )
@@ -62,7 +61,7 @@ func TestTraceHandlerHandleWithValidSpan(t *testing.T) {
 	t.Parallel()
 
 	// Use the OTel SDK test tracer via otelutil to create real spans with valid IDs.
-	tp, _ := otelutil.NewTestTracerProvider(t)
+	tp, _ := NewTestTracerProvider(t)
 
 	ctx, span := tp.Tracer("test").Start(t.Context(), "test-op")
 	defer span.End()

@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dotwaffle/ninep/internal/otelutil"
 	"github.com/dotwaffle/ninep/server"
 	"github.com/dotwaffle/ninep/server/memfs"
 
@@ -74,7 +73,7 @@ func TestClientOTel_TracingRespectsParentSampling(t *testing.T) {
 func TestClientOTel_Tracing(t *testing.T) {
 	t.Parallel()
 
-	tp, exporter := otelutil.NewTestTracerProvider(t)
+	tp, exporter := NewTestTracerProvider(t)
 
 	// Setup server
 	gen := new(server.QIDGenerator)
@@ -140,7 +139,7 @@ func TestClientOTel_Tracing(t *testing.T) {
 func TestClientOTel_Metrics(t *testing.T) {
 	t.Parallel()
 
-	mp, reader := otelutil.NewTestMeterProvider(t)
+	mp, reader := NewTestMeterProvider(t)
 
 	// Setup server
 	gen := new(server.QIDGenerator)
@@ -172,17 +171,17 @@ func TestClientOTel_Metrics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := otelutil.GetMetric(rm, "ninep.client.duration")
+	m := GetMetric(rm, "ninep.client.duration")
 	if m == nil {
 		t.Fatal("ninep.client.duration metric missing")
 	}
 
-	reqSize := otelutil.GetMetric(rm, "ninep.client.request.size")
+	reqSize := GetMetric(rm, "ninep.client.request.size")
 	if reqSize == nil {
 		t.Fatal("ninep.client.request.size metric missing")
 	}
 
-	active := otelutil.GetMetric(rm, "ninep.client.active_requests")
+	active := GetMetric(rm, "ninep.client.active_requests")
 	if active == nil {
 		t.Fatal("ninep.client.active_requests metric missing")
 	}
@@ -191,7 +190,7 @@ func TestClientOTel_Metrics(t *testing.T) {
 func TestClientOTel_ErrorSpan(t *testing.T) {
 	t.Parallel()
 
-	tp, exporter := otelutil.NewTestTracerProvider(t)
+	tp, exporter := NewTestTracerProvider(t)
 
 	// Setup server
 	gen := new(server.QIDGenerator)

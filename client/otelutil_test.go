@@ -1,28 +1,28 @@
-package otelutil
+package client
 
 import (
 	"testing"
 
-	"go.opentelemetry.io/otel/sdk/metric"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
-	"go.opentelemetry.io/otel/sdk/trace"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // NewTestTracerProvider returns a TracerProvider with an in-memory exporter.
-func NewTestTracerProvider(tb testing.TB) (*trace.TracerProvider, *tracetest.InMemoryExporter) {
+func NewTestTracerProvider(tb testing.TB) (*sdktrace.TracerProvider, *tracetest.InMemoryExporter) {
 	tb.Helper()
 	exp := tracetest.NewInMemoryExporter()
-	tp := trace.NewTracerProvider(trace.WithSyncer(exp))
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
 	tb.Cleanup(func() { _ = tp.Shutdown(tb.Context()) })
 	return tp, exp
 }
 
 // NewTestMeterProvider returns a MeterProvider with a manual reader.
-func NewTestMeterProvider(tb testing.TB) (*metric.MeterProvider, *metric.ManualReader) {
+func NewTestMeterProvider(tb testing.TB) (*sdkmetric.MeterProvider, *sdkmetric.ManualReader) {
 	tb.Helper()
-	reader := metric.NewManualReader()
-	mp := metric.NewMeterProvider(metric.WithReader(reader))
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	tb.Cleanup(func() { _ = mp.Shutdown(tb.Context()) })
 	return mp, reader
 }

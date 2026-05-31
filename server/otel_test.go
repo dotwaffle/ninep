@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dotwaffle/ninep/internal/otelutil"
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
 
@@ -34,7 +33,7 @@ func otelConnPair(t *testing.T) (client, server net.Conn) {
 func TestOTelMiddlewareSpanCreation(t *testing.T) {
 	t.Parallel()
 
-	tp, exporter := otelutil.NewTestTracerProvider(t)
+	tp, exporter := NewTestTracerProvider(t)
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
 
@@ -70,8 +69,8 @@ func TestOTelMiddlewareSpanCreation(t *testing.T) {
 func setupOTelTest(t *testing.T) (client net.Conn, spanExporter *tracetest.InMemoryExporter, metricReader *sdkmetric.ManualReader) {
 	t.Helper()
 
-	tp, spanExporter := otelutil.NewTestTracerProvider(t)
-	mp, metricReader := otelutil.NewTestMeterProvider(t)
+	tp, spanExporter := NewTestTracerProvider(t)
+	mp, metricReader := NewTestMeterProvider(t)
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
@@ -407,8 +406,8 @@ func TestOTelMiddlewareActiveRequestsGauge(t *testing.T) {
 func TestOTelMiddlewareConnectionGauge(t *testing.T) {
 	t.Parallel()
 
-	tp, _ := otelutil.NewTestTracerProvider(t)
-	mp, metricReader := otelutil.NewTestMeterProvider(t)
+	tp, _ := NewTestTracerProvider(t)
+	mp, metricReader := NewTestMeterProvider(t)
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
