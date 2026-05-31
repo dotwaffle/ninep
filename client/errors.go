@@ -76,6 +76,10 @@ var (
 	// errors.Is against a stable sentinel rather than string-matching the
 	// wrapping fmt.Errorf.
 	ErrDialectInvariant = errors.New("client: dialect invariant violated (programmer error)")
+
+	// ErrSessionClosed is returned by Session.Conn after Session.Close has
+	// been called. The Session no longer dials and holds no live connection.
+	ErrSessionClosed = errors.New("client: session closed")
 )
 
 // Error represents a 9P error response from the server. Rlerror (9P2000.L)

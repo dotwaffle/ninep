@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"sync"
@@ -293,4 +294,73 @@ func TestSession_Flaky(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+// TestSession_Close asserts Close shuts the session down: the live conn is
+// closed and future Conn calls return ErrSessionClosed. Close is idempotent.
+func TestSession_Close(t *testing.T) {
+	t.Parallel()
+	dialer := func(_ context.Context) (net.Conn, error) {
+		c1, s1 := net.Pipe()
+		runMockVersionServer(t, s1)
+		return c1, nil
+	}
+	s := NewSession(dialer)
+
+	c, err := s.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("Conn: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !c.isClosed() {
+		t.Error("Session.Close did not close the live connection")
+	}
+	if _, err := s.Conn(context.Background()); !errors.Is(err, ErrSessionClosed) {
+		t.Fatalf("Conn after Close: err = %v, want ErrSessionClosed", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
+
+// TestSession_ConnCancellableDuringSlowDial asserts a Conn caller can cancel
+// while another goroutine is mid-dial, instead of blocking on the session lock
+// for the whole dial.
+func TestSession_ConnCancellableDuringSlowDial(t *testing.T) {
+	t.Parallel()
+
+	var once sync.Once
+	dialStarted := make(chan struct{})
+	releaseDial := make(chan struct{})
+	dialer := func(ctx context.Context) (net.Conn, error) {
+		once.Do(func() { close(dialStarted) })
+		select {
+		case <-releaseDial:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		c1, s1 := net.Pipe()
+		runMockVersionServer(t, s1)
+		return c1, nil
+	}
+	s := NewSession(dialer)
+	t.Cleanup(func() { _ = s.Close() })
+
+	// Goroutine A becomes the dialer and blocks inside the dialer.
+	go func() { _, _ = s.Conn(context.Background()) }()
+	<-dialStarted
+
+	// Goroutine B must observe its own cancellation while A is dialing.
+	ctxB, cancelB := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancelB()
+	start := time.Now()
+	if _, err := s.Conn(ctxB); err == nil {
+		t.Fatal("B's Conn returned success; expected cancellation while A dials")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("B blocked %v on the slow dial; should cancel promptly", elapsed)
+	}
+	close(releaseDial)
 }
