@@ -183,6 +183,7 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (_ *Conn, retErr err
 		logger:           cfg.logger,
 		lockPollSchedule: cfg.lockPollSchedule,
 		requestTimeout:   cfg.requestTimeout,
+		flushGrace:       defaultFlushGrace,
 	}
 
 	c.probeOTel(cfg)

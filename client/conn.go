@@ -132,6 +132,14 @@ type Conn struct {
 	// Set at Dial time via [WithRequestTimeout]; immutable after Dial.
 	requestTimeout time.Duration
 
+	// flushGrace bounds how long flushAndWait waits for the server to
+	// acknowledge a Tflush (via Rflush or the original response) once the
+	// caller's context is already cancelled. A wedged-but-TCP-alive peer that
+	// never replies would otherwise block the caller until Conn.Close. On
+	// expiry flushAndWait tears the connection down. Defaults to
+	// defaultFlushGrace; an internal field so tests can shorten it.
+	flushGrace time.Duration
+
 	tracer          trace.Tracer
 	meter           metric.Meter
 	inst            *otelInstruments

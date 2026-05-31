@@ -4,9 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/dotwaffle/ninep/proto"
 )
+
+// defaultFlushGrace bounds how long flushAndWait waits for a server to
+// acknowledge a Tflush once the caller's context is already cancelled. A
+// healthy server answers near-instantly; this only fires for a wedged peer.
+const defaultFlushGrace = 30 * time.Second
 
 // flushAndWait is called from [Conn.roundTrip] when the caller's ctx
 // cancels mid-request. It sends Tflush(oldTag) and blocks until the
@@ -53,8 +59,10 @@ import (
 //     here - acquire would return ctx.Err immediately without ever
 //     handing out a tag. Use [context.Background] with c.closeCh as
 //     the abort channel.
-//   - Do NOT add a ctx.Done arm to the inner select. ctx is already
-//     Done; re-selecting on it is a dead branch.
+//   - Do NOT add a raw ctx.Done arm to the inner select: ctx is already
+//     Done, so it would fire immediately and release oldTag before the
+//     server acknowledges the flush, risking tag-reuse aliasing. The
+//     bounded grace timer below is the correct escape for a wedged peer.
 //   - The late-arriving second frame is NOT drained by a separate
 //     goroutine. [inflightMap.deliver] finds the unregistered tag and
 //     drops via [putCachedRMsg] (designed behaviour).
@@ -110,6 +118,14 @@ func (c *Conn) flushAndWait(
 			oldTag, ctx.Err(), err,
 		)
 	}
+
+	// Bound the wait: the caller's ctx is already cancelled, but a
+	// wedged-but-TCP-alive peer might never answer the original request OR
+	// the Tflush, which would block here until Conn.Close. After a grace
+	// period, treat the peer as dead and tear the connection down so the tag
+	// is reclaimed via shutdown rather than aliased onto a reused tag.
+	grace := time.NewTimer(c.flushGrace)
+	defer grace.Stop()
 
 	// Wait for the first frame. The late-arriving second frame lands
 	// in [inflightMap.deliver]; because our defers have already run
@@ -182,5 +198,14 @@ func (c *Conn) flushAndWait(
 		// acceptable - callers MUST match on ErrClosed when they care
 		// about conn-level shutdown.
 		return nil, ErrClosed
+
+	case <-grace.C:
+		// The peer answered neither the original request nor the Tflush
+		// within the grace period: it is wedged. Tear the connection down so
+		// the caller is released and the tag is reclaimed via cancelAll.
+		c.signalShutdown()
+		return nil, fmt.Errorf(
+			"9p: flush tag %d: %w (no server response within grace)", oldTag, ctx.Err(),
+		)
 	}
 }
