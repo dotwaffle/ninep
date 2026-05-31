@@ -11,9 +11,15 @@ type Option func(*Server)
 
 // WithMaxMsize sets the maximum message size the server will accept during
 // version negotiation. Default: 1048576 (1 MiB, matches the Linux kernel's
-// silent msize cap).
+// silent msize cap). Values below the protocol minimum (256) are clamped up to
+// it, since a smaller cap would reject every connection at negotiation.
 func WithMaxMsize(msize uint32) Option {
-	return func(s *Server) { s.maxMsize = msize }
+	return func(s *Server) {
+		if msize < minMsize {
+			msize = minMsize
+		}
+		s.maxMsize = msize
+	}
 }
 
 // WithMaxInflight sets the maximum number of concurrent in-flight requests
@@ -57,9 +63,13 @@ func WithMaxFids(n int) Option {
 
 // WithLogger sets the structured logger for the server. The handler is
 // automatically wrapped with trace ID correlation (see NewTraceHandler).
-// Default: slog.Default() with trace correlation.
+// Default: slog.Default() with trace correlation. A nil logger is ignored,
+// leaving the default in place, mirroring the client's WithLogger.
 func WithLogger(logger *slog.Logger) Option {
 	return func(s *Server) {
+		if logger == nil {
+			return
+		}
 		s.logger = slog.New(NewTraceHandler(logger.Handler()))
 	}
 }
