@@ -9,6 +9,17 @@ on:
 permissions:
   contents: read
 
+# Caching note: setup-go's built-in cache uses one key per
+# (os, arch, go-version, go.sum) with no job component, so every job
+# below would collide on a single entry and only the first writer's
+# build cache survives. Instead each job disables that cache and splits
+# the two directories:
+#   - ~/go/pkg/mod  (module source, arch-independent) shares one key, so
+#     the first writer wins on byte-identical content -- harmless.
+#   - ~/.cache/go-build (compiled artifacts, keyed by build flags AND
+#     arch) gets a per-job, per-arch key so the -race, fuzz, stress, and
+#     lint build sets each persist instead of evicting one another.
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -19,6 +30,19 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: stable
+          cache: false
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-gomod-
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-${{ runner.arch }}-gobuild-test-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-gobuild-test-
 
       - name: Vet
         run: go vet ./...
@@ -41,6 +65,22 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: stable
+          cache: false
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-gomod-
+
+      # golangci-lint-action@v9 caches only ~/.cache/golangci-lint (its
+      # analysis cache); since v5.0.0 it defers the Go build/module cache
+      # to setup-go, so this block owns ~/.cache/go-build for the lint run.
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-${{ runner.arch }}-gobuild-lint-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-gobuild-lint-
 
       - uses: golangci/golangci-lint-action@v9
         with:
@@ -71,6 +111,22 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: stable
+          cache: false
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-gomod-
+
+      # Per-matrix-leg key: the four legs run in parallel and build
+      # different packages, so a shared key would re-introduce
+      # first-writer-wins among them.
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-${{ runner.arch }}-gobuild-fuzz-${{ matrix.name }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-gobuild-fuzz-${{ matrix.name }}-
 
       - name: Fuzz ${{ matrix.name }}
         run: go test -fuzz=${{ matrix.target }} -fuzztime=60s -run='^$' ${{ matrix.pkg }}
@@ -96,6 +152,19 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: stable
+          cache: false
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-gomod-
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-${{ runner.arch }}-gobuild-stress-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-gobuild-stress-
 
       - name: Stress tests (requestCtx race surface)
         run: go test -tags=stress -race -count=1 ./server/...
@@ -109,6 +178,19 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: stable
+          cache: false
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-gomod-
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-${{ runner.arch }}-gobuild-vsock-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-gobuild-vsock-
 
       - name: Load vsock loopback module
         run: sudo modprobe vsock_loopback
@@ -134,6 +216,19 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: stable
+          cache: false
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-gomod-
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-${{ runner.arch }}-gobuild-benchmark-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-gobuild-benchmark-
 
       - name: Install benchstat
         run: go install golang.org/x/perf/cmd/benchstat@latest
