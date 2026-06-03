@@ -71,6 +71,30 @@ jobs:
       - name: Stress tests (requestCtx race surface)
         run: go test -tags=stress -race -count=1 ./server/...
 
+  vsock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - name: Load vsock loopback module
+        run: sudo modprobe vsock_loopback
+
+      - name: Fix /dev/vsock permissions
+        run: sudo chmod 666 /dev/vsock
+
+      - name: Vsock loopback tests (must not skip)
+        run: |
+          set -eo pipefail
+          go test -race -count=1 -v ./vsock/... | tee vsock.out
+          if grep -q -- '--- SKIP' vsock.out; then
+            echo "::error::vsock loopback tests skipped; loopback transport not active on runner"
+            exit 1
+          fi
+
   benchmark:
     runs-on: ubuntu-latest
     steps:
