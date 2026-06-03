@@ -12,6 +12,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -33,6 +34,7 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
@@ -46,6 +48,23 @@ jobs:
 
   fuzz:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: p9l-codec
+            target: FuzzCodecRoundTrip
+            pkg: ./proto/p9l/
+          - name: p9u-codec
+            target: FuzzCodecRoundTrip
+            pkg: ./proto/p9u/
+          - name: client-lock
+            target: FuzzClientLock
+            pkg: ./client/
+          - name: client-xattr
+            target: FuzzClientXattr
+            pkg: ./client/
     steps:
       - uses: actions/checkout@v6
 
@@ -53,20 +72,24 @@ jobs:
         with:
           go-version: stable
 
-      - name: Fuzz p9l codec
-        run: go test -fuzz=FuzzCodecRoundTrip -fuzztime=30s ./proto/p9l/
+      - name: Fuzz ${{ matrix.name }}
+        run: go test -fuzz=${{ matrix.target }} -fuzztime=60s -run='^$' ${{ matrix.pkg }}
 
-      - name: Fuzz p9u codec
-        run: go test -fuzz=FuzzCodecRoundTrip -fuzztime=30s ./proto/p9u/
-
-      - name: Fuzz client lock
-        run: go test -fuzz=FuzzClientLock -fuzztime=30s -run='^$' ./client/
-
-      - name: Fuzz client xattr
-        run: go test -fuzz=FuzzClientXattr -fuzztime=30s -run='^$' ./client/
+      # On a fuzz failure, go test writes the minimized crasher to
+      # <pkg>/testdata/fuzz/<Target>/<hash> on the runner. Capture it so it
+      # can be downloaded and committed as a permanent regression seed.
+      - name: Upload fuzz crasher
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crasher-${{ matrix.name }}
+          path: '**/testdata/fuzz/**'
+          if-no-files-found: ignore
+          retention-days: 30
 
   stress:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -79,6 +102,7 @@ jobs:
 
   vsock:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
@@ -103,6 +127,7 @@ jobs:
 
   benchmark:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
