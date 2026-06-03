@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dotwaffle/ninep/proto"
@@ -33,11 +34,11 @@ func (c *Conn) Remove(ctx context.Context, p string) error {
 	}
 	root := c.Root()
 	if root == nil {
-		return fmt.Errorf("client: Remove requires a prior Attach")
+		return errors.New("client: Remove requires a prior Attach")
 	}
 	full := splitPath(p)
 	if len(full) == 0 {
-		return fmt.Errorf("client: Remove requires a non-root path")
+		return errors.New("client: Remove requires a non-root path")
 	}
 	parents := full[:len(full)-1]
 	name := full[len(full)-1]

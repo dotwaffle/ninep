@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -76,7 +77,7 @@ func (c *Conn) OpenFile(ctx context.Context, p string, flags int, mode os.FileMo
 	_ = mode // reserved; non-Create callers leave mode at 0.
 	root := c.Root()
 	if root == nil {
-		return nil, fmt.Errorf("client: OpenFile requires a prior Attach")
+		return nil, errors.New("client: OpenFile requires a prior Attach")
 	}
 	names := splitPath(p)
 	fileFid, err := c.fids.acquire()
@@ -143,11 +144,11 @@ func (c *Conn) OpenFile(ctx context.Context, p string, flags int, mode os.FileMo
 func (c *Conn) Create(ctx context.Context, p string, flags int, mode os.FileMode) (*File, error) {
 	root := c.Root()
 	if root == nil {
-		return nil, fmt.Errorf("client: Create requires a prior Attach")
+		return nil, errors.New("client: Create requires a prior Attach")
 	}
 	full := splitPath(p)
 	if len(full) == 0 {
-		return nil, fmt.Errorf("client: Create requires a non-root path")
+		return nil, errors.New("client: Create requires a non-root path")
 	}
 	parents := full[:len(full)-1]
 	name := full[len(full)-1]

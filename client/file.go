@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -163,7 +164,7 @@ func (f *File) Close() error {
 // the error is returned.
 func (f *File) Walk(ctx context.Context, names []string) (*File, error) {
 	if len(names) == 0 {
-		return nil, fmt.Errorf("client: File.Walk requires at least one name (use File.Clone for 0-step walk)")
+		return nil, errors.New("client: File.Walk requires at least one name (use File.Clone for 0-step walk)")
 	}
 	newFid, err := f.conn.fids.acquire()
 	if err != nil {

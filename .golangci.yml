@@ -1,0 +1,150 @@
+# golangci-lint v2 configuration for ninep.
+#
+# Philosophy: strict where it catches real bug classes, quiet where it
+# would only enforce taste. The standard preset
+# (errcheck, govet, ineffassign, staticcheck, unused) is enabled via
+# `default: standard`; additions below are justified one by one.
+#
+# Every enabled linter passes on the current tree (with the test
+# exclusions below). The linters below were each evaluated against their
+# actual findings and deliberately left off: on ninep they catch no real
+# bugs, and several are actively harmful.
+#
+#   * No value (noise / counterproductive): gocritic (mostly octal-literal
+#     test cosmetics, plus a false positive on GetLock's wire-fixed
+#     signature), thelper (would mis-attribute shared-dispatch subtest
+#     failures onto the dispatcher line), revive (~1:46 signal; would
+#     rename the exported DT_*/errno constants), govet `enable-all` (only
+#     adds shadow; every hit is a dead-variable false positive, and govet's
+#     real passes already run via `default: standard`).
+#   * Actively harmful: unconvert (`--fix` dropping uint64(st.Nlink) in
+#     passthrough breaks the linux/arm,386,arm64 cross-builds, invisible to
+#     amd64-only CI), sloglint (`--fix` deletes a benchmark's
+#     slog.LevelInfo), tparallel (the suggested t.Parallel() races shared
+#     test roots).
+#   * False positives on deliberate idioms: forcetypeassert (the safe
+#     `sync.Pool.Get().(T)` in bufpool/requestctx), containedctx (the
+#     request-scoped requestctx carrier), errname (Errno mirrors
+#     syscall.Errno), exhaustive (protocol dispatch switches), spancheck
+#     (the otel.go span factory returns its span), goimports (per request).
+#
+# Application-domain linters (SQL, HTTP, protobuf, k8s, CLI) are not
+# enabled: ninep is a stdlib-first protocol library with one non-OTel
+# dependency.
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard
+  enable:
+    # Error handling correctness (GO-ERR).
+    - errorlint          # use errors.Is / errors.As over == and bare casts
+    - nilerr             # don't return nil after checking err != nil
+    - nilnesserr         # paired-nil mistakes
+
+    # Modern Go (the module targets 1.26).
+    - copyloopvar        # the now-unnecessary `x := x` loop var copy
+    - intrange           # prefer `for i := range n`
+    - modernize          # gopls modernize: slices.Backward, atomic.Uint64
+
+    # Subtle bug classes.
+    - asasalint          # passing []any to func(...any) is almost always a bug
+    - durationcheck      # time.Duration multiplication mistakes
+    - fatcontext         # context derivation inside loops (context leak)
+    - makezero           # make([]T, n) then append is usually a bug
+    - mirror             # bytes vs strings API mismatch
+    - nosprintfhostport  # Sprintf("%s:%d", host, port) breaks IPv6
+    - reassign           # reassigning package sentinels (io.EOF, etc.)
+    - recvcheck          # mixed pointer/value receivers break Marshaler ifaces
+    - gocheckcompilerdirectives  # typos in //go: directives
+
+    # Architectural boundaries — see settings.depguard.
+    - depguard
+
+    # Security (no false positives on this codebase).
+    - asciicheck         # reject non-ASCII identifiers (homoglyph defense)
+    - bidichk            # CVE-2021-42574 unicode bidi attacks
+
+    # Dead code / redundancy beyond `unused`.
+    - predeclared        # don't shadow predeclared identifiers (len, error)
+    - usestdlibvars      # use stdlib constants over magic strings
+    - wastedassign       # assignments whose value is never read
+
+    # Spelling. No locale is set on purpose: misspell then catches only
+    # unambiguous typos and leaves the codebase's mixed British/American
+    # spelling alone (locale US/UK each flags ~40-50 dialect differences).
+    - misspell
+
+    # Performance (auto-fixable).
+    - perfsprint         # fmt.Sprintf -> strconv where strictly faster
+
+  settings:
+    errcheck:
+      check-type-assertions: false  # forcetypeassert covers assertions
+    depguard:
+      # Encodes ninep's stdlib-first / minimal-dependency rules (CLAUDE.md
+      # "What NOT to Use"). list-mode lax: only the explicit denies fail.
+      rules:
+        # The library depends on the OpenTelemetry API, never the SDK. The
+        # SDK is an application concern and is present only as a test
+        # dependency; production code must stay SDK-free.
+        otel-api-not-sdk:
+          list-mode: lax
+          files:
+            - "$all"
+            - "!$test"
+          deny:
+            - pkg: go.opentelemetry.io/otel/sdk
+              desc: >-
+                ninep is a library: depend on the OpenTelemetry API, not
+                the SDK. The SDK is wired up by consumers and is a
+                test-only dependency here.
+        # Structured logging is log/slog (GO-OBS-1); do not force a logging
+        # framework dependency on consumers.
+        logging-must-be-slog:
+          list-mode: lax
+          files:
+            - "$all"
+          deny:
+            - pkg: go.uber.org/zap
+              desc: ninep uses log/slog; do not introduce zap.
+            - pkg: github.com/rs/zerolog
+              desc: ninep uses log/slog; do not introduce zerolog.
+            - pkg: github.com/sirupsen/logrus
+              desc: ninep uses log/slog; do not introduce logrus.
+        # Tests use the stdlib testing package with small inline interface
+        # implementations; no assertion or mocking framework.
+        stdlib-testing-only:
+          list-mode: lax
+          files:
+            - "$all"
+          deny:
+            - pkg: github.com/stretchr/testify
+              desc: ninep tests use the stdlib testing package; no testify.
+
+  exclusions:
+    rules:
+      # Tests bare-assert (a wrong assertion just panics the test) and
+      # compare known sentinels directly; those checks are noise in test
+      # setup, so relax them in _test.go files only.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - errorlint
+          - copyloopvar     # a redundant loop-var copy in one test
+          - predeclared     # min/max used as local names in tests
+
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0
+
+formatters:
+  enable:
+    - gofmt
+  settings:
+    gofmt:
+      simplify: true

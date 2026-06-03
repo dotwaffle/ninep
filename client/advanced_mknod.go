@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dotwaffle/ninep/proto"
@@ -37,10 +38,10 @@ func (c *Conn) Mknod(ctx context.Context, parentPath, name string, mode proto.Fi
 	}
 	root := c.Root()
 	if root == nil {
-		return nil, fmt.Errorf("client: Mknod requires a prior Attach")
+		return nil, errors.New("client: Mknod requires a prior Attach")
 	}
 	if name == "" {
-		return nil, fmt.Errorf("client: Mknod requires a non-empty name")
+		return nil, errors.New("client: Mknod requires a non-empty name")
 	}
 	parents := splitPath(parentPath)
 

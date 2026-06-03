@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -35,12 +36,12 @@ func (c *Conn) Rename(ctx context.Context, fromPath, toPath string) error {
 	}
 	root := c.Root()
 	if root == nil {
-		return fmt.Errorf("client: Rename requires a prior Attach")
+		return errors.New("client: Rename requires a prior Attach")
 	}
 	fromFull := splitPath(fromPath)
 	toFull := splitPath(toPath)
 	if len(fromFull) == 0 || len(toFull) == 0 {
-		return fmt.Errorf("client: Rename requires non-root paths")
+		return errors.New("client: Rename requires non-root paths")
 	}
 	fromParents := fromFull[:len(fromFull)-1]
 	fromName := fromFull[len(fromFull)-1]

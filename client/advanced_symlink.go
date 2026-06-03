@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dotwaffle/ninep/proto"
@@ -36,11 +37,11 @@ func (c *Conn) Symlink(ctx context.Context, linkPath, target string) (*File, err
 	}
 	root := c.Root()
 	if root == nil {
-		return nil, fmt.Errorf("client: Symlink requires a prior Attach")
+		return nil, errors.New("client: Symlink requires a prior Attach")
 	}
 	full := splitPath(linkPath)
 	if len(full) == 0 {
-		return nil, fmt.Errorf("client: Symlink requires a non-root path")
+		return nil, errors.New("client: Symlink requires a non-root path")
 	}
 	parents := full[:len(full)-1]
 	name := full[len(full)-1]

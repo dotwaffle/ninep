@@ -122,9 +122,9 @@ func (c *conn) handleUOpen(ctx context.Context, m *p9u.Topen) proto.Message {
 // hints are clamped to that ceiling so a node cannot advertise a value
 // the wire can't carry.
 func (c *conn) clampIOUnit(hint uint32) uint32 {
-	max := c.msize - proto.HeaderSize - 4
-	if hint == 0 || hint > max {
-		return max
+	maxIOUnit := c.msize - proto.HeaderSize - 4
+	if hint == 0 || hint > maxIOUnit {
+		return maxIOUnit
 	}
 	return hint
 }

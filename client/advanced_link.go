@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -25,12 +26,12 @@ func (c *Conn) Link(ctx context.Context, existingPath, newPath string) error {
 	}
 	root := c.Root()
 	if root == nil {
-		return fmt.Errorf("client: Link requires a prior Attach")
+		return errors.New("client: Link requires a prior Attach")
 	}
 	srcFull := splitPath(existingPath)
 	dstFull := splitPath(newPath)
 	if len(srcFull) == 0 || len(dstFull) == 0 {
-		return fmt.Errorf("client: Link requires non-root paths")
+		return errors.New("client: Link requires non-root paths")
 	}
 	dstParents := dstFull[:len(dstFull)-1]
 	dstName := dstFull[len(dstFull)-1]

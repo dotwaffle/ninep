@@ -85,15 +85,15 @@ type Metrics struct {
 }
 
 var (
-	msgBufMisses    uint64
-	stringBufMisses uint64
+	msgBufMisses    atomic.Uint64
+	stringBufMisses atomic.Uint64
 )
 
 // ReadMetrics returns a snapshot of the current pool metrics.
 func ReadMetrics() Metrics {
 	return Metrics{
-		MsgBufMisses:    atomic.LoadUint64(&msgBufMisses),
-		StringBufMisses: atomic.LoadUint64(&stringBufMisses),
+		MsgBufMisses:    msgBufMisses.Load(),
+		StringBufMisses: stringBufMisses.Load(),
 	}
 }
 
@@ -175,7 +175,7 @@ func msgBucketFor(n int) int {
 func GetMsgBuf(n int) *[]byte {
 	idx := msgBucketFor(n)
 	if idx < 0 {
-		atomic.AddUint64(&msgBufMisses, 1)
+		msgBufMisses.Add(1)
 		b := make([]byte, n)
 		return &b
 	}
@@ -230,7 +230,7 @@ func stringBucketFor(n int) int {
 func GetStringBuf(n int) *[]byte {
 	idx := stringBucketFor(n)
 	if idx < 0 {
-		atomic.AddUint64(&stringBufMisses, 1)
+		stringBufMisses.Add(1)
 		b := make([]byte, 0, n)
 		return &b
 	}
@@ -240,7 +240,7 @@ func GetStringBuf(n int) *[]byte {
 		// bucket's size class was somehow returned to the pool. Return
 		// it to its real bucket (if it matches another size class) so
 		// the pool is not silently drained, then allocate fresh.
-		atomic.AddUint64(&stringBufMisses, 1)
+		stringBufMisses.Add(1)
 		PutStringBuf(b)
 		nb := make([]byte, 0, n)
 		return &nb

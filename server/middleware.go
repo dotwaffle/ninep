@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"slices"
 
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
@@ -35,8 +36,8 @@ func chain(inner Handler, mws []Middleware) Handler {
 		return inner
 	}
 	h := inner
-	for i := len(mws) - 1; i >= 0; i-- {
-		h = mws[i](h)
+	for _, v := range slices.Backward(mws) {
+		h = v(h)
 	}
 	return h
 }
