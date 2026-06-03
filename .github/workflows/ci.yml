@@ -59,6 +59,12 @@ jobs:
       - name: Fuzz p9u codec
         run: go test -fuzz=FuzzCodecRoundTrip -fuzztime=30s ./proto/p9u/
 
+      - name: Fuzz client lock
+        run: go test -fuzz=FuzzClientLock -fuzztime=30s -run='^$' ./client/
+
+      - name: Fuzz client xattr
+        run: go test -fuzz=FuzzClientXattr -fuzztime=30s -run='^$' ./client/
+
   stress:
     runs-on: ubuntu-latest
     steps:
