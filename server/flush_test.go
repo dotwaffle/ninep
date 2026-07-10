@@ -34,6 +34,99 @@ func TestInflightMap_StartFinish(t *testing.T) {
 	}
 }
 
+// TestInflightMap_FlushWaitsOnCommittedEntry pins the fix for the window
+// between dispatchInline committing a tag (about to write its response)
+// and completeCommit running after the write finishes. Before this fix,
+// the tag was removed from the map before the write instead of marked
+// committed, so a Tflush arriving in that window found no entry and
+// returned Rflush immediately -- which could win the race for writeMu and
+// ship before the response it was meant to follow.
+func TestInflightMap_FlushWaitsOnCommittedEntry(t *testing.T) {
+	t.Parallel()
+
+	im := newInflightMap()
+	rctx := getRequestCtx(t.Context())
+	defer putRequestCtx(rctx)
+
+	if !im.start(1, rctx) {
+		t.Fatal("start failed")
+	}
+
+	// Simulate dispatchInline about to write the response.
+	im.commit(1)
+
+	// A Tflush arrives while the response write is still in flight (the
+	// exact race window). It must find the entry and get a channel to
+	// wait on, not nil (which would let handleFlush return Rflush
+	// immediately, ahead of the response still being written).
+	done := im.flushWait(1)
+	if done == nil {
+		t.Fatal("flushWait returned nil for a committed-but-not-yet-completed entry; Rflush could overtake the response")
+	}
+	select {
+	case <-done:
+		t.Fatal("done closed before completeCommit ran")
+	default:
+	}
+
+	// Simulate the write finishing: dispatchInline fetches whatever done
+	// channel exists now (created above by the late-arriving flushWait)
+	// and closes it.
+	finalDone := im.completeCommit(1, rctx)
+	if finalDone != done {
+		t.Fatal("completeCommit did not return the done channel flushWait created mid-write")
+	}
+	close(finalDone)
+
+	select {
+	case <-done:
+	default:
+		t.Fatal("flushWait's done channel did not close after the response completed")
+	}
+	if im.len() != 0 {
+		t.Fatalf("len after completeCommit = %d, want 0", im.len())
+	}
+}
+
+// TestInflightMap_StartReusesCommittedTag verifies that once a tag's entry
+// is committed (its response write has begun), a legitimately reused tag
+// is accepted rather than tearing the connection down as a duplicate, and
+// that the original request's own completeCommit call -- arriving after
+// the reuse -- is a safe no-op that does not disturb the new entry.
+func TestInflightMap_StartReusesCommittedTag(t *testing.T) {
+	t.Parallel()
+
+	im := newInflightMap()
+	first := getRequestCtx(t.Context())
+	second := getRequestCtx(t.Context())
+	defer putRequestCtx(first)
+	defer putRequestCtx(second)
+
+	if !im.start(1, first) {
+		t.Fatal("first start failed")
+	}
+	im.commit(1)
+
+	if !im.start(1, second) {
+		t.Fatal("start on a committed tag should succeed (client saw the response)")
+	}
+	if im.len() != 1 {
+		t.Fatalf("len after reuse = %d, want 1", im.len())
+	}
+
+	// The original request's completeCommit arrives late; it must not
+	// remove the new entry or double-decrement count.
+	im.completeCommit(1, first)
+	if im.len() != 1 {
+		t.Fatalf("len after stale completeCommit = %d, want 1 (new entry must survive)", im.len())
+	}
+
+	im.finish(1)
+	if im.len() != 0 {
+		t.Fatalf("len after finishing the new entry = %d, want 0", im.len())
+	}
+}
+
 func TestInflightMap_StartRejectsDuplicateTag(t *testing.T) {
 	t.Parallel()
 

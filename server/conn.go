@@ -759,17 +759,22 @@ func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message
 		if r, ok := resp.(releaser); ok {
 			release = r
 		}
-		// Remove the tag BEFORE the write so a client that reuses the tag
-		// the instant it receives this response cannot collide with the
-		// still-registered entry. Close the captured done channel AFTER the
-		// write so a Tflush that was waiting on this request is released
-		// only once the flushed response is on the wire, keeping Rflush
-		// ordered after it. finished=true makes the deferred finish() above
-		// a no-op for this path.
-		doneCh := c.inflight.remove(tag)
+		// Commit the tag BEFORE the write: this marks the entry so a
+		// legitimately reused tag (start treats a committed entry as free)
+		// does not collide with it, while keeping the entry in the map so
+		// a Tflush arriving during the write still finds it and blocks on
+		// done instead of returning Rflush immediately -- which could
+		// otherwise win the race for writeMu and overtake this response on
+		// the wire. completeCommit runs AFTER the write and returns
+		// whatever done channel exists at that point (a Tflush may have
+		// registered one at any time up to this call), which is then
+		// closed, releasing a waiter only once the flushed response (if
+		// any) is actually on the wire. finished=true makes the deferred
+		// finish() above a no-op for this path.
+		c.inflight.commit(tag)
 		finished = true
 		c.sendResponseInline(tag, resp, release)
-		if doneCh != nil {
+		if doneCh := c.inflight.completeCommit(tag, rctx); doneCh != nil {
 			close(doneCh)
 		}
 	}
