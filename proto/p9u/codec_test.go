@@ -42,6 +42,7 @@ func TestRoundTrip(t *testing.T) {
 		}},
 		{"Tstat", 9, &p9u.Tstat{Fid: 14}},
 		{"Rstat", 10, &p9u.Rstat{Stat: p9u.Stat{
+			Size:      82, // Encoded body size; DecodeFrom populates this from the wire.
 			Type:      0,
 			Dev:       0,
 			QID:       proto.QID{Type: proto.QTFILE, Version: 3, Path: 50},
@@ -59,6 +60,7 @@ func TestRoundTrip(t *testing.T) {
 			NMuid:     0,
 		}}},
 		{"Twstat", 11, &p9u.Twstat{Fid: 15, Stat: p9u.Stat{
+			Size:      85, // Encoded body size; DecodeFrom populates this from the wire.
 			Name:      "renamed.txt",
 			UID:       "nobody",
 			GID:       "nogroup",

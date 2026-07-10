@@ -262,13 +262,17 @@ func (s *Stat) EncodedSize() (uint16, error) {
 }
 
 // EncodeTo writes the stat to w: size[2] + body fields.
+//
+// EncodeTo does not assign the computed size to s.Size: doing so would
+// mutate the receiver as a side effect of encoding, which is surprising
+// for a method whose contract is "serialize, don't modify" and unsafe if
+// two goroutines encode the same *Stat concurrently.
 func (s *Stat) EncodeTo(w io.Writer) error {
 	encodedSize, err := s.EncodedSize()
 	if err != nil {
 		return fmt.Errorf("encode stat: %w", err)
 	}
-	s.Size = encodedSize
-	if err := proto.WriteUint16(w, s.Size); err != nil {
+	if err := proto.WriteUint16(w, encodedSize); err != nil {
 		return fmt.Errorf("encode stat size: %w", err)
 	}
 	if err := proto.WriteUint16(w, s.Type); err != nil {
