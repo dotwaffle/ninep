@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -196,6 +197,66 @@ func TestFidState_ConcurrentUpdateAndRead(t *testing.T) {
 	}()
 
 	wg.Wait()
+}
+
+// releaseRecorder is a FileHandle implementing FileReleaser that records
+// when Release runs, for asserting release ordering against beginIO/endIO.
+type releaseRecorder struct {
+	released chan struct{}
+}
+
+func (r *releaseRecorder) Release(context.Context) error {
+	close(r.released)
+	return nil
+}
+
+// TestFidState_ClunkDefersReleaseUntilIODrains pins the fix for the fd-reuse
+// hazard where Tclunk racing a pipelined Tread on the same fid could call
+// FileReleaser.Release while the read was still in flight: beginIO/endIO
+// must make handleClunk defer the release until every in-flight I/O call
+// registered against the fid has returned.
+func TestFidState_ClunkDefersReleaseUntilIODrains(t *testing.T) {
+	t.Parallel()
+
+	handle := &releaseRecorder{released: make(chan struct{})}
+	fs := &fidState{node: newTestNode(proto.QID{Path: 1}), state: fidOpened, handle: handle}
+
+	if !fs.beginIO() {
+		t.Fatal("beginIO: got false, want true (fid not yet closing)")
+	}
+
+	// Simulate handleClunk: mark closing, and release only if no I/O call
+	// is in flight. One call (started above) is in flight, so the release
+	// must not happen here.
+	fs.mu.Lock()
+	fs.closing = true
+	deferRelease := fs.ioRefs > 0
+	fs.mu.Unlock()
+	if !deferRelease {
+		t.Fatal("handleClunk: expected release to be deferred while beginIO call is in flight")
+	}
+
+	select {
+	case <-handle.released:
+		t.Fatal("Release called while an I/O call registered via beginIO was still in flight")
+	default:
+	}
+
+	// A second beginIO call after closing must be rejected: the caller must
+	// not touch handle/node once handleClunk has run.
+	if fs.beginIO() {
+		t.Fatal("beginIO after closing: got true, want false")
+	}
+
+	// The in-flight call finishes and calls endIO: since it was the last
+	// one and the fid is closing, this must perform the deferred release.
+	fs.endIO(context.Background(), nil)
+
+	select {
+	case <-handle.released:
+	default:
+		t.Fatal("endIO did not release the handle after the last in-flight I/O call drained")
+	}
 }
 
 func TestFidTable_UpdateNonexistent(t *testing.T) {

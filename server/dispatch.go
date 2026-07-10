@@ -295,13 +295,19 @@ func (c *conn) handleClunk(ctx context.Context, tc *proto.Tclunk) proto.Message 
 	}
 	// For fidXattrRead, no commit needed -- just discard the buffer and clunk normally.
 
-	// Release FileHandle if present (per 9P spec, clunk always succeeds).
-	releaseHandle(ctx, fs, c.logger)
-	// Call NodeCloser if implemented.
-	if closer, ok := fs.currentNode().(NodeCloser); ok {
-		if err := closer.Close(ctx); err != nil {
-			c.logger.Debug("node close error on clunk", slog.Any("error", err))
-		}
+	// Release the FileHandle and close the Node now (per 9P spec, clunk
+	// always succeeds), unless a beginIO-registered Read/Write/Readdir/
+	// Fsync call is still in flight on this fid: releasing here would
+	// close the underlying fd out from under that call, and if the OS
+	// reused the fd number before the call returned, it would silently
+	// operate on the wrong file. In that case, mark the fid as closing;
+	// endIO performs the deferred release once the last such call returns.
+	fs.mu.Lock()
+	fs.closing = true
+	deferRelease := fs.ioRefs > 0
+	fs.mu.Unlock()
+	if !deferRelease {
+		fs.releaseNow(ctx, c.logger)
 	}
 	return &proto.Rclunk{}
 }
@@ -335,12 +341,6 @@ func (c *conn) handleFlush(ctx context.Context, tf *proto.Tflush) proto.Message 
 		_ = c.nc.Close()
 		return nil
 	}
-}
-
-// releaseHandle calls FileReleaser.Release() on the handle if present.
-// Errors are logged but do not fail the operation (per 9P spec, clunk always succeeds).
-func releaseHandle(ctx context.Context, fs *fidState, logger *slog.Logger) {
-	releaseFileHandle(ctx, fs.handle, logger)
 }
 
 // releaseFileHandle calls FileReleaser.Release() on a bare handle if it

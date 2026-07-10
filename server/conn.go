@@ -817,12 +817,7 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 		c.otelInst.recordFidChange(-int64(len(states)))
 	}
 	for _, fs := range states {
-		releaseHandle(context.Background(), fs, c.logger)
-		if closer, ok := fs.currentNode().(NodeCloser); ok {
-			if err := closer.Close(context.Background()); err != nil {
-				c.logger.Debug("node close error during re-negotiation", slog.Any("error", err))
-			}
-		}
+		fs.releaseNow(context.Background(), c.logger)
 	}
 
 	var tver proto.Tversion

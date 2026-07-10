@@ -163,6 +163,14 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 		return c.errorMsg(proto.EBADF)
 	}
 
+	// Register this call against a concurrent Tclunk before touching
+	// handle/node: beginIO returning false means clunk already ran and
+	// may have released them.
+	if !fs.beginIO() {
+		return c.errorMsg(proto.EBADF)
+	}
+	defer fs.endIO(ctx, c.logger)
+
 	// Clamp count to prevent oversized allocations (T-03-03).
 	maxData := c.msize - proto.HeaderSize - 4
 	if m.Count > maxData {
@@ -244,6 +252,14 @@ func (c *conn) handleWrite(ctx context.Context, m *proto.Twrite) proto.Message {
 	if state != fidOpened {
 		return c.errorMsg(proto.EBADF)
 	}
+
+	// Register this call against a concurrent Tclunk before touching
+	// handle/node: beginIO returning false means clunk already ran and
+	// may have released them.
+	if !fs.beginIO() {
+		return c.errorMsg(proto.EBADF)
+	}
+	defer fs.endIO(ctx, c.logger)
 
 	// FileHandle dispatch first (per API-04).
 	if fs.handle != nil {
@@ -345,6 +361,14 @@ func (c *conn) handleReaddir(ctx context.Context, m *p9l.Treaddir) proto.Message
 	if fs.currentState() != fidOpened {
 		return c.errorMsg(proto.EBADF)
 	}
+
+	// Register this call against a concurrent Tclunk before touching
+	// handle/node: beginIO returning false means clunk already ran and
+	// may have released them.
+	if !fs.beginIO() {
+		return c.errorMsg(proto.EBADF)
+	}
+	defer fs.endIO(ctx, c.logger)
 
 	// Clamp count to prevent oversized allocations (T-03-03).
 	maxData := c.msize - proto.HeaderSize - 4
@@ -732,6 +756,14 @@ func (c *conn) handleFsync(ctx context.Context, m *p9l.Tfsync) proto.Message {
 	if fs.currentState() != fidOpened {
 		return c.errorMsg(proto.EBADF)
 	}
+
+	// Register this call against a concurrent Tclunk before touching
+	// handle/node: beginIO returning false means clunk already ran and
+	// may have released them.
+	if !fs.beginIO() {
+		return c.errorMsg(proto.EBADF)
+	}
+	defer fs.endIO(ctx, c.logger)
 
 	// FileSyncer on the open handle takes precedence (matches handleRead/handleWrite).
 	if fs.handle != nil {

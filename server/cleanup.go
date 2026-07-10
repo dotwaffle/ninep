@@ -81,12 +81,7 @@ func (c *conn) cleanup() {
 		if !drained {
 			continue
 		}
-		releaseHandle(context.Background(), fs, c.logger)
-		if closer, ok := fs.currentNode().(NodeCloser); ok {
-			if err := closer.Close(context.Background()); err != nil {
-				c.logger.Debug("node close error during cleanup", slog.Any("error", err))
-			}
-		}
+		fs.releaseNow(context.Background(), c.logger)
 	}
 	if len(states) > 0 {
 		c.logger.Debug("cleanup: clunked fids",

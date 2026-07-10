@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"sync"
@@ -35,6 +37,18 @@ type fidState struct {
 	dirCache  []proto.Dirent // Cached dirents for simple Readdirer (offset tracking).
 	dirCached bool           // True after first readdir populates cache.
 
+	// ioRefs and closing coordinate handleClunk against in-flight I/O
+	// handlers (handleRead, handleWrite, handleReaddir, handleFsync) that
+	// dereference handle/node without holding mu for the duration of the
+	// syscall. Without this, Tclunk racing a pipelined Tread on the same
+	// fid could call FileReleaser.Release/NodeCloser.Close while the read
+	// is still in progress; if the OS reused the closed fd number for an
+	// unrelated file before the read completed, the read would silently
+	// return data from the wrong file. beginIO/endIO ensure the release
+	// only happens once every in-flight I/O call on this fid has returned.
+	ioRefs  int
+	closing bool
+
 	// Xattr fields (used when state is fidXattrRead or fidXattrWrite).
 	xattrNode   Node        // Original node the xattr belongs to.
 	xattrName   string      // Attribute name.
@@ -65,6 +79,50 @@ func (fs *fidState) currentNode() Node {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	return fs.node
+}
+
+// beginIO registers the caller as about to dereference fs.handle or
+// fs.node for a blocking I/O call. It reports false if the fid has
+// already been clunked, in which case the caller must return EBADF
+// without touching handle or node -- either may already be released.
+// Every successful beginIO must be matched by exactly one endIO call.
+func (fs *fidState) beginIO() bool {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.closing {
+		return false
+	}
+	fs.ioRefs++
+	return true
+}
+
+// endIO unregisters a beginIO call. If handleClunk ran while this call was
+// in flight, it deferred the handle release and node close to avoid
+// closing them out from under the still-running I/O; if this is the last
+// outstanding call on the fid, endIO performs that deferred release now.
+func (fs *fidState) endIO(ctx context.Context, logger *slog.Logger) {
+	fs.mu.Lock()
+	fs.ioRefs--
+	release := fs.closing && fs.ioRefs == 0
+	fs.mu.Unlock()
+	if release {
+		fs.releaseNow(ctx, logger)
+	}
+}
+
+// releaseNow calls FileReleaser.Release and NodeCloser.Close for fs. It must
+// only run once no I/O call registered via beginIO is still in flight,
+// either because handleClunk found ioRefs already at zero or because
+// endIO is draining the last outstanding call.
+func (fs *fidState) releaseNow(ctx context.Context, logger *slog.Logger) {
+	releaseFileHandle(ctx, fs.handle, logger)
+	if closer, ok := fs.node.(NodeCloser); ok {
+		if err := closer.Close(ctx); err != nil {
+			if logger != nil {
+				logger.Debug("node close error on clunk", slog.Any("error", err))
+			}
+		}
+	}
 }
 
 // fidTable is a concurrent-safe mapping from fid numbers to their state.
