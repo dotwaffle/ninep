@@ -985,6 +985,10 @@ func (c *conn) sendResponseInline(tag proto.Tag, msg proto.Message, rel releaser
 			if rel != nil {
 				rel.Release()
 			}
+			// The client is still waiting on this tag. Dropping it
+			// silently would hang the client forever instead of
+			// surfacing the failure, so report EIO in its place.
+			c.sendError(tag, proto.EIO)
 			return
 		}
 		payload = pl.Payload()
@@ -997,6 +1001,7 @@ func (c *conn) sendResponseInline(tag proto.Tag, msg proto.Message, rel releaser
 		if rel != nil {
 			rel.Release()
 		}
+		c.sendError(tag, proto.EIO)
 		return
 	}
 

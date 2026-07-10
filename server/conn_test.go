@@ -412,6 +412,33 @@ func TestSendResponse_WriteErrorTearsDownConn(t *testing.T) {
 	}
 }
 
+// TestSendResponseInline_EncodeFailureSendsEIO asserts that a response
+// which fails to encode (here, an Rread whose Data exceeds
+// proto.MaxDataSize) is not silently dropped: the client must still get a
+// reply for its tag, so the client doesn't hang forever waiting on it.
+func TestSendResponseInline_EncodeFailureSendsEIO(t *testing.T) {
+	t.Parallel()
+
+	client, serverConn := net.Pipe()
+	t.Cleanup(func() { _ = client.Close(); _ = serverConn.Close() })
+
+	c := &conn{
+		server:   &Server{},
+		nc:       serverConn,
+		logger:   discardLogger(),
+		protocol: protocolL,
+	}
+
+	oversized := &proto.Rread{Data: make([]byte, proto.MaxDataSize+1)}
+	go c.sendResponseInline(7, oversized, nil)
+
+	tag, msg := readResponse(t, client)
+	if tag != 7 {
+		t.Fatalf("tag = %d, want 7", tag)
+	}
+	isError(t, msg, proto.EIO)
+}
+
 type blockingListener struct {
 	closed chan struct{}
 	once   sync.Once
