@@ -14,6 +14,7 @@ Server options are passed to `server.New(root, opts...)` and control connection 
 | `WithMaxFids` | `WithMaxFids(n int)` | `0` (no limit) | Maximum number of concurrent fids per connection. When the cap is reached, fid-creating operations (`Tattach`, `Twalk`, `Txattrwalk`) return `EMFILE`. Enforcement runs inside `fidTable.add` under the write lock, making it race-free. Values less than 1 disable the limit. |
 | `WithIdleTimeout` | `WithIdleTimeout(d time.Duration)` | `0` (no timeout) | Per-connection idle timeout. When greater than zero, read and write deadlines are set on the underlying `net.Conn` before each I/O operation. A connection with no activity for the duration is closed. |
 | `WithLogger` | `WithLogger(logger *slog.Logger)` | `slog.Default()` with trace correlation | Structured logger for the server. The handler is automatically wrapped with `NewTraceHandler` to inject `trace_id` and `span_id` attributes when an OTel span is active. |
+| `WithRequestLogging` | `WithRequestLogging()` | disabled | Installs per-request Debug logging that reuses the server's own trace-correlated logger (the one set by `WithLogger` or its default). Unlike `WithMiddleware(NewLoggingMiddleware(logger))`, which logs through a caller-supplied logger that may lack trace correlation, this logs through the wrapped, per-connection logger, so lines carry `trace_id`/`span_id` when an OTel span is active. |
 | `WithTracer` | `WithTracer(tp trace.TracerProvider)` | `nil` (no tracing) | OpenTelemetry `TracerProvider`. When set, an OTel middleware is automatically prepended to the middleware chain, producing a span for every 9P operation. If not set, no tracing overhead is incurred. |
 | `WithMeter` | `WithMeter(mp metric.MeterProvider)` | `nil` (no metrics) | OpenTelemetry `MeterProvider`. When set, an OTel middleware is automatically prepended to the middleware chain, recording duration, request/response sizes, and active request counts. If not set, no metrics overhead is incurred. |
 | `WithMiddleware` | `WithMiddleware(mw ...Middleware)` | none | Appends middleware to the dispatch chain. The first middleware added is outermost (first to execute, last to see the response). Multiple calls append to the existing chain. |
@@ -160,6 +161,7 @@ The `server/passthrough` package provides its own functional options for `NewRoo
 | Option | Signature | Default | Description |
 |--------|-----------|---------|-------------|
 | `WithUIDMapper` | `WithUIDMapper(m UIDMapper)` | `IdentityMapper()` | Sets a custom UID/GID mapper for bidirectional mapping between 9P protocol UIDs and host OS UIDs. |
+| `WithDeviceNodes` | `WithDeviceNodes()` | disabled | Permits clients to create block and character device nodes via `Tmknod`. Disabled by default: a privileged server (`CAP_MKNOD`, commonly root) would otherwise let a remote peer create arbitrary device nodes inside the export and open them for raw host device access. Enable only when the export is trusted to receive device nodes. |
 
 ### UIDMapper
 
@@ -184,6 +186,52 @@ root, err := passthrough.NewRoot("/srv/shared",
     passthrough.WithUIDMapper(passthrough.UIDMapper{
         ToHost:   func(uid, gid uint32) (uint32, uint32) { return uid + 1000, gid + 1000 },
         FromHost: func(uid, gid uint32) (uint32, uint32) { return uid - 1000, gid - 1000 },
+    }),
+)
+```
+
+## Client Options
+
+Client options are passed to `client.Dial(ctx, nc, opts...)` and control
+message sizing, concurrency, logging, lock polling, and per-op timeouts.
+
+| Option | Signature | Default | Description |
+|--------|-----------|---------|-------------|
+| `WithVersion` | `WithVersion(v proto.Version)` | unset (propose 9P2000.L, accept whatever the server negotiates) | Pins the version proposed during `Dial`. If the server negotiates any other version, `Dial` returns `ErrVersionMismatch`. Useful for deterministic protocol-specific tests. |
+| `WithMsize` | `WithMsize(n uint32)` | `1048576` (1 MiB) | Proposed maximum message size. The server's `Rversion.Msize` caps the proposal; negotiated msize is `min(client proposal, server cap)`. No clamping here -- a proposal that negotiates below 256 bytes surfaces `ErrMsizeTooSmall` at `Dial` time. |
+| `WithMaxInflight` | `WithMaxInflight(n int)` | `64` | Maximum concurrent outstanding requests on the Conn. Backs the tag allocator's free-list capacity; once saturated, new requests block until an in-flight tag is released. Values < 1 clamp to 1; values > 65534 clamp to 65534 (`NoTag` is reserved). |
+| `WithLogger` | `WithLogger(logger *slog.Logger)` | `slog.Default()` | Structured logger for diagnostic output. A nil logger is ignored (existing logger preserved). |
+| `WithLockPollSchedule` | `WithLockPollSchedule(schedule []time.Duration)` | `DefaultLockBackoff` (10/20/40/80/160/320/500ms cap) | Overrides the backoff curve `File.Lock` uses while polling on `LockStatusBlocked`/`LockStatusGrace`. An empty slice is a no-op (falls back to the default). Primarily useful for bounding test timing. |
+| `WithRequestTimeout` | `WithRequestTimeout(d time.Duration)` | `0` (infinite wait, matches Linux v9fs `trans=tcp`) | Per-request timeout applied to the non-ctx `File.Read`/`Write`/`ReadAt`/`WriteAt` methods. Timeout expiry drives Tflush via the standard cancellation pipeline; `errors.Is(err, context.DeadlineExceeded)` matches. Values <= 0 mean no timeout. Ignored by the `*Ctx` method variants, which honor the caller-supplied context verbatim. |
+| `WithTracer` | `WithTracer(tp trace.TracerProvider)` | `nil` (no tracing) | OpenTelemetry `TracerProvider` for client-side spans. |
+| `WithMeter` | `WithMeter(mp metric.MeterProvider)` | `nil` (no metrics) | OpenTelemetry `MeterProvider` for client-side metrics. |
+
+### Usage
+
+```go
+c, err := client.Dial(ctx, nc,
+    client.WithMsize(1<<20),
+    client.WithMaxInflight(128),
+    client.WithRequestTimeout(10*time.Second),
+    client.WithLogger(slog.New(slog.NewJSONHandler(os.Stderr, nil))),
+)
+```
+
+### Session Options
+
+`client.Session` wraps a `*Conn` with automatic reconnect. Session-level
+behavior is configured with `SessionOption` values passed to
+`NewSessionWithOptions`:
+
+| Option | Signature | Description |
+|--------|-----------|-------------|
+| `WithOnReconnect` | `WithOnReconnect(fn func(context.Context, *Conn) error) SessionOption` | Registers a callback invoked with the fresh `*Conn` every time the Session establishes a new connection (initial dial or reconnect after a failure) -- typically used to re-`Attach` and re-open files that the caller needs to keep using across reconnects. |
+
+```go
+sess := client.NewSessionWithOptions(dialer, []client.Option{client.WithMsize(1 << 20)},
+    client.WithOnReconnect(func(ctx context.Context, c *client.Conn) error {
+        _, err := c.Attach(ctx, "me", "")
+        return err
     }),
 )
 ```
