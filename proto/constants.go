@@ -20,7 +20,7 @@ const (
 )
 
 // Sentinel fid and tag values.
-var (
+const (
 	// NoTag is the tag value used for Tversion/Rversion messages, which
 	// are not tagged.
 	NoTag Tag = Tag(math.MaxUint16)
