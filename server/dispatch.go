@@ -47,6 +47,8 @@ func (c *conn) dispatch(ctx context.Context, tag proto.Tag, msg proto.Message) p
 		return c.handleWalk(ctx, m)
 	case *proto.Tclunk:
 		return c.handleClunk(ctx, m)
+	case *proto.Tremove:
+		return c.handleRemove(ctx, m)
 	case *proto.Tauth:
 		// Auth is out of scope per project constraints.
 		return c.errorMsg(proto.ENOSYS)
@@ -300,16 +302,69 @@ func (c *conn) handleClunk(ctx context.Context, tc *proto.Tclunk) proto.Message 
 	// Fsync call is still in flight on this fid: releasing here would
 	// close the underlying fd out from under that call, and if the OS
 	// reused the fd number before the call returned, it would silently
-	// operate on the wrong file. In that case, mark the fid as closing;
-	// endIO performs the deferred release once the last such call returns.
-	fs.mu.Lock()
-	fs.closing = true
-	deferRelease := fs.ioRefs > 0
-	fs.mu.Unlock()
-	if !deferRelease {
-		fs.releaseNow(ctx, c.logger)
-	}
+	// operate on the wrong file. finishClunk defers the release to the
+	// last such call's endIO in that case.
+	fs.finishClunk(ctx, c.logger)
 	return &proto.Rclunk{}
+}
+
+// handleRemove dispatches the legacy fid-based Tremove by resolving the
+// parent directory via the Inode tree (mirroring handleRename, which faces
+// the same fid-based-only wire shape) and calling NodeUnlinker.Unlink on
+// it. Per remove(5), the fid is clunked whether or not the remove itself
+// succeeds, so this always tears the fid down exactly as handleClunk does.
+func (c *conn) handleRemove(ctx context.Context, tr *proto.Tremove) proto.Message {
+	fs := c.fids.clunk(tr.Fid)
+	if fs == nil {
+		return c.errorMsg(proto.EBADF)
+	}
+	c.otelInst.recordFidChange(-1)
+
+	removeErr := removeViaInodeTree(ctx, fs.currentNode())
+	fs.finishClunk(ctx, c.logger)
+
+	if removeErr != nil {
+		return c.errorMsg(errnoFromError(removeErr))
+	}
+	return &proto.Rremove{}
+}
+
+// removeViaInodeTree resolves node's parent directory via the Inode tree
+// and calls NodeUnlinker.Unlink on it with node's name in that directory.
+// Legacy Tremove carries only the fid being removed, not a separate
+// directory fid, so the parent must be found by walking up the tree --
+// the same resolution handleRename uses for Trename.
+func removeViaInodeTree(ctx context.Context, node Node) error {
+	ie, ok := node.(InodeEmbedder)
+	if !ok {
+		return proto.ENOSYS
+	}
+	childInode := ie.EmbeddedInode()
+	parentInode := childInode.Parent()
+	if parentInode == nil {
+		return proto.ENOSYS
+	}
+
+	var name string
+	for n, child := range parentInode.Children() {
+		if child == childInode {
+			name = n
+			break
+		}
+	}
+	if name == "" {
+		return proto.EINVAL
+	}
+
+	unlinker, ok := parentInode.node.(NodeUnlinker)
+	if !ok {
+		return proto.ENOSYS
+	}
+	if err := unlinker.Unlink(ctx, name, 0); err != nil {
+		return err
+	}
+	parentInode.RemoveChild(name)
+	return nil
 }
 
 // handleFlush cancels the target request's context and returns Rflush, but

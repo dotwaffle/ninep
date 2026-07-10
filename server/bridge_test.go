@@ -1631,6 +1631,48 @@ func TestBridge_Unlinkat(t *testing.T) {
 	isError(t, msg, proto.ENOENT)
 }
 
+// TestBridge_Remove exercises the legacy fid-based Tremove: the fid must be
+// clunked (usable neither for further ops nor reusable by another Twalk
+// with a duplicate fid check bypassed) and the entry must be gone from the
+// parent, whether or not the remove itself succeeds.
+func TestBridge_Remove(t *testing.T) {
+	t.Parallel()
+
+	gen := &QIDGenerator{}
+	root := &symlinkDir{gen: gen}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	child := &bridgeFile{content: []byte("delete-me"), mode: 0o644}
+	child.Init(gen.Next(proto.QTFILE), child)
+	root.AddChild("child", child.EmbeddedInode())
+
+	cp := setupBridgeConn(t, root)
+	defer cp.close(t)
+
+	// Walk to child.
+	msg := cp.walk(t, 2, 0, 2, "child")
+	if _, ok := msg.(*proto.Rwalk); !ok {
+		t.Fatalf("expected Rwalk, got %T: %+v", msg, msg)
+	}
+
+	// Remove via the fid-based Tremove.
+	sendMessage(t, cp.client, 3, &proto.Tremove{Fid: 2})
+	_, msg = readResponse(t, cp.client)
+	if _, ok := msg.(*proto.Rremove); !ok {
+		t.Fatalf("expected Rremove, got %T: %+v", msg, msg)
+	}
+
+	// The fid must be clunked: further use is EBADF, and a fresh Twalk can
+	// reuse the fid number without hitting the "already in use" teardown.
+	sendMessage(t, cp.client, 4, &proto.Tread{Fid: 2, Offset: 0, Count: 16})
+	_, msg = readResponse(t, cp.client)
+	isError(t, msg, proto.EBADF)
+
+	// Walk to child from root should now fail: the entry is gone.
+	msg = cp.walk(t, 5, 0, 6, "child")
+	isError(t, msg, proto.ENOENT)
+}
+
 func TestBridge_Renameat(t *testing.T) {
 	t.Parallel()
 

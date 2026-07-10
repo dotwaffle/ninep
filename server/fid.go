@@ -125,6 +125,22 @@ func (fs *fidState) releaseNow(ctx context.Context, logger *slog.Logger) {
 	}
 }
 
+// finishClunk marks fs as closing and releases its handle/node immediately
+// unless a beginIO-registered I/O call is still in flight, in which case
+// the last matching endIO performs the release once ioRefs drains to zero.
+// Used by handleClunk and handleRemove: both fully tear down the fid --
+// Tremove clunks its fid whether or not the remove itself succeeds, per
+// remove(5).
+func (fs *fidState) finishClunk(ctx context.Context, logger *slog.Logger) {
+	fs.mu.Lock()
+	fs.closing = true
+	release := fs.ioRefs == 0
+	fs.mu.Unlock()
+	if release {
+		fs.releaseNow(ctx, logger)
+	}
+}
+
 // fidTable is a concurrent-safe mapping from fid numbers to their state.
 // Protected by sync.RWMutex per GO-CC-3.
 type fidTable struct {
