@@ -11,7 +11,29 @@ func (n *Node) openResolved(flags uint32) (int, error) {
 		}
 		return unix.Open(n.root.hostPath, openFlags(flags), 0)
 	}
-	return unix.Openat(n.parentFd, n.name, openFlags(flags), 0)
+
+	// This is a fresh name lookup in parentFd, not a reopen of the fd this
+	// Node was originally resolved from (FreeBSD has no /proc/self/fd
+	// equivalent for that -- see reopen_linux.go). A concurrent
+	// rename/symlink-swap of the directory entry between the original
+	// Lookup and this call could otherwise substitute an attacker-chosen
+	// target. O_NOFOLLOW rejects a symlink substitution outright; the
+	// (dev, ino) check below catches a same-type substitution (e.g. the
+	// entry unlinked and replaced with a different regular file).
+	fd, err := unix.Openat(n.parentFd, n.name, openFlags(flags)|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return -1, err
+	}
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		_ = unix.Close(fd)
+		return -1, err
+	}
+	if uint64(st.Dev) != n.dev || st.Ino != n.QID().Path {
+		_ = unix.Close(fd)
+		return -1, unix.ESTALE
+	}
+	return fd, nil
 }
 
 func (n *Node) chmodResolved(mode uint32) error {

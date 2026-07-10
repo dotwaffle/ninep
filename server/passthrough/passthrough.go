@@ -87,7 +87,7 @@ func (n *Node) lookupParent() (server.Node, error) {
 		_ = unix.Close(fd)
 		return nil, toProtoErr(err)
 	}
-	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: ".."}
+	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: "..", dev: uint64(cst.Dev)}
 	if clampToRoot {
 		// The clamped child IS the export root. Clear the parent anchor so
 		// parent-anchored *at operations (Setattr chown/utimes, Readlink,

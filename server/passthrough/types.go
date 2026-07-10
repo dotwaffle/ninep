@@ -20,6 +20,15 @@ type Node struct {
 	root     *Root
 	parentFd int    // parent directory fd, for *at calls
 	name     string // entry name in parent, for *at calls
+
+	// dev is the device number this node's file lived on at Lookup/create
+	// time. FreeBSD's openResolved (reopen_freebsd.go) has no /proc/self/fd
+	// equivalent to reopen a stale fd directly, so it falls back to
+	// re-resolving parentFd+name; dev (together with QID().Path, which
+	// already holds the inode number) lets it detect a concurrent
+	// rename/symlink swap of that directory entry instead of silently
+	// operating on whatever now occupies the name.
+	dev uint64
 }
 
 // Root is the top-level node of a passthrough filesystem. It wraps a Node

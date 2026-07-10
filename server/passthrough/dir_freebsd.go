@@ -51,7 +51,7 @@ func (n *Node) Lookup(_ context.Context, name string) (server.Node, error) {
 		return nil, toProtoErr(err)
 	}
 
-	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
+	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name, dev: uint64(st.Dev)}
 	child.Init(statToQID(&st), child)
 	// See dir_linux.go Lookup: the child is recorded for Trename/Trenameat name
 	// resolution and persists for the parent's lifetime (bounded by distinct
@@ -87,7 +87,7 @@ func (n *Node) Create(_ context.Context, name string, flags uint32, mode proto.F
 		return nil, nil, 0, toProtoErr(err)
 	}
 
-	child := &Node{fd: pathFd, root: n.root, parentFd: n.fd, name: name}
+	child := &Node{fd: pathFd, root: n.root, parentFd: n.fd, name: name, dev: uint64(st.Dev)}
 	child.Init(statToQID(&st), child)
 
 	return child, &fileHandle{fd: fd}, 0, nil
@@ -114,7 +114,7 @@ func (n *Node) Mkdir(_ context.Context, name string, mode proto.FileMode, _ uint
 		return nil, toProtoErr(err)
 	}
 
-	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
+	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name, dev: uint64(st.Dev)}
 	child.Init(statToQID(&st), child)
 
 	return child, nil
@@ -141,7 +141,7 @@ func (n *Node) Symlink(_ context.Context, name, target string, _ uint32) (server
 		return nil, toProtoErr(err)
 	}
 
-	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
+	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name, dev: uint64(st.Dev)}
 	child.Init(statToQID(&st), child)
 
 	return child, nil
@@ -173,7 +173,7 @@ func (n *Node) Mknod(_ context.Context, name string, mode proto.FileMode, major,
 		return nil, toProtoErr(err)
 	}
 
-	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
+	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name, dev: uint64(st.Dev)}
 	child.Init(statToQID(&st), child)
 
 	return child, nil
