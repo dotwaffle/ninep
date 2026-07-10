@@ -13,6 +13,9 @@
 | `server/memfs` | `github.com/dotwaffle/ninep/server/memfs` | In-memory filesystem nodes (MemFile, MemDir, StaticFile) |
 | `server/passthrough` | `github.com/dotwaffle/ninep/server/passthrough` | Host OS passthrough filesystem (Linux only) |
 | `server/fstest` | `github.com/dotwaffle/ninep/server/fstest` | Protocol-level test harness for filesystem implementations |
+| `client` | `github.com/dotwaffle/ninep/client` | Wire-level 9P client: Conn, File, Session, Raw escape hatch |
+| `client/clienttest` | `github.com/dotwaffle/ninep/client/clienttest` | Server+client test pair helpers (mirrors `httptest`) |
+| `vsock` | `github.com/dotwaffle/ninep/vsock` | AF_VSOCK Listen/Dial for virtio-vsock transport (Linux) |
 
 ---
 
@@ -673,6 +676,180 @@ func TestPassthrough(t *testing.T) {
     })
 }
 ```
+
+---
+
+## Client Package (`client`)
+
+`client` is a wire-level 9P client that multiplexes requests over any
+`net.Conn`. It handles tag allocation, message framing, and version
+negotiation; `*File` gives callers a standard `io.Reader` /
+`io.Writer` / `io.Closer` / `io.Seeker` / `io.ReaderAt` / `io.WriterAt`
+surface on top of the protocol.
+
+### Dial
+
+```go
+// Dial negotiates a 9P session over nc and returns a live *Conn.
+// nc is not closed on error -- the caller may retry or re-dial.
+func Dial(ctx context.Context, nc net.Conn, opts ...Option) (*Conn, error)
+```
+
+`Dial` proposes 9P2000.L (or the version set via `WithVersion`),
+accepts a `9P2000.L`, `9P2000.u`, or bare `9P2000` (treated as `.u`,
+matching the Linux v9fs kernel convention) `Rversion`, and negotiates
+`msize = min(proposal, server cap)`. The returned `*Conn` is safe for
+concurrent use by multiple goroutines -- modeled on `database/sql.DB`.
+
+### Conn
+
+`*Conn` exposes both a high-level, path-oriented API and the raw 9P
+verbs:
+
+```go
+// Attach walks to the server's root and returns the root *File.
+func (c *Conn) Attach(ctx context.Context, uname, aname string) (*File, error)
+
+// OpenFile walks from the attached root to p and opens it, mirroring
+// os.OpenFile's flags/mode arguments.
+func (c *Conn) OpenFile(ctx context.Context, p string, flags int, mode os.FileMode) (*File, error)
+
+// Close initiates an orderly shutdown with a 5-second drain deadline.
+func (c *Conn) Close() error
+
+// Raw returns the low-level, per-fid escape hatch (see below).
+func (c *Conn) Raw() *Raw
+```
+
+Lower-level fid-oriented methods (`AttachFid`, `Walk`, `Clunk`, `Flush`,
+`Read`, `Write`, `Lopen`, `Lcreate`, `Open`, `CreateFid`) are also
+exported directly on `*Conn` for callers that want to manage fids
+themselves rather than go through `*File`.
+
+### File
+
+`*File` wraps a fid with io-idiomatic methods:
+
+```go
+type File struct { /* unexported */ }
+
+func (f *File) Qid() proto.QID
+func (f *File) Fid() proto.Fid
+func (f *File) Close() error
+func (f *File) Walk(ctx context.Context, names []string) (*File, error)
+func (f *File) Clone(ctx context.Context) (*File, error)
+func (f *File) Sync() error
+func (f *File) ReadDir(n int) ([]os.DirEntry, error)
+
+// io.Reader / io.Writer / io.Seeker / io.ReaderAt / io.WriterAt:
+func (f *File) Read(p []byte) (int, error)
+func (f *File) Write(p []byte) (int, error)
+func (f *File) Seek(offset int64, whence int) (int64, error)
+func (f *File) ReadAt(p []byte, off int64) (int, error)
+func (f *File) WriteAt(p []byte, off int64) (int, error)
+
+// *Ctx variants take an explicit context instead of relying on
+// WithRequestTimeout / an infinite default wait:
+func (f *File) ReadCtx(ctx context.Context, p []byte) (int, error)
+func (f *File) WriteCtx(ctx context.Context, p []byte) (int, error)
+func (f *File) ReadAtCtx(ctx context.Context, p []byte, off int64) (int, error)
+func (f *File) WriteAtCtx(ctx context.Context, p []byte, off int64) (int, error)
+```
+
+`ReadAt` takes a zero-copy fast path into the caller-supplied buffer
+when the negotiated transport and dialect allow it.
+
+### Raw
+
+`Raw` (returned by `Conn.Raw()`) exposes the 9P verbs one-to-one with no
+`*File` bookkeeping, for callers implementing their own fid lifecycle:
+
+```go
+type Raw struct { /* unexported */ }
+
+func (r *Raw) Attach(ctx context.Context, fid proto.Fid, uname, aname string) (proto.QID, error)
+func (r *Raw) Walk(ctx context.Context, fid, newFid proto.Fid, names []string) ([]proto.QID, error)
+func (r *Raw) Clunk(ctx context.Context, fid proto.Fid) error
+func (r *Raw) Flush(ctx context.Context, oldTag proto.Tag) error
+func (r *Raw) Read(ctx context.Context, fid proto.Fid, offset uint64, count uint32) ([]byte, error)
+func (r *Raw) Write(ctx context.Context, fid proto.Fid, offset uint64, data []byte) (uint32, error)
+func (r *Raw) Lopen(ctx context.Context, fid proto.Fid, flags uint32) (proto.QID, uint32, error)
+func (r *Raw) Lcreate(ctx context.Context, fid proto.Fid, name string, flags uint32, mode proto.FileMode, gid uint32) (proto.QID, uint32, error)
+func (r *Raw) Open(ctx context.Context, fid proto.Fid, mode uint8) (proto.QID, uint32, error)
+func (r *Raw) Create(ctx context.Context, fid proto.Fid, name string, perm proto.FileMode, mode uint8, extension string) (proto.QID, uint32, error)
+func (r *Raw) AcquireFid() (proto.Fid, error)
+func (r *Raw) ReleaseFid(fid proto.Fid)
+```
+
+### Session
+
+`Session` wraps a `*Conn` with automatic reconnect-on-failure, useful
+for long-lived clients that must survive transient network loss:
+
+```go
+type Session struct { /* unexported */ }
+type SessionOption func(*Session)
+
+// NewSession creates a Session that dials via dialer on first use and
+// on every reconnect.
+func NewSession(dialer func(ctx context.Context) (net.Conn, error), opts ...Option) *Session
+
+func NewSessionWithOptions(dialer func(ctx context.Context) (net.Conn, error), opts []Option, sopts ...SessionOption) *Session
+
+// Conn returns the current live *Conn, dialing or reconnecting as needed.
+func (s *Session) Conn(ctx context.Context) (*Conn, error)
+
+func (s *Session) Close() error
+
+// WithOnReconnect registers a callback invoked with the fresh *Conn
+// every time the Session establishes a new connection (initial dial
+// or reconnect after failure) -- e.g. to re-Attach and re-open files.
+func WithOnReconnect(fn func(context.Context, *Conn) error) SessionOption
+```
+
+### Error
+
+```go
+// Error represents a 9P error response (Rlerror or Rerror). Errno is
+// always populated; Msg carries the .u dialect's human-readable ename
+// (empty on .L).
+type Error struct {
+    Errno proto.Errno
+    Msg   string
+}
+```
+
+Match protocol-level errors with `errors.Is(err, proto.ENOENT)` and
+friends. `client.Error.Is` delegates to `proto.Errno.Is`; it does not
+bridge to `syscall.Errno` even where the numeric values happen to
+match on Linux.
+
+Client-lifecycle conditions use dedicated sentinels instead of `Error`:
+`ErrClosed`, `ErrFlushed`, `ErrNotSupported`, `ErrVersionMismatch`,
+`ErrMsizeTooSmall`.
+
+### Client Options
+
+See [Configuration Reference](CONFIGURATION.md) for the full options
+table (`WithMsize`, `WithMaxInflight`, `WithLogger`,
+`WithLockPollSchedule`, `WithRequestTimeout`, `WithVersion`,
+`WithTracer`, `WithMeter`).
+
+### clienttest Package (`client/clienttest`)
+
+Test-only helpers that mirror `net/http/httptest`: `Pair`, `UnixPair`,
+and `MemfsPair` spin up a `server.Server` and a dialed `*client.Conn`
+over an in-memory or Unix-socket transport in one call, for tests that
+need a live client-server round trip without hand-rolling the
+plumbing.
+
+### vsock Package (`vsock`)
+
+`vsock.Listen(port uint32) (net.Listener, error)` and
+`vsock.Dial(ctx context.Context, contextID, port uint32) (net.Conn, error)`
+provide an AF_VSOCK transport for `server.Serve` / `client.Dial` over
+virtio-vsock (guest/host VM connections). Linux-only; both functions
+return `vsock.ErrUnsupported` on other platforms.
 
 ---
 
