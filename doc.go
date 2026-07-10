@@ -31,6 +31,8 @@
 //   - [github.com/dotwaffle/ninep/client] - A high-performance, concurrent, wire-level 9P
 //     client that multiplexes requests over any [net.Conn] with a standard, io.Reader/Writer-compliant
 //     File handle surface.
+//   - [github.com/dotwaffle/ninep/client/clienttest] - Server+client test pair helpers
+//     (mirrors net/http/httptest) for exercising a live client against a live server.
 //   - [github.com/dotwaffle/ninep/proto] - Shared wire-level types, constants, encoding/decoding
 //     frames, and portable errno mappings.
 //   - [github.com/dotwaffle/ninep/server/memfs] - A fully in-memory, thread-safe filesystem helper
@@ -39,6 +41,8 @@
 //     filesystem that safely exposes host directories via modern *at syscalls.
 //   - [github.com/dotwaffle/ninep/server/fstest] - A protocol-level test harness to comprehensively
 //     validate custom 9P filesystem implementations.
+//   - [github.com/dotwaffle/ninep/vsock] - An AF_VSOCK transport for serving or dialing 9P
+//     over virtio-vsock guest/host connections.
 //
 // # Example: Hello World File Server
 //
@@ -84,7 +88,7 @@
 //		root := &HelloFile{}
 //		root.Init(proto.QID{Type: proto.QTFILE, Path: 1}, root)
 //
-//		// Instatiate and serve the 9P server
+//		// Instantiate and serve the 9P server
 //		srv := server.New(root)
 //		ln, err := net.Listen("tcp", ":5640")
 //		if err != nil {
