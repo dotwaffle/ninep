@@ -48,9 +48,11 @@
 //	ln, _ := net.Listen("tcp", ":5640")
 //	srv.Serve(ctx, ln)
 //
-// Each accepted connection runs in its own goroutine. Within a connection, a
-// single writer goroutine serializes responses while requests are dispatched
-// concurrently (bounded by [WithMaxInflight]).
+// Each accepted connection runs in its own goroutine, which lazy-spawns
+// handleRequest goroutines under a recv mutex as load demands (bounded
+// by [WithMaxInflight]). The same goroutine that reads a request also
+// dispatches it and writes its response inline under a write mutex --
+// there is no separate writer goroutine.
 //
 // # Functional Options
 //
