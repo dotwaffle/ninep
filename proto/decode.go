@@ -27,6 +27,9 @@ func ReadUint8(r io.Reader) (uint8, error) {
 // ReadUint16 reads a little-endian uint16 from r.
 func ReadUint16(r io.Reader) (uint16, error) {
 	if br, ok := r.(*bytes.Reader); ok {
+		if br.Len() == 0 {
+			return 0, io.EOF
+		}
 		if br.Len() < 2 {
 			return 0, io.ErrUnexpectedEOF
 		}
@@ -44,6 +47,9 @@ func ReadUint16(r io.Reader) (uint16, error) {
 // ReadUint32 reads a little-endian uint32 from r.
 func ReadUint32(r io.Reader) (uint32, error) {
 	if br, ok := r.(*bytes.Reader); ok {
+		if br.Len() == 0 {
+			return 0, io.EOF
+		}
 		if br.Len() < 4 {
 			return 0, io.ErrUnexpectedEOF
 		}
@@ -63,6 +69,9 @@ func ReadUint32(r io.Reader) (uint32, error) {
 // ReadUint64 reads a little-endian uint64 from r.
 func ReadUint64(r io.Reader) (uint64, error) {
 	if br, ok := r.(*bytes.Reader); ok {
+		if br.Len() == 0 {
+			return 0, io.EOF
+		}
 		if br.Len() < 8 {
 			return 0, io.ErrUnexpectedEOF
 		}
