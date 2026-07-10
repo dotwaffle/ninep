@@ -1035,6 +1035,9 @@ func (m *Rreaddir) Type() proto.MessageType { return proto.TypeRreaddir }
 // prefix so the server's inline response writer can emit m.Data as a
 // separate net.Buffers entry via a single writev.
 func (m *Rreaddir) EncodeFixed(w io.Writer) error {
+	if len(m.Data) > proto.MaxDataSize {
+		return fmt.Errorf("encode rreaddir count %d exceeds maximum %d", len(m.Data), proto.MaxDataSize)
+	}
 	return proto.WriteUint32(w, uint32(len(m.Data)))
 }
 
@@ -1043,8 +1046,8 @@ func (m *Rreaddir) Payload() []byte { return m.Data }
 
 // EncodeTo writes the Rreaddir body: count[4] data[count].
 func (m *Rreaddir) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(len(m.Data))); err != nil {
-		return fmt.Errorf("encode rreaddir count: %w", err)
+	if err := m.EncodeFixed(w); err != nil {
+		return err
 	}
 	if len(m.Data) > 0 {
 		if _, err := w.Write(m.Data); err != nil {

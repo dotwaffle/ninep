@@ -443,6 +443,9 @@ func (m *Rread) Type() MessageType { return TypeRread }
 // the server's inline response writer emits m.Data as a separate
 // net.Buffers entry via a single writev.
 func (m *Rread) EncodeFixed(w io.Writer) error {
+	if len(m.Data) > MaxDataSize {
+		return fmt.Errorf("encode rread count %d exceeds maximum %d", len(m.Data), MaxDataSize)
+	}
 	return WriteUint32(w, uint32(len(m.Data)))
 }
 
@@ -453,8 +456,8 @@ func (m *Rread) Payload() []byte { return m.Data }
 
 // EncodeTo writes the Rread body: count[4] + data[count].
 func (m *Rread) EncodeTo(w io.Writer) error {
-	if err := WriteUint32(w, uint32(len(m.Data))); err != nil {
-		return fmt.Errorf("encode rread count: %w", err)
+	if err := m.EncodeFixed(w); err != nil {
+		return err
 	}
 	if len(m.Data) > 0 {
 		if _, err := w.Write(m.Data); err != nil {
@@ -496,6 +499,9 @@ func (m *Twrite) Type() MessageType { return TypeTwrite }
 // The client's outbound writer emits m.Data as a separate net.Buffers entry
 // via a single writev.
 func (m *Twrite) EncodeFixed(w io.Writer) error {
+	if len(m.Data) > MaxDataSize {
+		return fmt.Errorf("encode twrite count %d exceeds maximum %d", len(m.Data), MaxDataSize)
+	}
 	if err := WriteUint32(w, uint32(m.Fid)); err != nil {
 		return fmt.Errorf("encode twrite fid: %w", err)
 	}
