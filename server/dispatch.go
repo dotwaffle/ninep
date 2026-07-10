@@ -159,8 +159,10 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 		if tw.Fid == tw.NewFid {
 			return &proto.Rwalk{}
 		}
-		// Clone: newfid points to same node with same path.
-		fs := &fidState{node: src.node, path: src.path, state: fidAllocated}
+		// Clone: newfid points to same node with same path. Reading node and
+		// path through their locked accessors matters here: another in-place
+		// Twalk on src.Fid can be rewriting both concurrently.
+		fs := &fidState{node: src.currentNode(), path: c.fids.getPath(tw.Fid), state: fidAllocated}
 		if err := c.fids.add(tw.NewFid, fs, c.maxFids); err != nil {
 			if errors.Is(err, ErrFidLimitExceeded) {
 				return c.errorMsg(proto.EMFILE)
@@ -183,8 +185,10 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 		}
 	}
 
-	// nwname>0: walk path elements.
-	current := src.node
+	// nwname>0: walk path elements. Read through the locked accessor: a
+	// second in-place Twalk on tw.Fid pipelined concurrently with this one
+	// can rewrite src.node while this request is still resolving.
+	current := src.currentNode()
 	qids := make([]proto.QID, 0, len(tw.Names))
 
 	for i, name := range tw.Names {
@@ -219,9 +223,11 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 		current = child
 	}
 
-	// Complete walk: assign newfid with resolved path.
+	// Complete walk: assign newfid with resolved path. Read the base path
+	// through getPath: it can be rewritten concurrently by another in-place
+	// Twalk on tw.Fid (see fidTable.getPath).
 	if len(qids) == len(tw.Names) {
-		newPath := path.Clean(src.path + "/" + strings.Join(tw.Names, "/"))
+		newPath := path.Clean(c.fids.getPath(tw.Fid) + "/" + strings.Join(tw.Names, "/"))
 		if tw.Fid == tw.NewFid {
 			c.fids.update(tw.Fid, current)
 			c.fids.setPath(tw.Fid, newPath)
@@ -292,7 +298,7 @@ func (c *conn) handleClunk(ctx context.Context, tc *proto.Tclunk) proto.Message 
 	// Release FileHandle if present (per 9P spec, clunk always succeeds).
 	releaseHandle(ctx, fs, c.logger)
 	// Call NodeCloser if implemented.
-	if closer, ok := fs.node.(NodeCloser); ok {
+	if closer, ok := fs.currentNode().(NodeCloser); ok {
 		if err := closer.Close(ctx); err != nil {
 			c.logger.Debug("node close error on clunk", slog.Any("error", err))
 		}

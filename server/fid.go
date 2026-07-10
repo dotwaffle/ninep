@@ -52,6 +52,21 @@ func (fs *fidState) currentState() fidStatus {
 	return fs.state
 }
 
+// currentNode returns fs.node with proper locking. The read is synchronized
+// against fidTable.update, which rewrites fs.node under fs.mu during an
+// in-place Twalk (Fid==NewFid) or a create/mkdir-style updateAndOpen.
+// Reading fs.node directly after get() has released the table lock is a
+// data race on the interface value: conforming clients serialize requests
+// per fid so the race is rarely observed, but nothing at the protocol
+// level prevents a pipelining client from walking a fid in place while
+// another request against the same fid is in flight. Callers that already
+// hold fs.mu should read fs.node directly instead.
+func (fs *fidState) currentNode() Node {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.node
+}
+
 // fidTable is a concurrent-safe mapping from fid numbers to their state.
 // Protected by sync.RWMutex per GO-CC-3.
 type fidTable struct {
@@ -141,6 +156,9 @@ func (ft *fidTable) getPath(fid proto.Fid) string {
 
 // update replaces the node on an existing fid. Returns false if the fid is not
 // present. Safe for concurrent use.
+//
+// fs.mu is nested inside ft.mu, matching markOpened/updateAndOpen, so the
+// write is synchronized against fidState.currentNode's locked read.
 func (ft *fidTable) update(fid proto.Fid, node Node) bool {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
@@ -148,6 +166,8 @@ func (ft *fidTable) update(fid proto.Fid, node Node) bool {
 	if !ok {
 		return false
 	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
 	fs.node = node
 	return true
 }

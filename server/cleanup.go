@@ -82,7 +82,7 @@ func (c *conn) cleanup() {
 			continue
 		}
 		releaseHandle(context.Background(), fs, c.logger)
-		if closer, ok := fs.node.(NodeCloser); ok {
+		if closer, ok := fs.currentNode().(NodeCloser); ok {
 			if err := closer.Close(context.Background()); err != nil {
 				c.logger.Debug("node close error during cleanup", slog.Any("error", err))
 			}

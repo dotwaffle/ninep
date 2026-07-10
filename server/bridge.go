@@ -59,7 +59,7 @@ func (c *conn) handleLopen(ctx context.Context, m *p9l.Tlopen) proto.Message {
 		return c.errorMsg(proto.EBADF)
 	}
 
-	opener, ok := fs.node.(NodeOpener)
+	opener, ok := fs.currentNode().(NodeOpener)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -69,7 +69,7 @@ func (c *conn) handleLopen(ctx context.Context, m *p9l.Tlopen) proto.Message {
 		return c.errorMsg(errnoFromError(err))
 	}
 
-	qid := nodeQID(fs.node)
+	qid := nodeQID(fs.currentNode())
 
 	if !c.fids.markOpenedWithHandle(m.Fid, handle) {
 		// Raced with a concurrent clunk: the fid is gone and the handle is
@@ -96,7 +96,7 @@ func (c *conn) handleUOpen(ctx context.Context, m *p9u.Topen) proto.Message {
 		return c.errorMsg(proto.EBADF)
 	}
 
-	opener, ok := fs.node.(NodeOpener)
+	opener, ok := fs.currentNode().(NodeOpener)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -106,7 +106,7 @@ func (c *conn) handleUOpen(ctx context.Context, m *p9u.Topen) proto.Message {
 		return c.errorMsg(errnoFromError(err))
 	}
 
-	qid := nodeQID(fs.node)
+	qid := nodeQID(fs.currentNode())
 	if !c.fids.markOpenedWithHandle(m.Fid, handle) {
 		// Raced with a concurrent clunk: release the now-unreachable handle.
 		releaseFileHandle(ctx, handle, c.logger)
@@ -190,7 +190,7 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 	}
 
 	// Node fallback.
-	reader, ok := fs.node.(NodeReader)
+	reader, ok := fs.currentNode().(NodeReader)
 	if !ok {
 		bufpool.PutMsgBuf(bufPtr)
 		return c.errorMsg(proto.ENOSYS)
@@ -257,7 +257,7 @@ func (c *conn) handleWrite(ctx context.Context, m *proto.Twrite) proto.Message {
 	}
 
 	// Node fallback.
-	writer, ok := fs.node.(NodeWriter)
+	writer, ok := fs.currentNode().(NodeWriter)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -276,7 +276,7 @@ func (c *conn) handleGetattr(ctx context.Context, m *p9l.Tgetattr) proto.Message
 		return c.errorMsg(proto.EBADF)
 	}
 
-	getter, ok := fs.node.(NodeGetattrer)
+	getter, ok := fs.currentNode().(NodeGetattrer)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -287,7 +287,7 @@ func (c *conn) handleGetattr(ctx context.Context, m *p9l.Tgetattr) proto.Message
 	}
 
 	// Override QID from server's authoritative source (T-03-09).
-	attr.QID = nodeQID(fs.node)
+	attr.QID = nodeQID(fs.currentNode())
 
 	return &p9l.Rgetattr{Attr: attr}
 }
@@ -299,7 +299,7 @@ func (c *conn) handleSetattr(ctx context.Context, m *p9l.Tsetattr) proto.Message
 		return c.errorMsg(proto.EBADF)
 	}
 
-	setter, ok := fs.node.(NodeSetattrer)
+	setter, ok := fs.currentNode().(NodeSetattrer)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -319,7 +319,7 @@ func (c *conn) handleUStat(ctx context.Context, m *p9u.Tstat) proto.Message {
 		return c.errorMsg(proto.EBADF)
 	}
 
-	getter, ok := fs.node.(NodeGetattrer)
+	getter, ok := fs.currentNode().(NodeGetattrer)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -329,7 +329,7 @@ func (c *conn) handleUStat(ctx context.Context, m *p9u.Tstat) proto.Message {
 		return c.errorMsg(errnoFromError(err))
 	}
 
-	qid := nodeQID(fs.node)
+	qid := nodeQID(fs.currentNode())
 	// Read the path under the table lock: an in-place Twalk on this fid can
 	// rewrite it concurrently (see fidTable.getPath).
 	return &p9u.Rstat{Stat: statFromAttr(c.fids.getPath(m.Fid), qid, attr)}
@@ -376,7 +376,7 @@ func (c *conn) handleReaddir(ctx context.Context, m *p9l.Treaddir) proto.Message
 	}
 
 	// Node dispatch chain (fallback).
-	if raw, ok := fs.node.(NodeRawReaddirer); ok {
+	if raw, ok := fs.currentNode().(NodeRawReaddirer); ok {
 		bufPtr := bufpool.GetMsgBuf(int(m.Count))
 		buf := (*bufPtr)[:m.Count]
 		n, err := raw.RawReaddir(ctx, buf, m.Offset)
@@ -390,7 +390,7 @@ func (c *conn) handleReaddir(ctx context.Context, m *p9l.Treaddir) proto.Message
 		}
 		return &pooledRreaddir{Rreaddir: p9l.Rreaddir{Data: buf[:n]}, bufPtr: bufPtr}
 	}
-	if rd, ok := fs.node.(NodeReaddirer); ok {
+	if rd, ok := fs.currentNode().(NodeReaddirer); ok {
 		return c.readdirSimple(ctx, fs, m, rd)
 	}
 
@@ -464,13 +464,13 @@ func (c *conn) handleLcreate(ctx context.Context, m *p9l.Tlcreate) proto.Message
 		return c.errorMsg(proto.EINVAL)
 	}
 
-	creator, ok := fs.node.(NodeCreater)
+	creator, ok := fs.currentNode().(NodeCreater)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
 
 	// Save parent node reference before updateAndOpen mutates fs.node.
-	parentNode := fs.node
+	parentNode := fs.currentNode()
 
 	child, handle, iounitHint, err := creator.Create(ctx, m.Name, m.Flags, m.Mode, m.GID)
 	if err != nil {
@@ -518,12 +518,12 @@ func (c *conn) handleUCreate(ctx context.Context, m *p9u.Tcreate) proto.Message 
 		return c.errorMsg(proto.EINVAL)
 	}
 
-	creator, ok := fs.node.(NodeCreater)
+	creator, ok := fs.currentNode().(NodeCreater)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
 
-	parentNode := fs.node
+	parentNode := fs.currentNode()
 	child, handle, iounitHint, err := creator.Create(ctx, m.Name, flags, m.Perm, 0)
 	if err != nil {
 		return c.errorMsg(errnoFromError(err))
@@ -556,7 +556,7 @@ func (c *conn) handleMkdir(ctx context.Context, m *p9l.Tmkdir) proto.Message {
 		return c.errorMsg(proto.EINVAL)
 	}
 
-	mkdirer, ok := fs.node.(NodeMkdirer)
+	mkdirer, ok := fs.currentNode().(NodeMkdirer)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -567,7 +567,7 @@ func (c *conn) handleMkdir(ctx context.Context, m *p9l.Tmkdir) proto.Message {
 	}
 
 	// Register child in parent Inode tree if both implement InodeEmbedder.
-	if parentIE, ok := fs.node.(InodeEmbedder); ok {
+	if parentIE, ok := fs.currentNode().(InodeEmbedder); ok {
 		if childIE, ok := child.(InodeEmbedder); ok {
 			parentIE.EmbeddedInode().AddChild(m.Name, childIE.EmbeddedInode())
 		}
@@ -588,7 +588,7 @@ func (c *conn) handleSymlink(ctx context.Context, m *p9l.Tsymlink) proto.Message
 		return c.errorMsg(proto.EINVAL)
 	}
 
-	symlinker, ok := fs.node.(NodeSymlinker)
+	symlinker, ok := fs.currentNode().(NodeSymlinker)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -599,7 +599,7 @@ func (c *conn) handleSymlink(ctx context.Context, m *p9l.Tsymlink) proto.Message
 	}
 
 	// Register child in parent Inode tree if both implement InodeEmbedder.
-	if parentIE, ok := fs.node.(InodeEmbedder); ok {
+	if parentIE, ok := fs.currentNode().(InodeEmbedder); ok {
 		if childIE, ok := child.(InodeEmbedder); ok {
 			parentIE.EmbeddedInode().AddChild(m.Name, childIE.EmbeddedInode())
 		}
@@ -625,18 +625,18 @@ func (c *conn) handleLink(ctx context.Context, m *p9l.Tlink) proto.Message {
 		return c.errorMsg(proto.EINVAL)
 	}
 
-	linker, ok := dirFS.node.(NodeLinker)
+	linker, ok := dirFS.currentNode().(NodeLinker)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
 
-	if err := linker.Link(ctx, targetFS.node, m.Name); err != nil {
+	if err := linker.Link(ctx, targetFS.currentNode(), m.Name); err != nil {
 		return c.errorMsg(errnoFromError(err))
 	}
 
 	// Register link in parent Inode tree if both implement InodeEmbedder.
-	if parentIE, ok := dirFS.node.(InodeEmbedder); ok {
-		if targetIE, ok := targetFS.node.(InodeEmbedder); ok {
+	if parentIE, ok := dirFS.currentNode().(InodeEmbedder); ok {
+		if targetIE, ok := targetFS.currentNode().(InodeEmbedder); ok {
 			parentIE.EmbeddedInode().AddChild(m.Name, targetIE.EmbeddedInode())
 		}
 	}
@@ -656,7 +656,7 @@ func (c *conn) handleMknod(ctx context.Context, m *p9l.Tmknod) proto.Message {
 		return c.errorMsg(proto.EINVAL)
 	}
 
-	mknoder, ok := fs.node.(NodeMknoder)
+	mknoder, ok := fs.currentNode().(NodeMknoder)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -667,7 +667,7 @@ func (c *conn) handleMknod(ctx context.Context, m *p9l.Tmknod) proto.Message {
 	}
 
 	// Register child in parent Inode tree if both implement InodeEmbedder.
-	if parentIE, ok := fs.node.(InodeEmbedder); ok {
+	if parentIE, ok := fs.currentNode().(InodeEmbedder); ok {
 		if childIE, ok := child.(InodeEmbedder); ok {
 			parentIE.EmbeddedInode().AddChild(m.Name, childIE.EmbeddedInode())
 		}
@@ -683,7 +683,7 @@ func (c *conn) handleReadlink(ctx context.Context, m *p9l.Treadlink) proto.Messa
 		return c.errorMsg(proto.EBADF)
 	}
 
-	readlinker, ok := fs.node.(NodeReadlinker)
+	readlinker, ok := fs.currentNode().(NodeReadlinker)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -703,7 +703,7 @@ func (c *conn) handleStatfs(ctx context.Context, m *p9l.Tstatfs) proto.Message {
 		return c.errorMsg(proto.EBADF)
 	}
 
-	statfser, ok := fs.node.(NodeStatFSer)
+	statfser, ok := fs.currentNode().(NodeStatFSer)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -744,7 +744,7 @@ func (c *conn) handleFsync(ctx context.Context, m *p9l.Tfsync) proto.Message {
 	}
 
 	// Node-level fallback.
-	if syncer, ok := fs.node.(NodeFsyncer); ok {
+	if syncer, ok := fs.currentNode().(NodeFsyncer); ok {
 		if err := syncer.Fsync(ctx); err != nil {
 			return c.errorMsg(errnoFromError(err))
 		}
@@ -766,7 +766,7 @@ func (c *conn) handleUnlinkat(ctx context.Context, m *p9l.Tunlinkat) proto.Messa
 		return c.errorMsg(proto.EINVAL)
 	}
 
-	unlinker, ok := fs.node.(NodeUnlinker)
+	unlinker, ok := fs.currentNode().(NodeUnlinker)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -776,7 +776,7 @@ func (c *conn) handleUnlinkat(ctx context.Context, m *p9l.Tunlinkat) proto.Messa
 	}
 
 	// Remove child from Inode tree if parent implements InodeEmbedder.
-	if parentIE, ok := fs.node.(InodeEmbedder); ok {
+	if parentIE, ok := fs.currentNode().(InodeEmbedder); ok {
 		parentIE.EmbeddedInode().RemoveChild(m.Name)
 	}
 
@@ -803,22 +803,22 @@ func (c *conn) handleRenameat(ctx context.Context, m *p9l.Trenameat) proto.Messa
 		return c.errorMsg(proto.EINVAL)
 	}
 
-	renamer, ok := oldDirFS.node.(NodeRenamer)
+	renamer, ok := oldDirFS.currentNode().(NodeRenamer)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
 
-	if err := renamer.Rename(ctx, m.OldName, newDirFS.node, m.NewName); err != nil {
+	if err := renamer.Rename(ctx, m.OldName, newDirFS.currentNode(), m.NewName); err != nil {
 		return c.errorMsg(errnoFromError(err))
 	}
 
 	// Update Inode tree: move child from old dir to new dir.
-	if oldIE, ok := oldDirFS.node.(InodeEmbedder); ok {
+	if oldIE, ok := oldDirFS.currentNode().(InodeEmbedder); ok {
 		oldInode := oldIE.EmbeddedInode()
 		children := oldInode.Children()
 		if child, found := children[m.OldName]; found {
 			oldInode.RemoveChild(m.OldName)
-			if newIE, ok := newDirFS.node.(InodeEmbedder); ok {
+			if newIE, ok := newDirFS.currentNode().(InodeEmbedder); ok {
 				newIE.EmbeddedInode().AddChild(m.NewName, child)
 			}
 		}
@@ -847,7 +847,7 @@ func (c *conn) handleRename(ctx context.Context, m *p9l.Trename) proto.Message {
 
 	// Trename is fid-based: we need the parent directory of the fid being
 	// renamed. Resolve via Inode tree.
-	ie, ok := fs.node.(InodeEmbedder)
+	ie, ok := fs.currentNode().(InodeEmbedder)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -876,13 +876,13 @@ func (c *conn) handleRename(ctx context.Context, m *p9l.Trename) proto.Message {
 		return c.errorMsg(proto.ENOSYS)
 	}
 
-	if err := renamer.Rename(ctx, oldName, dirFS.node, m.Name); err != nil {
+	if err := renamer.Rename(ctx, oldName, dirFS.currentNode(), m.Name); err != nil {
 		return c.errorMsg(errnoFromError(err))
 	}
 
 	// Update Inode tree: move child from parent to target dir.
 	parentInode.RemoveChild(oldName)
-	if targetIE, ok := dirFS.node.(InodeEmbedder); ok {
+	if targetIE, ok := dirFS.currentNode().(InodeEmbedder); ok {
 		targetIE.EmbeddedInode().AddChild(m.Name, childInode)
 	}
 
@@ -900,7 +900,7 @@ func (c *conn) handleLock(ctx context.Context, m *p9l.Tlock) proto.Message {
 		return c.errorMsg(proto.EBADF)
 	}
 
-	locker, ok := fs.node.(NodeLocker)
+	locker, ok := fs.currentNode().(NodeLocker)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -924,7 +924,7 @@ func (c *conn) handleGetlock(ctx context.Context, m *p9l.Tgetlock) proto.Message
 		return c.errorMsg(proto.EBADF)
 	}
 
-	locker, ok := fs.node.(NodeLocker)
+	locker, ok := fs.currentNode().(NodeLocker)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -953,15 +953,15 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 	}
 
 	// RawXattrer takes precedence over simple interfaces.
-	if raw, ok := fs.node.(RawXattrer); ok {
+	if raw, ok := fs.currentNode().(RawXattrer); ok {
 		data, err := raw.HandleXattrwalk(ctx, m.Name)
 		if err != nil {
 			return c.errorMsg(errnoFromError(err))
 		}
 		xfs := &fidState{
-			node:      fs.node,
+			node:      fs.currentNode(),
 			state:     fidXattrRead,
-			xattrNode: fs.node,
+			xattrNode: fs.currentNode(),
 			xattrName: m.Name,
 			xattrData: data,
 		}
@@ -976,7 +976,7 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 
 	if m.Name == "" {
 		// List mode: return null-separated list of xattr names.
-		lister, ok := fs.node.(NodeXattrLister)
+		lister, ok := fs.currentNode().(NodeXattrLister)
 		if !ok {
 			return c.errorMsg(proto.ENOSYS)
 		}
@@ -998,9 +998,9 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 			curr++
 		}
 		xfs := &fidState{
-			node:      fs.node,
+			node:      fs.currentNode(),
 			state:     fidXattrRead,
-			xattrNode: fs.node,
+			xattrNode: fs.currentNode(),
 			xattrData: buf,
 		}
 		if err := c.fids.add(m.NewFid, xfs, c.maxFids); err != nil {
@@ -1013,7 +1013,7 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 	}
 
 	// Single xattr get.
-	getter, ok := fs.node.(NodeXattrGetter)
+	getter, ok := fs.currentNode().(NodeXattrGetter)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -1022,9 +1022,9 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 		return c.errorMsg(errnoFromError(err))
 	}
 	xfs := &fidState{
-		node:      fs.node,
+		node:      fs.currentNode(),
 		state:     fidXattrRead,
-		xattrNode: fs.node,
+		xattrNode: fs.currentNode(),
 		xattrName: m.Name,
 		xattrData: data,
 	}
@@ -1062,14 +1062,14 @@ func (c *conn) handleXattrcreate(ctx context.Context, m *p9l.Txattrcreate) proto
 	}
 
 	// RawXattrer takes precedence over simple interfaces.
-	if raw, ok := fs.node.(RawXattrer); ok {
+	if raw, ok := fs.currentNode().(RawXattrer); ok {
 		writer, err := raw.HandleXattrcreate(ctx, m.Name, m.AttrSize, m.Flags)
 		if err != nil {
 			return c.errorMsg(errnoFromError(err))
 		}
 		fs.mu.Lock()
 		fs.state = fidXattrWrite
-		fs.xattrNode = fs.node
+		fs.xattrNode = fs.node // fs.mu already held; currentNode() would deadlock.
 		fs.xattrName = m.Name
 		fs.xattrSize = m.AttrSize
 		fs.xattrFlags = m.Flags
@@ -1082,11 +1082,11 @@ func (c *conn) handleXattrcreate(ctx context.Context, m *p9l.Txattrcreate) proto
 	// Validate the node supports xattr setting or removal.
 	if m.AttrSize == 0 {
 		// Size=0 is a remove operation per protocol convention.
-		if _, ok := fs.node.(NodeXattrRemover); !ok {
+		if _, ok := fs.currentNode().(NodeXattrRemover); !ok {
 			return c.errorMsg(proto.ENOSYS)
 		}
 	} else {
-		if _, ok := fs.node.(NodeXattrSetter); !ok {
+		if _, ok := fs.currentNode().(NodeXattrSetter); !ok {
 			return c.errorMsg(proto.ENOSYS)
 		}
 	}
@@ -1094,7 +1094,7 @@ func (c *conn) handleXattrcreate(ctx context.Context, m *p9l.Txattrcreate) proto
 	// Mutate the fid to xattr write mode.
 	fs.mu.Lock()
 	fs.state = fidXattrWrite
-	fs.xattrNode = fs.node
+	fs.xattrNode = fs.node // fs.mu already held; currentNode() would deadlock.
 	fs.xattrName = m.Name
 	fs.xattrSize = m.AttrSize
 	fs.xattrFlags = m.Flags

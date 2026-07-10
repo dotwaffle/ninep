@@ -154,6 +154,50 @@ func TestFidTable_Update(t *testing.T) {
 	}
 }
 
+// TestFidState_ConcurrentUpdateAndRead exercises the exact race an
+// in-place Twalk (Fid==NewFid) can produce against any handler reading the
+// same fid's node concurrently: fidTable.update must take fs.mu when
+// writing, and readers must go through fidState.currentNode, or -race
+// flags a torn read/write on the node interface value.
+func TestFidState_ConcurrentUpdateAndRead(t *testing.T) {
+	t.Parallel()
+
+	ft := newFidTable()
+	node1 := newTestNode(proto.QID{Path: 1})
+	node2 := newTestNode(proto.QID{Path: 2})
+	if err := ft.add(1, &fidState{node: node1, state: fidAllocated}, 0); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Simulates a second in-place Twalk repeatedly rewriting the node.
+	go func() {
+		defer wg.Done()
+		for range 1000 {
+			ft.update(1, node2)
+			ft.update(1, node1)
+		}
+	}()
+
+	// Simulates a concurrent handler reading the node through the locked
+	// accessor, as bridge.go handlers do.
+	go func() {
+		defer wg.Done()
+		for range 1000 {
+			fs := ft.get(1)
+			if fs == nil {
+				t.Error("get fid 1: got nil")
+				return
+			}
+			_ = fs.currentNode()
+		}
+	}()
+
+	wg.Wait()
+}
+
 func TestFidTable_UpdateNonexistent(t *testing.T) {
 	t.Parallel()
 
