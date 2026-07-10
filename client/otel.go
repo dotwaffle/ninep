@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 // instrumentationName is the OTel instrumentation scope name used for all
@@ -84,7 +85,13 @@ func (c *Conn) probeMeter(cfg *config) {
 
 func (c *Conn) startSpan(ctx context.Context, opName string, msg proto.Message) (context.Context, trace.Span) {
 	if c.tracer == nil {
-		return ctx, trace.SpanFromContext(ctx)
+		// Return a dedicated no-op span, not whatever span is already in
+		// ctx: callers unconditionally defer span.End() and may call
+		// span.SetStatus() on error. If ctx carries a live span from the
+		// caller's own tracing (this Conn need not be the only
+		// instrumented thing on the call path), returning it here would
+		// let this operation end or mark-errored a span it doesn't own.
+		return ctx, noop.Span{}
 	}
 
 	opts := []trace.SpanStartOption{

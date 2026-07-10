@@ -237,3 +237,71 @@ func TestClientOTel_ErrorSpan(t *testing.T) {
 		t.Errorf("span status = %v, want Error", walkSpan.Status.Code)
 	}
 }
+
+// TestClientOTel_UntracedDoesNotTouchAmbientSpan asserts that a Conn dialed
+// WITHOUT WithTracer does not end or mark-errored a span already present in
+// the caller's context. roundTrip unconditionally defers span.End() and
+// calls span.SetStatus() on an error response; if startSpan returned the
+// ambient context span instead of a dedicated no-op span, an untraced
+// client would corrupt tracing the caller set up for its own, unrelated
+// purposes.
+func TestClientOTel_UntracedDoesNotTouchAmbientSpan(t *testing.T) {
+	t.Parallel()
+
+	// Represents the CALLER's own tracing, entirely independent of the
+	// ninep client (which is dialed below with no WithTracer).
+	parentTP, exporter := NewTestTracerProvider(t)
+
+	gen := new(server.QIDGenerator)
+	root := memfs.NewDir(gen)
+	srv := server.New(root)
+	cliNC, srvNC := net.Pipe()
+	defer func() { _ = cliNC.Close() }()
+	defer func() { _ = srvNC.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go srv.ServeConn(ctx, srvNC)
+
+	cli, err := Dial(ctx, cliNC) // deliberately no WithTracer
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cli.Close() }()
+
+	opCtx, parentSpan := parentTP.Tracer("test").Start(ctx, "parent")
+
+	rootF, err := cli.Attach(opCtx, "nobody", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A buggy startSpan would have returned this ambient parent span, and
+	// roundTrip's deferred span.End() would have exported it right here --
+	// before the test ever calls parentSpan.End() itself.
+	for _, s := range exporter.GetSpans() {
+		if s.Name == "parent" {
+			t.Fatal("parent span was ended by an untraced client op")
+		}
+	}
+
+	// Trigger an error response: a buggy startSpan would additionally call
+	// span.SetStatus(codes.Error, ...) on the ambient parent span here.
+	if _, err := rootF.Walk(opCtx, []string{"ghost"}); err == nil {
+		t.Fatal("expected walk error, got nil")
+	}
+
+	parentSpan.End()
+	spans := exporter.GetSpans()
+	var parentStub *tracetest.SpanStub
+	for i := range spans {
+		if spans[i].Name == "parent" {
+			parentStub = &spans[i]
+		}
+	}
+	if parentStub == nil {
+		t.Fatal("parent span was never recorded after explicit End()")
+	}
+	if parentStub.Status.Code == codes.Error {
+		t.Error("parent span status = Error; untraced client op must not mark the ambient span errored")
+	}
+}
