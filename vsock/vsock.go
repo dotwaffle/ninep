@@ -34,7 +34,11 @@ const (
 )
 
 // ErrUnsupported is returned by [Listen] and [Dial] on non-Linux platforms.
-var ErrUnsupported = errors.New("vsock: AF_VSOCK is only supported on Linux")
+// It wraps [errors.ErrUnsupported] so portable callers can match with
+// errors.Is(err, errors.ErrUnsupported) without depending on this
+// package-specific sentinel; errors.Is(err, vsock.ErrUnsupported) also
+// still works for callers that do want the vsock-specific check.
+var ErrUnsupported = fmt.Errorf("vsock: AF_VSOCK is only supported on Linux: %w", errors.ErrUnsupported)
 
 // Addr is a vsock address (context ID and port). It implements [net.Addr].
 type Addr struct {
