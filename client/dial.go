@@ -18,31 +18,6 @@ import (
 // nothing for data.
 const minMsize = 256
 
-// Dial returns a live Conn after running 9P version negotiation over nc.
-// The client proposes 9P2000.L with WithMsize's value (default 1 MiB; see
-// client/options.go).
-//
-// The server's Rversion is accepted when it carries one of three
-// strings:
-//
-//   - "9P2000.L" - full .L codec + message set.
-//   - "9P2000.u" - .u codec + .u message set (Unix extensions explicit).
-//   - "9P2000"   - bare. Linux v9fs treats this as a .u-compatible alias
-//     (the kernel client proposes .u and the server may echo the bare
-//     string). Dial maps this to the .u codec to match that convention.
-//
-// Any other version string yields ErrVersionMismatch. The negotiated msize
-// is min(client proposal, server Rversion.Msize); a result below minMsize
-// (256) yields ErrMsizeTooSmall.
-//
-// The supplied ctx is honored only during the Tversion round-trip - its
-// deadline is applied to nc via SetDeadline and cleared before Dial
-// returns on success. For request-level cancellation use per-op
-// contexts on the returned *Conn.
-//
-// On any error Dial leaves nc in whatever state the caller provided: it
-// does NOT close nc on its own, so a caller may reuse the connection
-// (e.g. re-dial with a different proposed version).
 // Keepalive parameters for TCP connections. A silently dead peer is detected
 // after roughly Idle + Interval*Count (~60s) with no application traffic.
 const (
@@ -67,6 +42,39 @@ func enableKeepAlive(nc net.Conn) {
 	})
 }
 
+// Dial negotiates a 9P session over nc and returns a live *Conn. The
+// client proposes 9P2000.L with WithMsize's value (default 1 MiB; see
+// client/options.go).
+//
+// The server's Rversion is accepted when it carries one of three
+// strings:
+//
+//   - "9P2000.L" - full .L codec + message set.
+//   - "9P2000.u" - .u codec + .u message set (Unix extensions explicit).
+//   - "9P2000"   - bare. Linux v9fs treats this as a .u-compatible alias
+//     (the kernel client proposes .u and the server may echo the bare
+//     string). Dial maps this to the .u codec to match that convention.
+//
+// Any other version string yields ErrVersionMismatch. The negotiated msize
+// is min(client proposal, server Rversion.Msize); a result below minMsize
+// (256) yields ErrMsizeTooSmall.
+//
+// The supplied ctx is honored only during the Tversion round-trip - its
+// deadline is applied to nc via SetDeadline and cleared before Dial
+// returns on success. For request-level cancellation use per-op
+// contexts on the returned *Conn.
+//
+// On any error Dial leaves nc in whatever state the caller provided: it
+// does NOT close nc on its own, so a caller may reuse the connection
+// (e.g. re-dial with a different proposed version). On success, Dial
+// takes ownership of nc: it spawns a background goroutine that owns
+// nc's read side for the Conn's lifetime, and the returned Conn's
+// Close/Shutdown methods close nc as part of shutdown.
+//
+// The returned *Conn is safe for concurrent use by multiple goroutines,
+// modeled on database/sql.DB: callers may issue overlapping requests
+// from any number of goroutines, each multiplexed over nc under its own
+// 9P tag.
 func Dial(ctx context.Context, nc net.Conn, opts ...Option) (_ *Conn, retErr error) {
 	cfg := newConfig()
 	for _, opt := range opts {
