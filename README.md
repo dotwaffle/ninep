@@ -14,12 +14,14 @@ unsupported operations.
 - 9P2000.L (Linux v9fs compatible) and 9P2000.u protocol support
 - Capability-based API: implement only the interfaces you need
 - Automatic ENOSYS for unimplemented operations via Inode embedding
+- Wire-level 9P client with io.Reader/Writer/Closer File handles
 - OpenTelemetry traces and metrics (API only, no SDK dependency)
 - Structured logging via slog with trace correlation
 - Middleware support for cross-cutting concerns
 - In-memory filesystem helpers (memfs package)
 - Protocol-level test harness (fstest package)
 - Reference passthrough filesystem implementation
+- AF_VSOCK transport for guest/host virtio-vsock connections
 
 ## Installation
 
@@ -79,6 +81,55 @@ func main() {
 }
 ```
 
+The `client` package provides a high-level API for talking to a 9P server. It
+handles tag allocation, message framing, and session management:
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"os"
+
+	"github.com/dotwaffle/ninep/client"
+)
+
+func main() {
+	ctx := context.Background()
+
+	nc, err := net.Dial("tcp", "localhost:5640")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	c, err := client.Dial(ctx, nc)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer c.Close()
+
+	if _, err := c.Attach(ctx, "me", ""); err != nil {
+		log.Fatal(err)
+	}
+
+	f, err := c.OpenFile(ctx, "hello.txt", os.O_RDONLY, 0)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+
+	content, err := io.ReadAll(f)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Content: %s", string(content))
+}
+```
+
 ## Platform support
 
 The library (`proto/`, `server/`, `server/memfs/`, `server/fstest/`,
@@ -105,6 +156,9 @@ helpers.
 | `server/memfs/` | In-memory file/dir helpers and builder |
 | `server/passthrough/` | Host OS passthrough filesystem |
 | `server/fstest/` | Protocol-level test harness |
+| `client/` | 9P client: Conn, File (io.Reader/Writer/Closer), Session |
+| `client/clienttest/` | Server/client test pair helpers (mirrors httptest) |
+| `vsock/` | AF_VSOCK Listen/Dial for virtio-vsock transport |
 
 ## Testing
 
