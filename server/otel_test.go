@@ -539,6 +539,71 @@ func TestOTelMiddlewareFidCountGauge(t *testing.T) {
 	}
 }
 
+// TestOTelMiddlewareFidCountGauge_Xattrwalk verifies that a successful
+// Txattrwalk increments the fid.count gauge for its new fid, mirroring
+// TestOTelMiddlewareFidCountGauge's Tattach/Tclunk coverage. Txattrwalk
+// always allocates a new fid via c.fids.add on success (get, list, and
+// RawXattrer modes alike), so the gauge must track it the same way Twalk's
+// clone path does.
+func TestOTelMiddlewareFidCountGauge_Xattrwalk(t *testing.T) {
+	t.Parallel()
+
+	tp, _ := NewTestTracerProvider(t)
+	mp, metricReader := NewTestMeterProvider(t)
+
+	root := &getterOnlyFile{value: []byte("v")}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	srv := New(root,
+		WithMaxMsize(65536),
+		WithLogger(discardLogger()),
+		WithTracer(tp),
+		WithMeter(mp),
+	)
+
+	client, server := otelConnPair(t)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	t.Cleanup(cancel)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.ServeConn(ctx, server)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	sendTversion(t, client, 65536, "9P2000.L")
+	_ = readRversion(t, client)
+
+	sendMessage(t, client, 1, &proto.Tattach{Fid: 0, Afid: proto.NoFid, Uname: "test"})
+	_, _ = readResponse(t, client)
+
+	sendMessage(t, client, 2, &p9l.Txattrwalk{Fid: 0, NewFid: 1, Name: "user.test"})
+	_, msg := readResponse(t, client)
+	if _, ok := msg.(*p9l.Rxattrwalk); !ok {
+		t.Fatalf("expected Rxattrwalk, got %T: %+v", msg, msg)
+	}
+
+	rm := collectMetrics(t, metricReader)
+	m := findMetric(rm, "ninep.server.fid.count")
+	if m == nil {
+		t.Fatal("expected metric 'ninep.server.fid.count', not found")
+	}
+	sum, ok := m.Data.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("expected Sum[int64], got %T", m.Data)
+	}
+	if len(sum.DataPoints) == 0 {
+		t.Fatal("expected at least one data point for fid.count")
+	}
+	if sum.DataPoints[0].Value != 2 {
+		t.Errorf("fid.count = %d, want 2 (attach fid 0 + xattrwalk fid 1)", sum.DataPoints[0].Value)
+	}
+}
+
 func TestOTelMiddlewareNoProviderNoOverhead(t *testing.T) {
 	t.Parallel()
 

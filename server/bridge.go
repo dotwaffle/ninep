@@ -1003,6 +1003,7 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 			}
 			return c.errorMsg(proto.EBADF)
 		}
+		c.otelInst.recordFidChange(1)
 		return &p9l.Rxattrwalk{Size: uint64(len(data))}
 	}
 
@@ -1041,6 +1042,7 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 			}
 			return c.errorMsg(proto.EBADF)
 		}
+		c.otelInst.recordFidChange(1)
 		return &p9l.Rxattrwalk{Size: uint64(len(buf))}
 	}
 
@@ -1066,6 +1068,7 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 		}
 		return c.errorMsg(proto.EBADF)
 	}
+	c.otelInst.recordFidChange(1)
 	return &p9l.Rxattrwalk{Size: uint64(len(data))}
 }
 
