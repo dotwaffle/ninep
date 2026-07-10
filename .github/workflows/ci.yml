@@ -254,3 +254,65 @@ jobs:
 
       - name: Process benchmarks
         run: benchstat benchmarks.txt
+
+  cross-build:
+    # Compile+vet only (no test execution) on GOOS/GOARCH combinations the
+    # test/lint/fuzz/stress/vsock jobs never touch, since those all run on
+    # ubuntu amd64/arm64. This exists because of a real incident: an
+    # unconvert --fix in server/passthrough broke the linux/arm, linux/386,
+    # and linux/arm64 cross-builds while staying invisible to amd64-only CI
+    # (see .golangci.yml). Most of these GOOS targets can't run tests on a
+    # Linux runner anyway, so this only proves the tree still builds and
+    # vets there.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: freebsd
+            goarch: amd64
+          - goos: darwin
+            goarch: amd64
+          - goos: windows
+            goarch: amd64
+          - goos: freebsd
+            goarch: riscv64
+          - goos: linux
+            goarch: "386"
+          - goos: linux
+            goarch: arm
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-gomod-
+
+      # Per-target key: the six legs run in parallel and cross-compile
+      # different GOOS/GOARCH pairs, so a shared key would re-introduce
+      # first-writer-wins among them.
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-${{ runner.arch }}-gobuild-cross-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-gobuild-cross-${{ matrix.goos }}-${{ matrix.goarch }}-
+
+      - name: Vet
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go vet ./...
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./...
