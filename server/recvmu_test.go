@@ -556,6 +556,108 @@ func readFullN(c net.Conn, b []byte) (int, error) {
 	return total, nil
 }
 
+// TestHandleRequest_TversionHoldsRecvMuAcrossMutation drives a real mid-conn
+// Tversion through the actual handleRequest loop and asserts (under -race)
+// that no other goroutine touches c.msize/c.protocol while handleReVersion
+// is still mutating them.
+//
+// Sequence: a blocking Twalk (tag 10) spawns a successor that becomes the
+// sole active reader. That successor reads the Tversion; per the recv-mutex
+// contract it must hold recvMu for the whole re-negotiation. cancelAll (the
+// first thing handleReVersion does) cancels tag 10 immediately, so its
+// dispatcher finishes and loops back to acquire recvMu for the next read --
+// exactly the sibling that must NOT be let through until c.msize/c.protocol
+// are settled. Tag 11 (a zero-name Twalk) is queued from a background
+// goroutine right after tag 10's response is read, so it sits blocked on
+// the unbuffered pipe ready for whichever goroutine reads next -- giving a
+// racing sibling a frame to evaluate against c.msize/c.protocol at the
+// frame-size and message-decode checks (which run regardless of what the
+// fid turns out to resolve to) the instant it would wrongly acquire a
+// prematurely-released recvMu. Its fid is already gone by the time it is
+// dispatched (Tversion clunks all fids), so the expected response is
+// EBADF, not a successful walk -- the frame-level checks are what matters
+// here, not the dispatch outcome. Rversion is deliberately read LAST so
+// handleReVersion's writeRaw (and therefore its final mutation) cannot
+// complete before tag 11 has already been queued.
+func TestHandleRequest_TversionHoldsRecvMuAcrossMutation(t *testing.T) {
+	t.Parallel()
+
+	root := newRecvmuBlockingNode(proto.QID{Type: proto.QTDIR, Path: 1})
+
+	srv := New(root, WithMaxMsize(65536), WithMaxInflight(8), WithLogger(discardLogger()))
+
+	client, server := net.Pipe()
+	defer func() { _ = client.Close(); _ = server.Close() }()
+
+	c := newConn(srv, server)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+
+	serveDone := make(chan struct{})
+	go func() {
+		defer close(serveDone)
+		c.serve(ctx)
+	}()
+
+	negotiateAndAttach(t, client)
+
+	// Install a blocking request so the recv-mutex model spawns a successor
+	// that becomes the sole active reader.
+	sendMessage(t, client, 10, &proto.Twalk{Fid: 0, NewFid: 1, Names: []string{"child"}})
+	select {
+	case <-root.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("walk handler did not start")
+	}
+
+	// Mid-conn Tversion: read by the successor, which must hold recvMu
+	// across the entire re-negotiation. Reset the rate limiter, which the
+	// initial handshake's negotiateVersion call already armed, so this
+	// send is not silently dropped by negotiationRateLimit.
+	c.lastNegotiation.Store(0)
+	sendTversion(t, client, 65536, "9P2000.L")
+
+	// cancelAll (handleReVersion's first step) cancels tag 10 immediately;
+	// its dispatcher's response write is what unblocks handleReVersion's
+	// drain, so this is always the first frame on the wire.
+	_, tag10Resp := readResponse(t, client)
+	if _, ok := tag10Resp.(*p9l.Rlerror); !ok {
+		t.Fatalf("tag 10: expected Rlerror (cancelled), got %T", tag10Resp)
+	}
+
+	// Queue tag 11 from a background goroutine: net.Pipe is unbuffered, so
+	// this call blocks until some goroutine reads it server-side. Sending
+	// it before Rversion is read (which would otherwise let
+	// handleReVersion's writeRaw complete and race ahead to the mutation)
+	// keeps the window open: whichever goroutine reads next -- the
+	// legitimate recvMu holder, or a wrongly-freed sibling -- reads this
+	// frame while handleReVersion is still in the middle of the
+	// re-negotiation.
+	walkDone := make(chan struct{})
+	go func() {
+		defer close(walkDone)
+		sendMessage(t, client, 11, &proto.Twalk{Fid: 0, NewFid: 2})
+	}()
+
+	_, verMsg := readResponse(t, client)
+	if _, ok := verMsg.(*proto.Rversion); !ok {
+		t.Fatalf("expected Rversion, got %T", verMsg)
+	}
+	<-walkDone
+
+	_, walkMsg := readResponse(t, client)
+	if _, ok := walkMsg.(*p9l.Rlerror); !ok {
+		t.Fatalf("tag 11: expected Rlerror (fid clunked by re-negotiation), got %T: %+v", walkMsg, walkMsg)
+	}
+
+	_ = client.Close()
+	select {
+	case <-serveDone:
+	case <-time.After(cleanupDeadline + 5*time.Second):
+		t.Fatal("serve did not exit")
+	}
+}
+
 // Compile-time assertions.
 var (
 	_ NodeLookuper  = (*recvmuBlockingNode)(nil)

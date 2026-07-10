@@ -440,8 +440,10 @@ func (c *conn) writeRaw(tag proto.Tag, msg proto.Message) error {
 //     safely owned by the lock holder).
 //  4. Decides whether to spawn a replacement (skip on Tversion to keep this
 //     goroutine the sole reader during re-negotiation).
-//  5. Releases recvMu.
-//  6. Handles errors / Tversion / Tflush / dispatch outside the lock.
+//  5. Releases recvMu -- except for Tversion, which runs handleReVersion
+//     and releases recvMu only once c.msize/c.protocol are settled, so no
+//     already-parked sibling can read a frame against stale values.
+//  6. Handles errors / Tflush / dispatch outside the lock.
 //  7. Loops.
 //
 // The same goroutine that reads the bytes is the one that handles the
@@ -594,6 +596,21 @@ func (c *conn) handleRequest(ctx context.Context) {
 		if spawnReplacement {
 			go c.handleRequest(ctx)
 		}
+
+		if msgType == proto.TypeTversion {
+			// Keep recvMu held across the full re-negotiation
+			// choreography. Releasing it here (as a plain request would)
+			// lets an already-parked sibling acquire recvMu and read the
+			// next frame against c.msize/c.protocol while handleReVersion
+			// is still draining inflight and about to mutate those same
+			// fields below -- a data race between the sibling's read and
+			// this mutation.
+			c.handleReVersion(ctx, tag, b[3:])
+			c.recvMu.Unlock()
+			bufpool.PutMsgBuf(bufPtr)
+			putCachedMsg(msg)
+			continue
+		}
 		c.recvMu.Unlock()
 
 		// Outside recvMu from here on.
@@ -628,18 +645,6 @@ func (c *conn) handleRequest(ctx context.Context) {
 			// intentional belt-and-braces.
 			_ = c.nc.Close()
 			return
-		}
-
-		// Tversion mid-conn: handle inline (we deliberately did NOT
-		// spawn a replacement above; we are the sole reader during
-		// re-negotiation). After handleReVersion returns, the loop
-		// continues -- the next iteration will spawn a replacement
-		// normally.
-		if msgType == proto.TypeTversion {
-			c.handleReVersion(ctx, tag, b[3:])
-			bufpool.PutMsgBuf(bufPtr)
-			putCachedMsg(msg)
-			continue
 		}
 
 		// Tflush short-circuit. dispatch.go has no case *proto.Tflush;
