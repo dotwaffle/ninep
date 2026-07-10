@@ -135,15 +135,16 @@ func main() {
 The library (`proto/`, `server/`, `server/memfs/`, `server/fstest/`,
 `internal/bufpool/`) builds and runs on every platform Go supports.
 
-The reference `server/passthrough/` filesystem is **Linux-only**: it uses
-`O_PATH`, the `*at` syscall family, and the Linux `Lgetxattr` xattr API
-to anchor every node to a specific inode for path-traversal safety. On
-darwin / freebsd / windows the package compiles to its godoc only;
-`passthrough.NewRoot` is undefined.
+The reference `server/passthrough/` filesystem supports **Linux and
+FreeBSD (14.0+)**: both ports use `O_PATH`, the `*at` syscall family,
+and inode-anchored file descriptors to anchor every node to a specific
+inode for path-traversal safety. On darwin / windows / other platforms
+the package compiles to its godoc only; `passthrough.NewRoot` is
+undefined.
 
-To serve 9P from a non-Linux host, write your own `server.Node` types
-(the same way you would with `go-fuse`) or use the in-memory `memfs`
-helpers.
+To serve 9P from an unsupported host, write your own `server.Node`
+types (the same way you would with `go-fuse`) or use the in-memory
+`memfs` helpers.
 
 ## Package Layout
 
