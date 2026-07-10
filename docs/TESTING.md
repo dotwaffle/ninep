@@ -175,7 +175,7 @@ for _, tc := range fstest.Cases {
 
 ## Fuzz testing
 
-Fuzz tests exist for both codec packages, verifying the round-trip property: any successfully decoded message must re-encode to identical bytes that decode to an identical message. See `proto/p9l/fuzz_test.go` and `proto/p9u/fuzz_test.go`.
+Fuzz tests exist for both codec packages, verifying the round-trip property: any successfully decoded message must re-encode to identical bytes that decode to an identical message. See `proto/p9l/fuzz_test.go` and `proto/p9u/fuzz_test.go`. The client package adds two more fuzz targets, `FuzzClientLock` and `FuzzClientXattr` (`client/`), exercising the stateful lock and xattr protocol flows against adversarial input.
 
 ### Running fuzz tests
 
@@ -200,10 +200,10 @@ Both fuzzers are named `FuzzCodecRoundTrip`. They seed with valid encoded messag
 Run with a time limit:
 
 ```bash
-go test -fuzz=FuzzCodecRoundTrip -fuzztime=30s ./proto/p9l/
+go test -fuzz=FuzzCodecRoundTrip -fuzztime=60s ./proto/p9l/
 ```
 
-CI runs both fuzzers for 30 seconds on every push and pull request (`.github/workflows/ci.yml` `fuzz` job).
+CI runs a 60-second pass for each of four fuzz targets on every push and pull request (`.github/workflows/ci.yml` `fuzz` job, one matrix leg per target): the p9l codec, the p9u codec, `FuzzClientLock`, and `FuzzClientXattr`.
 
 Crash inputs are stored in `proto/p9l/testdata/fuzz/` and `proto/p9u/testdata/fuzz/` and are replayed automatically on subsequent `go test` runs.
 
@@ -450,12 +450,15 @@ The `-count=1` flag disables test caching, ensuring every run exercises the race
 
 ## CI integration
 
-CI is defined in `.github/workflows/ci.yml` and runs on every push to `main` and every pull request. Three jobs execute in parallel:
+CI is defined in `.github/workflows/ci.yml` and runs on every push to `main` and every pull request. Six jobs execute in parallel, several with their own runner matrix:
 
-| Job | Command | Purpose |
-|-----|---------|---------|
-| `test` | `go vet ./...`, `go test -race -count=1 ./...`, `go build -trimpath ./...`, `go test -tags integration -run ^$ ./...` | Vet, race-enabled test suite, reproducible build, integration-test compile check |
-| `lint` | `golangci-lint run` (via `golangci/golangci-lint-action@v9`, version `latest`) | Static analysis |
-| `fuzz` | `go test -fuzz=FuzzCodecRoundTrip -fuzztime=30s ./proto/p9l/` and `./proto/p9u/` | 30s codec fuzz per protocol |
+| Job | Matrix | Command | Purpose |
+|-----|--------|---------|---------|
+| `test` | `ubuntu-latest`, `ubuntu-24.04-arm` | `go vet ./...`, `go test -race -count=1 ./...`, `go build -trimpath ./...`, `go test -tags integration -run ^$ ./...` | Vet, race-enabled test suite, reproducible build, integration-test compile check, on both amd64 and arm64 |
+| `lint` | -- | `golangci-lint run` (via `golangci/golangci-lint-action@v9`, version `latest`) | Static analysis |
+| `fuzz` | p9l codec, p9u codec, `FuzzClientLock`, `FuzzClientXattr` | `go test -fuzz=<target> -fuzztime=60s -run='^$' <pkg>` | 60s fuzz pass per target, one matrix leg each; crashers are uploaded as artifacts on failure |
+| `stress` | `ubuntu-latest`, `ubuntu-24.04-arm` | `go test -tags=stress -race -count=1 ./server/...` | Race-sensitive stress tests targeting the requestCtx concurrency surface |
+| `vsock` | `ubuntu-latest`, `ubuntu-24.04-arm` | `go test -race -count=1 -v ./vsock/...` (fails if any test skips) | AF_VSOCK loopback tests against the real kernel vsock transport |
+| `benchmark` | -- | `go test -bench=BenchmarkClient -run=^$ ./client/` piped through `benchstat` | Client benchmark smoke run |
 
 Go version tracks `stable` via `actions/setup-go@v6`. The integration-test step compiles but does not execute the kernel tests (the `-run ^$` pattern matches no tests); actual kernel mount tests run locally or on dedicated runners.

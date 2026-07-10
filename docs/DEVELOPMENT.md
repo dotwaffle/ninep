@@ -46,11 +46,13 @@ Run a single test:
 go test -race -run TestMiddlewareChainOrdering ./server/
 ```
 
-The `proto/p9l` and `proto/p9u` packages include fuzz tests. CI runs `FuzzCodecRoundTrip` for 30 seconds per codec; run locally with:
+The `proto/p9l` and `proto/p9u` packages include fuzz tests, and `client/` adds `FuzzClientLock` and `FuzzClientXattr`. CI runs each of the four targets for 60 seconds as a separate matrix leg; run locally with:
 
 ```bash
-go test -fuzz=FuzzCodecRoundTrip -fuzztime=30s ./proto/p9l/
-go test -fuzz=FuzzCodecRoundTrip -fuzztime=30s ./proto/p9u/
+go test -fuzz=FuzzCodecRoundTrip -fuzztime=60s ./proto/p9l/
+go test -fuzz=FuzzCodecRoundTrip -fuzztime=60s ./proto/p9u/
+go test -fuzz=FuzzClientLock -fuzztime=60s ./client/
+go test -fuzz=FuzzClientXattr -fuzztime=60s ./client/
 ```
 
 ## Project Structure
