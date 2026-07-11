@@ -42,7 +42,7 @@ func TestRaw_Parity_Attach(t *testing.T) {
 	defer cleanupA()
 	ctxA, cancelA := rawTestCtx(t)
 	defer cancelA()
-	wantQID, err := cliA.Raw().Attach(ctxA, 1, "me", "")
+	wantQID, err := cliA.Raw().Tattach(ctxA, 1, "me", "")
 	if err != nil {
 		t.Fatalf("Raw.Attach (baseline): %v", err)
 	}
@@ -52,7 +52,7 @@ func TestRaw_Parity_Attach(t *testing.T) {
 	defer cleanupB()
 	ctxB, cancelB := rawTestCtx(t)
 	defer cancelB()
-	gotQID, err := cliB.Raw().Attach(ctxB, 1, "me", "")
+	gotQID, err := cliB.Raw().Tattach(ctxB, 1, "me", "")
 	if err != nil {
 		t.Fatalf("Raw.Attach: %v", err)
 	}
@@ -75,10 +75,10 @@ func TestRaw_Parity_Walk(t *testing.T) {
 	ctx, cancel := rawTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Raw().Attach(ctx, 1, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 1, "me", ""); err != nil {
 		t.Fatalf("Raw.Attach: %v", err)
 	}
-	qids, err := cli.Raw().Walk(ctx, 1, 2, nil)
+	qids, err := cli.Raw().Twalk(ctx, 1, 2, nil)
 	if err != nil {
 		t.Fatalf("Raw.Walk: %v", err)
 	}
@@ -99,24 +99,24 @@ func TestRaw_Parity_ReadWrite(t *testing.T) {
 
 	r := cli.Raw()
 
-	if _, err := r.Attach(ctx, 1, "me", ""); err != nil {
+	if _, err := r.Tattach(ctx, 1, "me", ""); err != nil {
 		t.Fatalf("Raw.Attach: %v", err)
 	}
-	if _, err := r.Walk(ctx, 1, 2, []string{"rw.bin"}); err != nil {
+	if _, err := r.Twalk(ctx, 1, 2, []string{"rw.bin"}); err != nil {
 		t.Fatalf("Raw.Walk: %v", err)
 	}
 	// O_RDWR = 2 on Linux.
-	if _, _, err := r.Lopen(ctx, 2, 2); err != nil {
+	if _, _, err := r.Tlopen(ctx, 2, 2); err != nil {
 		t.Fatalf("Raw.Lopen: %v", err)
 	}
-	n, err := r.Write(ctx, 2, 0, []byte("hi"))
+	n, err := r.Twrite(ctx, 2, 0, []byte("hi"))
 	if err != nil {
 		t.Fatalf("Raw.Write: %v", err)
 	}
 	if n != 2 {
 		t.Fatalf("Raw.Write returned n=%d, want 2", n)
 	}
-	data, err := r.Read(ctx, 2, 0, 2)
+	data, err := r.Tread(ctx, 2, 0, 2)
 	if err != nil {
 		t.Fatalf("Raw.Read: %v", err)
 	}
@@ -137,21 +137,21 @@ func TestRaw_Parity_Clunk(t *testing.T) {
 
 	r := cli.Raw()
 
-	if _, err := r.Attach(ctx, 1, "me", ""); err != nil {
+	if _, err := r.Tattach(ctx, 1, "me", ""); err != nil {
 		t.Fatalf("Raw.Attach: %v", err)
 	}
-	if _, err := r.Walk(ctx, 1, 2, []string{"hello.txt"}); err != nil {
+	if _, err := r.Twalk(ctx, 1, 2, []string{"hello.txt"}); err != nil {
 		t.Fatalf("Raw.Walk: %v", err)
 	}
-	if _, _, err := r.Lopen(ctx, 2, 0); err != nil {
+	if _, _, err := r.Tlopen(ctx, 2, 0); err != nil {
 		t.Fatalf("Raw.Lopen: %v", err)
 	}
-	if err := r.Clunk(ctx, 2); err != nil {
+	if err := r.Tclunk(ctx, 2); err != nil {
 		t.Fatalf("Raw.Clunk: %v", err)
 	}
 
 	// Server should reject reads against the now-unbound fid=2.
-	_, err := r.Read(ctx, 2, 0, 16)
+	_, err := r.Tread(ctx, 2, 0, 16)
 	if err == nil {
 		t.Fatal("Raw.Read after Clunk: expected error, got nil")
 	}
@@ -172,7 +172,7 @@ func TestRaw_DialectGate_Lopen(t *testing.T) {
 	ctx, cancel := rawTestCtx(t)
 	defer cancel()
 
-	_, _, err := cli.Raw().Lopen(ctx, 1, 0)
+	_, _, err := cli.Raw().Tlopen(ctx, 1, 0)
 	if !errors.Is(err, client.ErrNotSupported) {
 		t.Fatalf("Raw.Lopen on .u Conn: err = %v, want ErrNotSupported", err)
 	}
@@ -188,7 +188,7 @@ func TestRaw_DialectGate_Open(t *testing.T) {
 	ctx, cancel := rawTestCtx(t)
 	defer cancel()
 
-	_, _, err := cli.Raw().Open(ctx, 1, 0)
+	_, _, err := cli.Raw().Topen(ctx, 1, 0)
 	if !errors.Is(err, client.ErrNotSupported) {
 		t.Fatalf("Raw.Open on .L Conn: err = %v, want ErrNotSupported", err)
 	}
@@ -206,7 +206,7 @@ func TestRaw_Flush(t *testing.T) {
 
 	// Use a tag that is not currently inflight. Server must still reply
 	// with Rflush per spec.
-	if err := cli.Raw().Flush(ctx, proto.Tag(12345)); err != nil {
+	if err := cli.Raw().Tflush(ctx, proto.Tag(12345)); err != nil {
 		t.Fatalf("Raw.Flush: %v", err)
 	}
 }

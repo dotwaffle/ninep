@@ -62,7 +62,7 @@ func TestClient_Stat_U(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
-	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	// The u-mock server always returns the canned Stat regardless of fid;

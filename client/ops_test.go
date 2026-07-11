@@ -39,6 +39,7 @@ func newTestConn(t *testing.T) (*Conn, net.Conn) {
 		logger:     slog.New(slog.NewTextHandler(discardWriter{}, nil)),
 		flushGrace: defaultFlushGrace,
 	}
+	c.raw = Raw{c: c}
 	return c, srvNC
 }
 
@@ -187,7 +188,7 @@ func TestConnReadRejectsOversizedRread(t *testing.T) {
 	c, srvNC := newTestConn(t)
 	resultCh := make(chan error, 1)
 	go func() {
-		_, err := c.Read(context.Background(), 1, 0, 4)
+		_, err := c.tread(context.Background(), 1, 0, 4)
 		resultCh <- err
 	}()
 
@@ -219,7 +220,7 @@ func TestConnWriteRejectsOversizedRwriteCount(t *testing.T) {
 	c, srvNC := newTestConn(t)
 	resultCh := make(chan error, 1)
 	go func() {
-		_, err := c.Write(context.Background(), 1, 0, []byte("abc"))
+		_, err := c.twrite(context.Background(), 1, 0, []byte("abc"))
 		resultCh <- err
 	}()
 

@@ -81,7 +81,7 @@ func (im *inflightMap) register(tag proto.Tag) chan proto.Message {
 // the response payload directly into dst[:count] and set entry.n = int(count)
 // before posting a sentinel R-message (rreadSentinelOK) on entry.ch.
 // This avoids both the proto.Rread.Data alloc inside DecodeFrom AND the
-// result-copy in Conn.Read.
+// result-copy in Conn.tread.
 //
 // Returns the entry pointer (so callers can read entry.n after the
 // receive on entry.ch unblocks) - entry escapes to the heap once via

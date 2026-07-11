@@ -26,7 +26,7 @@ func (c *Conn) walkNew(ctx context.Context, base proto.Fid, names []string, what
 	if err != nil {
 		return 0, nil, err
 	}
-	qids, err := c.Walk(ctx, base, fid, names)
+	qids, err := c.twalk(ctx, base, fid, names)
 	if err != nil {
 		c.fids.release(fid)
 		return 0, nil, err
@@ -36,7 +36,7 @@ func (c *Conn) walkNew(ctx context.Context, base proto.Fid, names []string, what
 		return 0, nil, fmt.Errorf("client: partial walk to %s (%d of %d steps)", what, len(qids), len(names))
 	}
 	cleanup := func() {
-		_ = c.Clunk(context.Background(), fid)
+		_ = c.tclunk(context.Background(), fid)
 		c.fids.release(fid)
 	}
 	return fid, cleanup, nil

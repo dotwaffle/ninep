@@ -70,7 +70,7 @@ func TestClient_Cancellation_Stress(t *testing.T) {
 	// Attach root at fid=0. Raw's fid-taking form mirrors the
 	// concurrent_test pattern; every stress goroutine derives its per-iter
 	// fid from its id + iteration so there's no cross-goroutine collision.
-	if _, err := cli.Raw().Attach(parent, proto.Fid(0), "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(parent, proto.Fid(0), "me", ""); err != nil {
 		cleanup()
 		t.Fatalf("Attach: %v", err)
 	}
@@ -278,7 +278,7 @@ func issueStressOp(ctx context.Context, cli *client.Conn, gid, iter int) error {
 	switch variant {
 	case 0:
 		// Wire-level Walk + Clunk on a known path.
-		_, err := cli.Walk(ctx, proto.Fid(0), fid, []string{"hello.txt"})
+		_, err := cli.Raw().Twalk(ctx, proto.Fid(0), fid, []string{"hello.txt"})
 		if err != nil {
 			return err
 		}
@@ -287,7 +287,7 @@ func issueStressOp(ctx context.Context, cli *client.Conn, gid, iter int) error {
 		// bound and we want to release it regardless of the caller's
 		// cancellation. Ignore the error -- if the Conn is already closed
 		// the fid is server-side cleaned up on connection teardown.
-		_ = cli.Clunk(context.Background(), fid)
+		_ = cli.Raw().Tclunk(context.Background(), fid)
 		return nil
 
 	case 1:
@@ -308,7 +308,7 @@ func issueStressOp(ctx context.Context, cli *client.Conn, gid, iter int) error {
 		// Wire-level Walk to a nonexistent name. Server returns ENOENT
 		// as a *client.Error; no fid is bound on failure (Rwalk
 		// semantics: partial walks allocate nothing).
-		_, err := cli.Walk(ctx, proto.Fid(0), fid, []string{"nonexistent.txt"})
+		_, err := cli.Raw().Twalk(ctx, proto.Fid(0), fid, []string{"nonexistent.txt"})
 		return err
 	}
 	return nil

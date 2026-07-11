@@ -373,7 +373,7 @@ func TestClient_Lock_NotSupportedOnU(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	// The uMockServer answers Tattach; that's enough to get a *File.
-	_, err := cli.Raw().Attach(ctx, 0, "me", "")
+	_, err := cli.Raw().Tattach(ctx, 0, "me", "")
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

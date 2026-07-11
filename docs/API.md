@@ -720,10 +720,9 @@ func (c *Conn) Close() error
 func (c *Conn) Raw() *Raw
 ```
 
-Lower-level fid-oriented methods (`AttachFid`, `Walk`, `Clunk`, `Flush`,
-`Read`, `Write`, `Lopen`, `Lcreate`, `Open`, `CreateFid`) are also
-exported directly on `*Conn` for callers that want to manage fids
-themselves rather than go through `*File`.
+Lower-level fid-oriented wire operations live exclusively on the `Raw`
+surface (below) for callers that want to manage fids themselves rather
+than go through `*File`.
 
 ### File
 
@@ -760,22 +759,24 @@ when the negotiated transport and dialect allow it.
 
 ### Raw
 
-`Raw` (returned by `Conn.Raw()`) exposes the 9P verbs one-to-one with no
-`*File` bookkeeping, for callers implementing their own fid lifecycle:
+`Raw` (returned by `Conn.Raw()`) is the canonical wire surface: every 9P
+verb the client can issue appears one-to-one as a `T`-named method with
+no `*File` bookkeeping, for callers implementing their own fid
+lifecycle:
 
 ```go
 type Raw struct { /* unexported */ }
 
-func (r *Raw) Attach(ctx context.Context, fid proto.Fid, uname, aname string) (proto.QID, error)
-func (r *Raw) Walk(ctx context.Context, fid, newFid proto.Fid, names []string) ([]proto.QID, error)
-func (r *Raw) Clunk(ctx context.Context, fid proto.Fid) error
-func (r *Raw) Flush(ctx context.Context, oldTag proto.Tag) error
-func (r *Raw) Read(ctx context.Context, fid proto.Fid, offset uint64, count uint32) ([]byte, error)
-func (r *Raw) Write(ctx context.Context, fid proto.Fid, offset uint64, data []byte) (uint32, error)
-func (r *Raw) Lopen(ctx context.Context, fid proto.Fid, flags uint32) (proto.QID, uint32, error)
-func (r *Raw) Lcreate(ctx context.Context, fid proto.Fid, name string, flags uint32, mode proto.FileMode, gid uint32) (proto.QID, uint32, error)
-func (r *Raw) Open(ctx context.Context, fid proto.Fid, mode uint8) (proto.QID, uint32, error)
-func (r *Raw) Create(ctx context.Context, fid proto.Fid, name string, perm proto.FileMode, mode uint8, extension string) (proto.QID, uint32, error)
+func (r *Raw) Tattach(ctx context.Context, fid proto.Fid, uname, aname string) (proto.QID, error)
+func (r *Raw) Twalk(ctx context.Context, fid, newFid proto.Fid, names []string) ([]proto.QID, error)
+func (r *Raw) Tclunk(ctx context.Context, fid proto.Fid) error
+func (r *Raw) Tflush(ctx context.Context, oldTag proto.Tag) error
+func (r *Raw) Tread(ctx context.Context, fid proto.Fid, offset uint64, count uint32) ([]byte, error)
+func (r *Raw) Twrite(ctx context.Context, fid proto.Fid, offset uint64, data []byte) (uint32, error)
+func (r *Raw) Tlopen(ctx context.Context, fid proto.Fid, flags uint32) (proto.QID, uint32, error)
+func (r *Raw) Tlcreate(ctx context.Context, fid proto.Fid, name string, flags uint32, mode proto.FileMode, gid uint32) (proto.QID, uint32, error)
+func (r *Raw) Topen(ctx context.Context, fid proto.Fid, mode uint8) (proto.QID, uint32, error)
+func (r *Raw) Tcreate(ctx context.Context, fid proto.Fid, name string, perm proto.FileMode, mode uint8, extension string) (proto.QID, uint32, error)
 func (r *Raw) AcquireFid() (proto.Fid, error)
 func (r *Raw) ReleaseFid(fid proto.Fid)
 ```

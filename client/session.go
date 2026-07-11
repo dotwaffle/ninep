@@ -15,7 +15,7 @@ import (
 //
 // Authentication (afid != NoFid) is not supported -- see package
 // doc. Attach always passes NoFid for the afid field; use
-// [Conn.AttachFid] (or [Raw.Attach]) if wire-level control is needed.
+// [Raw.Tattach] if wire-level control is needed.
 //
 // The returned *File is also cached on the Conn as the implicit root
 // for subsequent [Conn.OpenFile] / [Conn.Create] calls. Callers may
@@ -29,7 +29,7 @@ func (c *Conn) Attach(ctx context.Context, uname, aname string) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	qid, err := c.AttachFid(ctx, fid, uname, aname)
+	qid, err := c.tattach(ctx, fid, uname, aname)
 	if err != nil {
 		c.fids.release(fid)
 		return nil, err
@@ -84,7 +84,7 @@ func (c *Conn) OpenFile(ctx context.Context, p string, flags int, mode os.FileMo
 	if err != nil {
 		return nil, err
 	}
-	qids, err := c.Walk(ctx, root.fid, fileFid, names)
+	qids, err := c.twalk(ctx, root.fid, fileFid, names)
 	if err != nil {
 		// Walk returned a wire/server error; per 9P spec newFid is not
 		// bound unless len(qids) == len(names). Release only.
@@ -101,9 +101,9 @@ func (c *Conn) OpenFile(ctx context.Context, p string, flags int, mode os.FileMo
 	var iounit uint32
 	switch c.dialect {
 	case protocolL:
-		qid, iounit, err = c.Lopen(ctx, fileFid, uint32(flags))
+		qid, iounit, err = c.tlopen(ctx, fileFid, uint32(flags))
 	case protocolU:
-		qid, iounit, err = c.Open(ctx, fileFid, posixToNinepMode(flags))
+		qid, iounit, err = c.topen(ctx, fileFid, posixToNinepMode(flags))
 	default:
 		// Dialect is set once at Dial and never mutated. This branch is
 		// statically unreachable; wrap ErrDialectInvariant so callers
@@ -114,7 +114,7 @@ func (c *Conn) OpenFile(ctx context.Context, p string, flags int, mode os.FileMo
 		// Walk succeeded -> fileFid is server-bound. Clunk before
 		// release. Use context.Background() for the cleanup clunk
 		// because the caller's ctx may already be cancelled.
-		_ = c.Clunk(context.Background(), fileFid)
+		_ = c.tclunk(context.Background(), fileFid)
 		c.fids.release(fileFid)
 		return nil, err
 	}
@@ -127,7 +127,7 @@ func (c *Conn) OpenFile(ctx context.Context, p string, flags int, mode os.FileMo
 //
 // On .L, gid defaults to 0 ("server default"). On .u, extension is
 // empty (regular file). Callers needing non-default gid or .u
-// extensions should use [Raw.Lcreate] / [Raw.Create] directly.
+// extensions should use [Raw.Tlcreate] / [Raw.Tcreate] directly.
 //
 // Only the permission bits of mode (mode & 0o7777) are honored;
 // [os.FileMode] type bits (os.ModeDir, os.ModeSymlink, os.ModeSetuid,
@@ -166,9 +166,9 @@ func (c *Conn) Create(ctx context.Context, p string, flags int, mode os.FileMode
 	var iounit uint32
 	switch c.dialect {
 	case protocolL:
-		qid, iounit, err = c.Lcreate(ctx, dirFid, name, uint32(flags), perm, 0)
+		qid, iounit, err = c.tlcreate(ctx, dirFid, name, uint32(flags), perm, 0)
 	case protocolU:
-		qid, iounit, err = c.CreateFid(ctx, dirFid, name, perm, posixToNinepMode(flags), "")
+		qid, iounit, err = c.tcreate(ctx, dirFid, name, perm, posixToNinepMode(flags), "")
 	default:
 		// See OpenFile default-arm comment; mirrored here so Conn.Create
 		// callers get the same errors.Is handle on the unreachable path.
@@ -205,7 +205,7 @@ func (c *Conn) OpenDir(ctx context.Context, p string) (*File, error) {
 // posixToNinepMode maps POSIX O_RDONLY/O_WRONLY/O_RDWR to 9P2000.u's
 // mode byte (0/1/2). Higher POSIX flags (O_CREAT, O_TRUNC, O_APPEND,
 // O_EXCL) are dropped here -- .u's semantics for those are sparse and
-// .u callers that need them should use [Raw.Create] / [Raw.Open]
+// .u callers that need them should use [Raw.Tcreate] / [Raw.Topen]
 // directly.
 //
 // Input is an int because os.O_* are int; output is uint8 because .u

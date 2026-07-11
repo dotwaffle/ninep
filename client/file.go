@@ -141,7 +141,7 @@ func (f *File) Close() error {
 		// here - see godoc above.
 		ctx, cancel := context.WithTimeout(context.Background(), cleanupDeadline)
 		defer cancel()
-		err := f.conn.Clunk(ctx, f.fid)
+		err := f.conn.tclunk(ctx, f.fid)
 		// Release only when the server-side fid is known to be gone:
 		// Rclunk landed (nil), the server answered with an error (per
 		// clunk(5) the fid is clunked even then), or the connection is
@@ -182,7 +182,7 @@ func (f *File) Walk(ctx context.Context, names []string) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	qids, err := f.conn.Walk(ctx, f.fid, newFid, names)
+	qids, err := f.conn.twalk(ctx, f.fid, newFid, names)
 	if err != nil {
 		f.conn.fids.release(newFid)
 		return nil, err
@@ -211,7 +211,7 @@ func (f *File) Clone(ctx context.Context) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := f.conn.Walk(ctx, f.fid, newFid, nil); err != nil {
+	if _, err := f.conn.twalk(ctx, f.fid, newFid, nil); err != nil {
 		f.conn.fids.release(newFid)
 		return nil, err
 	}
@@ -271,7 +271,7 @@ func chunkLen(n int, m uint32) uint32 {
 // Internally uses the same zero-copy read path as [File.ReadAtCtx]:
 // the Rread response is decoded directly into p, skipping both the
 // intermediate Rread.Data allocation and the result-copy that
-// [Conn.Read] would otherwise pay.
+// [Raw.Tread] would otherwise pay.
 //
 // Serializes against other I/O methods on the same *File via f.mu.
 // For parallel I/O, use [File.Clone] (which issues its own fid).
@@ -350,7 +350,7 @@ func (f *File) WriteCtx(ctx context.Context, p []byte) (int, error) {
 		if m := f.maxChunk(); len(chunk) > int(m) {
 			chunk = chunk[:m]
 		}
-		n, err := f.conn.Write(ctx, f.fid, uint64(f.offset), chunk)
+		n, err := f.conn.twrite(ctx, f.fid, uint64(f.offset), chunk)
 		if err != nil {
 			if total > 0 {
 				return total, err
@@ -447,7 +447,7 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 // Internally uses the zero-copy read path: each chunk of length <=
 // maxChunk() is decoded directly from the wire into the corresponding
 // sub-slice of p, skipping both the intermediate Rread.Data allocation
-// AND the Conn.Read result-copy.
+// AND the tread result-copy.
 //
 // Does NOT advance the local offset - the [io.ReaderAt] contract is
 // preserved regardless of what the caller's ctx does. Serializes
@@ -591,7 +591,7 @@ func (f *File) WriteAtCtx(ctx context.Context, p []byte, off int64) (int, error)
 		if m := f.maxChunk(); len(chunk) > int(m) {
 			chunk = chunk[:m]
 		}
-		n, err := f.conn.Write(ctx, f.fid, uint64(off)+uint64(total), chunk)
+		n, err := f.conn.twrite(ctx, f.fid, uint64(off)+uint64(total), chunk)
 		if err != nil {
 			if total > 0 {
 				return total, err

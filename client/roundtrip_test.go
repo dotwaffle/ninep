@@ -28,7 +28,7 @@ func TestClient_Attach_RoundTrip(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	qid, err := cli.Raw().Attach(ctx, 0, "me", "")
+	qid, err := cli.Raw().Tattach(ctx, 0, "me", "")
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -46,10 +46,10 @@ func TestClient_Walk_EmptyNames(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	qids, err := cli.Walk(ctx, 0, 1, nil)
+	qids, err := cli.Raw().Twalk(ctx, 0, 1, nil)
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
@@ -67,10 +67,10 @@ func TestClient_Walk_NNames(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	qids, err := cli.Walk(ctx, 0, 1, []string{"hello.txt"})
+	qids, err := cli.Raw().Twalk(ctx, 0, 1, []string{"hello.txt"})
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
@@ -92,10 +92,10 @@ func TestClient_Walk_NonexistentPath(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	_, err := cli.Walk(ctx, 0, 1, []string{"does-not-exist"})
+	_, err := cli.Raw().Twalk(ctx, 0, 1, []string{"does-not-exist"})
 	if err == nil {
 		t.Fatal("Walk: expected error, got nil")
 	}
@@ -117,16 +117,16 @@ func TestClient_Read_StaticFile(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	if _, err := cli.Walk(ctx, 0, 1, []string{"hello.txt"}); err != nil {
+	if _, err := cli.Raw().Twalk(ctx, 0, 1, []string{"hello.txt"}); err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
-	if _, _, err := cli.Lopen(ctx, 1, 0); err != nil { // O_RDONLY == 0
+	if _, _, err := cli.Raw().Tlopen(ctx, 1, 0); err != nil { // O_RDONLY == 0
 		t.Fatalf("Lopen: %v", err)
 	}
-	data, err := cli.Read(ctx, 1, 0, 100)
+	data, err := cli.Raw().Tread(ctx, 1, 0, 100)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -144,17 +144,17 @@ func TestClient_Write_RwFile(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	if _, err := cli.Walk(ctx, 0, 1, []string{"rw.bin"}); err != nil {
+	if _, err := cli.Raw().Twalk(ctx, 0, 1, []string{"rw.bin"}); err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
-	if _, _, err := cli.Lopen(ctx, 1, 2); err != nil { // O_RDWR == 2
+	if _, _, err := cli.Raw().Tlopen(ctx, 1, 2); err != nil { // O_RDWR == 2
 		t.Fatalf("Lopen: %v", err)
 	}
 	payload := []byte("data")
-	n, err := cli.Write(ctx, 1, 0, payload)
+	n, err := cli.Raw().Twrite(ctx, 1, 0, payload)
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -173,15 +173,15 @@ func TestClient_Clunk_Success(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	if err := cli.Clunk(ctx, 0); err != nil {
+	if err := cli.Raw().Tclunk(ctx, 0); err != nil {
 		t.Fatalf("Clunk: %v", err)
 	}
 
 	// Subsequent walk on clunked fid should fail with a server-reported error.
-	_, err := cli.Walk(ctx, 0, 1, nil)
+	_, err := cli.Raw().Twalk(ctx, 0, 1, nil)
 	if err == nil {
 		t.Fatal("Walk on clunked fid: expected error, got nil")
 	}
@@ -197,7 +197,7 @@ func TestClient_Flush_NoMatch(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if err := cli.Flush(ctx, proto.Tag(999)); err != nil {
+	if err := cli.Raw().Tflush(ctx, proto.Tag(999)); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
 }
@@ -211,16 +211,16 @@ func TestClient_Read_EmptyFile(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	if _, err := cli.Walk(ctx, 0, 1, []string{"empty.txt"}); err != nil {
+	if _, err := cli.Raw().Twalk(ctx, 0, 1, []string{"empty.txt"}); err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
-	if _, _, err := cli.Lopen(ctx, 1, 0); err != nil {
+	if _, _, err := cli.Raw().Tlopen(ctx, 1, 0); err != nil {
 		t.Fatalf("Lopen: %v", err)
 	}
-	data, err := cli.Read(ctx, 1, 0, 100)
+	data, err := cli.Raw().Tread(ctx, 1, 0, 100)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -239,13 +239,13 @@ func TestClient_Lopen_L(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	if _, err := cli.Walk(ctx, 0, 1, []string{"hello.txt"}); err != nil {
+	if _, err := cli.Raw().Twalk(ctx, 0, 1, []string{"hello.txt"}); err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
-	qid, _, err := cli.Lopen(ctx, 1, 0) // O_RDONLY
+	qid, _, err := cli.Raw().Tlopen(ctx, 1, 0) // O_RDONLY
 	if err != nil {
 		t.Fatalf("Lopen: %v", err)
 	}
@@ -265,16 +265,16 @@ func TestClient_Lcreate_L(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	// Clone root into fid 1 -- Lcreate mutates the supplied fid into the
 	// newly-created file per the 9P spec, so we must not burn the root.
-	if _, err := cli.Walk(ctx, 0, 1, nil); err != nil {
+	if _, err := cli.Raw().Twalk(ctx, 0, 1, nil); err != nil {
 		t.Fatalf("Walk-clone: %v", err)
 	}
 	// Lcreate: O_RDWR=2, mode=0o644, gid=0.
-	qid, _, err := cli.Lcreate(ctx, 1, "new.txt", 2, proto.FileMode(0o644), 0)
+	qid, _, err := cli.Raw().Tlcreate(ctx, 1, "new.txt", 2, proto.FileMode(0o644), 0)
 	if err != nil {
 		t.Fatalf("Lcreate: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestClient_Lcreate_L(t *testing.T) {
 		t.Errorf("new.txt QID type = %#x, want file", qid.Type)
 	}
 	// Fid 1 is now open on the new file; read should return 0 bytes (empty).
-	data, err := cli.Read(ctx, 1, 0, 100)
+	data, err := cli.Raw().Tread(ctx, 1, 0, 100)
 	if err != nil {
 		t.Fatalf("Read after Lcreate: %v", err)
 	}

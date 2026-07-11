@@ -57,7 +57,7 @@ func TestFlushAndWait_SaturatedTagPoolCancellation(t *testing.T) {
 		client.WithMaxInflight(maxInflight))
 	defer cleanup()
 
-	if _, err := cli.Raw().Attach(t.Context(), proto.Fid(0), "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(t.Context(), proto.Fid(0), "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -68,14 +68,14 @@ func TestFlushAndWait_SaturatedTagPoolCancellation(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range maxInflight {
 		fid := proto.Fid(100 + uint32(i))
-		if _, err := cli.Walk(t.Context(), proto.Fid(0), fid, []string{"block"}); err != nil {
+		if _, err := cli.Raw().Twalk(t.Context(), proto.Fid(0), fid, []string{"block"}); err != nil {
 			t.Fatalf("Walk fid %d: %v", fid, err)
 		}
-		if _, _, err := cli.Lopen(t.Context(), fid, 0); err != nil {
+		if _, _, err := cli.Raw().Tlopen(t.Context(), fid, 0); err != nil {
 			t.Fatalf("Open fid %d: %v", fid, err)
 		}
 		wg.Go(func() {
-			_, err := cli.Read(ctx, fid, 0, 16)
+			_, err := cli.Raw().Tread(ctx, fid, 0, 16)
 			errs <- err
 		})
 	}
@@ -112,7 +112,7 @@ func TestFlushAndWait_SaturatedTagPoolCancellation(t *testing.T) {
 
 	// The connection must still be usable: the tags all returned to the
 	// pool and the mirror flush tags left the inflight map.
-	if _, err := cli.Walk(t.Context(), proto.Fid(0), proto.Fid(200), nil); err != nil {
+	if _, err := cli.Raw().Twalk(t.Context(), proto.Fid(0), proto.Fid(200), nil); err != nil {
 		t.Fatalf("post-cancellation Walk: %v", err)
 	}
 }

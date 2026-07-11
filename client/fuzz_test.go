@@ -42,6 +42,7 @@ func FuzzConnReadLoop(f *testing.F) {
 			closeCh:  make(chan struct{}),
 			logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		}
+		c.raw = Raw{c: c}
 
 		c.readerWG.Add(1)
 		go c.readLoop()

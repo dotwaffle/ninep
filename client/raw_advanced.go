@@ -9,7 +9,7 @@ import (
 )
 
 // Advanced-op wire-level wrappers. Each method mirrors the
-// [Conn.Clunk] template from ops.go:
+// tclunk template from ops.go:
 //
 //  1. requireDialect(protocolL/U, "T<op>") where dialect-gated.
 //  2. Build the T-body struct and dispatch via rtrip, which round-trips,
@@ -82,9 +82,9 @@ func (r *Raw) Txattrwalk(ctx context.Context, fid, newFid proto.Fid, name string
 }
 
 // Txattrcreate prepares fid for an xattr-write sequence: the server mutates
-// fid to the xattr-write state, and the caller MUST follow with [Raw.Write]
+// fid to the xattr-write state, and the caller MUST follow with [Raw.Twrite]
 // calls that append the attribute value (total bytes = attrSize), then a
-// final [Raw.Clunk] to commit.
+// final [Raw.Tclunk] to commit.
 //
 // The caller's fid is invalidated by the final Clunk - DO NOT reuse the
 // same fid value afterwards (pair the Clunk with [Raw.ReleaseFid]).
@@ -377,7 +377,7 @@ func (r *Raw) Tmkdir(ctx context.Context, dfid proto.Fid, name string, mode prot
 
 // Tremove removes the file associated with fid and invalidates the fid.
 // The 9P spec states Tremove clunks fid regardless of whether the removal
-// succeeded server-side; callers MUST NOT issue a subsequent [Raw.Clunk]
+// succeeded server-side; callers MUST NOT issue a subsequent [Raw.Tclunk]
 // on this fid, and should release the fid to the allocator via
 // [Raw.ReleaseFid] once this call returns (error or not).
 //

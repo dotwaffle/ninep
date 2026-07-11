@@ -278,14 +278,14 @@ func attachAndOpen(tb testing.TB, cli *client.Conn) proto.Fid {
 	ctx, cancel := context.WithTimeout(tb.Context(), 3*time.Second)
 	defer cancel()
 
-	if _, err := cli.Raw().Attach(ctx, proto.Fid(0), "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, proto.Fid(0), "me", ""); err != nil {
 		tb.Fatalf("Attach: %v", err)
 	}
 	fid := proto.Fid(1)
-	if _, err := cli.Walk(ctx, proto.Fid(0), fid, []string{"slow.txt"}); err != nil {
+	if _, err := cli.Raw().Twalk(ctx, proto.Fid(0), fid, []string{"slow.txt"}); err != nil {
 		tb.Fatalf("Walk: %v", err)
 	}
-	if _, _, err := cli.Lopen(ctx, fid, 0); err != nil {
+	if _, _, err := cli.Raw().Tlopen(ctx, fid, 0); err != nil {
 		tb.Fatalf("Lopen: %v", err)
 	}
 	return fid
@@ -312,7 +312,7 @@ func TestFlushAndWait_Ordering_RFirst(t *testing.T) {
 	}
 	resCh := make(chan result, 1)
 	go func() {
-		data, err := cli.Read(readCtx, fid, 0, 4096)
+		data, err := cli.Raw().Tread(readCtx, fid, 0, 4096)
 		resCh <- result{data: data, err: err}
 	}()
 
@@ -395,7 +395,7 @@ func TestFlushAndWait_Ordering_RflushFirst(t *testing.T) {
 	}
 	resCh := make(chan result, 1)
 	go func() {
-		data, err := cli.Read(readCtx, fid, 0, 4096)
+		data, err := cli.Raw().Tread(readCtx, fid, 0, 4096)
 		resCh <- result{data: data, err: err}
 	}()
 
@@ -455,7 +455,7 @@ func TestFlushAndWait_CloseDuringFlush(t *testing.T) {
 	}
 	resCh := make(chan result, 1)
 	go func() {
-		_, err := cli.Read(readCtx, fid, 0, 4096)
+		_, err := cli.Raw().Tread(readCtx, fid, 0, 4096)
 		resCh <- result{err: err}
 	}()
 
@@ -505,7 +505,7 @@ func TestFlushAndWait_TagReuse(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = cli.Read(readCtx, fid, 0, 4096)
+		_, _ = cli.Raw().Tread(readCtx, fid, 0, 4096)
 	}()
 
 	time.Sleep(20 * time.Millisecond)
@@ -524,10 +524,10 @@ func TestFlushAndWait_TagReuse(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	newFid := proto.Fid(2)
-	if _, err := cli.Walk(ctx, proto.Fid(0), newFid, []string{"next.txt"}); err != nil {
+	if _, err := cli.Raw().Twalk(ctx, proto.Fid(0), newFid, []string{"next.txt"}); err != nil {
 		t.Fatalf("post-flush Walk: %v", err)
 	}
-	if err := cli.Clunk(ctx, newFid); err != nil {
+	if err := cli.Raw().Tclunk(ctx, newFid); err != nil {
 		t.Fatalf("post-flush Clunk: %v", err)
 	}
 	if got := client.FreeTagCount(cli); got != 64 {
@@ -553,7 +553,7 @@ func TestFlushAndWait_DoubleFlush_SingleFrame(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = cli.Read(readCtx, fid, 0, 4096)
+		_, _ = cli.Raw().Tread(readCtx, fid, 0, 4096)
 	}()
 
 	time.Sleep(20 * time.Millisecond)

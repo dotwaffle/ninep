@@ -25,7 +25,7 @@ func TestClient_Close_UnblocksCallers(t *testing.T) {
 	defer cancel()
 
 	// Attach root so the connection is healthy.
-	if _, err := cli.Raw().Attach(ctx, proto.Fid(0), "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, proto.Fid(0), "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -39,12 +39,12 @@ func TestClient_Close_UnblocksCallers(t *testing.T) {
 		// Close fires.
 		for i := range 1000 {
 			fid := proto.Fid(100 + i)
-			_, err := cli.Walk(ctx, proto.Fid(0), fid, []string{"hello.txt"})
+			_, err := cli.Raw().Twalk(ctx, proto.Fid(0), fid, []string{"hello.txt"})
 			if err != nil {
 				errCh <- err
 				return
 			}
-			if err := cli.Clunk(ctx, fid); err != nil {
+			if err := cli.Raw().Tclunk(ctx, fid); err != nil {
 				errCh <- err
 				return
 			}
@@ -127,7 +127,7 @@ func TestClient_Close_GoroutineLeak(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	if _, err := cli.Raw().Attach(ctx, proto.Fid(0), "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, proto.Fid(0), "me", ""); err != nil {
 		cleanup()
 		t.Fatalf("Attach: %v", err)
 	}
@@ -135,11 +135,11 @@ func TestClient_Close_GoroutineLeak(t *testing.T) {
 	// A few ops to exercise the caller/respCh path.
 	for i := range 5 {
 		fid := proto.Fid(100 + i)
-		if _, err := cli.Walk(ctx, proto.Fid(0), fid, []string{"hello.txt"}); err != nil {
+		if _, err := cli.Raw().Twalk(ctx, proto.Fid(0), fid, []string{"hello.txt"}); err != nil {
 			cleanup()
 			t.Fatalf("Walk: %v", err)
 		}
-		if err := cli.Clunk(ctx, fid); err != nil {
+		if err := cli.Raw().Tclunk(ctx, fid); err != nil {
 			cleanup()
 			t.Fatalf("Clunk: %v", err)
 		}
@@ -178,7 +178,7 @@ func TestClient_Shutdown_CtxDeadline(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	if _, err := cli.Raw().Attach(ctx, proto.Fid(0), "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, proto.Fid(0), "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -237,22 +237,22 @@ func TestClient_Ops_AfterClose(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 1*time.Second)
 	defer cancel()
 
-	_, err := cli.Raw().Attach(ctx, proto.Fid(0), "me", "")
+	_, err := cli.Raw().Tattach(ctx, proto.Fid(0), "me", "")
 	if !errors.Is(err, client.ErrClosed) {
 		t.Errorf("Attach after Close: got %v, want ErrClosed", err)
 	}
 
-	_, err = cli.Walk(ctx, proto.Fid(0), proto.Fid(1), []string{"hello.txt"})
+	_, err = cli.Raw().Twalk(ctx, proto.Fid(0), proto.Fid(1), []string{"hello.txt"})
 	if !errors.Is(err, client.ErrClosed) {
 		t.Errorf("Walk after Close: got %v, want ErrClosed", err)
 	}
 
-	_, _, err = cli.Lopen(ctx, proto.Fid(1), 0)
+	_, _, err = cli.Raw().Tlopen(ctx, proto.Fid(1), 0)
 	if !errors.Is(err, client.ErrClosed) {
 		t.Errorf("Lopen after Close: got %v, want ErrClosed", err)
 	}
 
-	if err := cli.Clunk(ctx, proto.Fid(1)); !errors.Is(err, client.ErrClosed) {
+	if err := cli.Raw().Tclunk(ctx, proto.Fid(1)); !errors.Is(err, client.ErrClosed) {
 		t.Errorf("Clunk after Close: got %v, want ErrClosed", err)
 	}
 }

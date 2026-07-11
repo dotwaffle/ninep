@@ -79,13 +79,13 @@ func TestClient_Msize_TwriteOversized(t *testing.T) {
 	defer cancel()
 
 	rootFid := proto.Fid(0)
-	if _, err := cli.Raw().Attach(ctx, rootFid, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, rootFid, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	if _, err := cli.Walk(ctx, rootFid, proto.Fid(1), []string{"rw.bin"}); err != nil {
+	if _, err := cli.Raw().Twalk(ctx, rootFid, proto.Fid(1), []string{"rw.bin"}); err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
-	if _, _, err := cli.Lopen(ctx, proto.Fid(1), 2 /* O_RDWR */); err != nil {
+	if _, _, err := cli.Raw().Tlopen(ctx, proto.Fid(1), 2 /* O_RDWR */); err != nil {
 		t.Fatalf("Lopen: %v", err)
 	}
 
@@ -94,7 +94,7 @@ func TestClient_Msize_TwriteOversized(t *testing.T) {
 	// 2071, which exceeds the 1024 msize. The client must reject this
 	// BEFORE touching the wire.
 	oversize := make([]byte, 2048)
-	_, err := cli.Write(ctx, proto.Fid(1), 0, oversize)
+	_, err := cli.Raw().Twrite(ctx, proto.Fid(1), 0, oversize)
 	if err == nil {
 		t.Fatal("expected msize error for oversized Twrite, got nil")
 	}
@@ -107,7 +107,7 @@ func TestClient_Msize_TwriteOversized(t *testing.T) {
 
 	// Conn must still be healthy -- issue a small Write and expect success.
 	small := []byte("hi")
-	if _, err := cli.Write(ctx, proto.Fid(1), 0, small); err != nil {
+	if _, err := cli.Raw().Twrite(ctx, proto.Fid(1), 0, small); err != nil {
 		t.Errorf("small Write after oversize rejection: %v (Conn should remain healthy)", err)
 	}
 }
@@ -125,13 +125,13 @@ func TestClient_Msize_ConnectionStillHealthyAfterLocalReject(t *testing.T) {
 	defer cancel()
 
 	rootFid := proto.Fid(0)
-	if _, err := cli.Raw().Attach(ctx, rootFid, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, rootFid, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	if _, err := cli.Walk(ctx, rootFid, proto.Fid(1), []string{"hello.txt"}); err != nil {
+	if _, err := cli.Raw().Twalk(ctx, rootFid, proto.Fid(1), []string{"hello.txt"}); err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
-	if _, _, err := cli.Lopen(ctx, proto.Fid(1), 0); err != nil {
+	if _, _, err := cli.Raw().Tlopen(ctx, proto.Fid(1), 0); err != nil {
 		t.Fatalf("Lopen: %v", err)
 	}
 
@@ -139,13 +139,13 @@ func TestClient_Msize_ConnectionStillHealthyAfterLocalReject(t *testing.T) {
 	// Use Walk on fid=2 to get a writable handle; rw.bin is empty so we
 	// can Write to it (but that's not needed -- we reuse fid=1 here,
 	// which is read-only, and just want a local reject).
-	_, errOversize := cli.Write(ctx, proto.Fid(1), 0, make([]byte, 2048))
+	_, errOversize := cli.Raw().Twrite(ctx, proto.Fid(1), 0, make([]byte, 2048))
 	if errOversize == nil {
 		t.Fatal("expected local reject, got nil")
 	}
 
 	// Now Read -- Conn must still be healthy.
-	data, err := cli.Read(ctx, proto.Fid(1), 0, 100)
+	data, err := cli.Raw().Tread(ctx, proto.Fid(1), 0, 100)
 	if err != nil {
 		t.Fatalf("Read after local reject: %v (Conn should remain healthy)", err)
 	}
@@ -237,7 +237,7 @@ func TestClient_Msize_RreadOversized(t *testing.T) {
 	// surface as ErrClosed.
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	_, firstErr := cli.Raw().Attach(ctx, proto.Fid(0), "me", "")
+	_, firstErr := cli.Raw().Tattach(ctx, proto.Fid(0), "me", "")
 
 	// The first op's outcome depends on racing: the server may shut
 	// down before our op's respCh is read (ErrClosed directly) OR the
@@ -251,7 +251,7 @@ func TestClient_Msize_RreadOversized(t *testing.T) {
 	var secondErr error
 	for range 20 {
 		time.Sleep(10 * time.Millisecond)
-		_, secondErr = cli.Raw().Attach(ctx, proto.Fid(1), "me", "")
+		_, secondErr = cli.Raw().Tattach(ctx, proto.Fid(1), "me", "")
 		if secondErr != nil && errors.Is(secondErr, client.ErrClosed) {
 			break
 		}
@@ -282,13 +282,13 @@ func TestClient_Msize_RreadExactMsize(t *testing.T) {
 	defer cancel()
 
 	rootFid := proto.Fid(0)
-	if _, err := cli.Raw().Attach(ctx, rootFid, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, rootFid, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	if _, err := cli.Walk(ctx, rootFid, proto.Fid(1), []string{"hello.txt"}); err != nil {
+	if _, err := cli.Raw().Twalk(ctx, rootFid, proto.Fid(1), []string{"hello.txt"}); err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
-	if _, _, err := cli.Lopen(ctx, proto.Fid(1), 0); err != nil {
+	if _, _, err := cli.Raw().Tlopen(ctx, proto.Fid(1), 0); err != nil {
 		t.Fatalf("Lopen: %v", err)
 	}
 
@@ -296,7 +296,7 @@ func TestClient_Msize_RreadExactMsize(t *testing.T) {
 	// The server will clamp to its own iounit anyway; what we assert
 	// is that this read DOES NOT trigger the msize guard and DOES
 	// return bytes successfully.
-	data, err := cli.Read(ctx, proto.Fid(1), 0, 100)
+	data, err := cli.Raw().Tread(ctx, proto.Fid(1), 0, 100)
 	if err != nil {
 		t.Fatalf("Read at msize boundary: %v", err)
 	}

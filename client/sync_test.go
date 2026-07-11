@@ -174,7 +174,7 @@ func TestFileSync_DotU_UsesTstat(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
-	if _, err := cli.Raw().Attach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	f := client.NewFileForTest(cli)

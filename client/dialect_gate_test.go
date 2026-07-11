@@ -27,7 +27,7 @@ func newGateConn(t *testing.T, d protocol) *Conn {
 		_ = cliNC.Close()
 		_ = srvNC.Close()
 	})
-	return &Conn{
+	c := &Conn{
 		nc:       cliNC,
 		dialect:  d,
 		msize:    65536,
@@ -36,6 +36,8 @@ func newGateConn(t *testing.T, d protocol) *Conn {
 		closeCh:  make(chan struct{}),
 		logger:   slog.New(slog.NewTextHandler(discardWriter{}, nil)),
 	}
+	c.raw = Raw{c: c}
+	return c
 }
 
 // TestClient_Lopen_NotSupportedOnU: Lopen on a .u-negotiated Conn returns
@@ -47,7 +49,7 @@ func TestClient_Lopen_NotSupportedOnU(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	_, _, err := c.Lopen(ctx, 0, 0)
+	_, _, err := c.tlopen(ctx, 0, 0)
 	if !errors.Is(err, ErrNotSupported) {
 		t.Fatalf("Lopen err = %v, want ErrNotSupported", err)
 	}
@@ -62,7 +64,7 @@ func TestClient_Lcreate_NotSupportedOnU(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	_, _, err := c.Lcreate(ctx, 0, "new.txt", 0, 0o644, 0)
+	_, _, err := c.tlcreate(ctx, 0, "new.txt", 0, 0o644, 0)
 	if !errors.Is(err, ErrNotSupported) {
 		t.Fatalf("Lcreate err = %v, want ErrNotSupported", err)
 	}
@@ -77,7 +79,7 @@ func TestClient_Open_NotSupportedOnL(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	_, _, err := c.Open(ctx, 0, 0)
+	_, _, err := c.topen(ctx, 0, 0)
 	if !errors.Is(err, ErrNotSupported) {
 		t.Fatalf("Open err = %v, want ErrNotSupported", err)
 	}
@@ -92,7 +94,7 @@ func TestClient_Create_NotSupportedOnL(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	_, _, err := c.CreateFid(ctx, 0, "new.txt", 0o644, 0, "")
+	_, _, err := c.tcreate(ctx, 0, "new.txt", 0o644, 0, "")
 	if !errors.Is(err, ErrNotSupported) {
 		t.Fatalf("Create err = %v, want ErrNotSupported", err)
 	}

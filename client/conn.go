@@ -126,6 +126,10 @@ type Conn struct {
 	inst         *otelInstruments
 	opNameAttrs  map[proto.MessageType]metric.MeasurementOption
 	meterEnabled bool
+
+	// raw is the wire surface returned by [Conn.Raw]; embedding it here
+	// keeps Raw() allocation-free. Its back-pointer is set once in Dial.
+	raw Raw
 }
 
 // isClosed returns true once signalShutdown has fired. Non-blocking

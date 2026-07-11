@@ -201,7 +201,7 @@ func attachRoot(t *testing.T, cli *client.Conn, rootFid proto.Fid) {
 	t.Helper()
 	ctx, cancel := rawAdvCtx(t)
 	defer cancel()
-	if _, err := cli.Raw().Attach(ctx, rootFid, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, rootFid, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 }
@@ -212,7 +212,7 @@ func walkFresh(t *testing.T, cli *client.Conn, rootFid, newFid proto.Fid) {
 	t.Helper()
 	ctx, cancel := rawAdvCtx(t)
 	defer cancel()
-	if _, err := cli.Raw().Walk(ctx, rootFid, newFid, nil); err != nil {
+	if _, err := cli.Raw().Twalk(ctx, rootFid, newFid, nil); err != nil {
 		t.Fatalf("Walk clone: %v", err)
 	}
 }
@@ -222,7 +222,7 @@ func walkTo(t *testing.T, cli *client.Conn, rootFid, newFid proto.Fid, names []s
 	t.Helper()
 	ctx, cancel := rawAdvCtx(t)
 	defer cancel()
-	if _, err := cli.Raw().Walk(ctx, rootFid, newFid, names); err != nil {
+	if _, err := cli.Raw().Twalk(ctx, rootFid, newFid, names); err != nil {
 		t.Fatalf("Walk %v: %v", names, err)
 	}
 }
@@ -366,7 +366,7 @@ func TestRaw_Txattrwalk_Txattrcreate_RoundTrip(t *testing.T) {
 		t.Errorf("Txattrwalk size = %d, want %d", size, len("old-value"))
 	}
 	// Clean up the xattr-read fid.
-	if err := cli.Raw().Clunk(ctx, 3); err != nil {
+	if err := cli.Raw().Tclunk(ctx, 3); err != nil {
 		t.Fatalf("Clunk xattr-read fid: %v", err)
 	}
 
@@ -377,10 +377,10 @@ func TestRaw_Txattrwalk_Txattrcreate_RoundTrip(t *testing.T) {
 	if err := cli.Raw().Txattrcreate(ctx, 4, "user.new", uint64(len(value)), 0); err != nil {
 		t.Fatalf("Txattrcreate: %v", err)
 	}
-	if n, err := cli.Raw().Write(ctx, 4, 0, value); err != nil || n != uint32(len(value)) {
+	if n, err := cli.Raw().Twrite(ctx, 4, 0, value); err != nil || n != uint32(len(value)) {
 		t.Fatalf("Write xattr: n=%d err=%v", n, err)
 	}
-	if err := cli.Raw().Clunk(ctx, 4); err != nil {
+	if err := cli.Raw().Tclunk(ctx, 4); err != nil {
 		t.Fatalf("Clunk xattr-write fid: %v", err)
 	}
 	// Verify the server saw the set.
@@ -410,7 +410,7 @@ func TestRaw_Tlock_Tgetlock_RoundTrip(t *testing.T) {
 	// state machine requires fidOpen).
 	ctx, cancel := rawAdvCtx(t)
 	defer cancel()
-	if _, _, err := cli.Lopen(ctx, 2, 0 /*O_RDONLY*/); err != nil {
+	if _, _, err := cli.Raw().Tlopen(ctx, 2, 0 /*O_RDONLY*/); err != nil {
 		t.Fatalf("Lopen: %v", err)
 	}
 
@@ -586,7 +586,7 @@ func TestRaw_Tfsync_RoundTrip(t *testing.T) {
 
 	ctx, cancel := rawAdvCtx(t)
 	defer cancel()
-	if _, _, err := cli.Raw().Lopen(ctx, 2, 0); err != nil {
+	if _, _, err := cli.Raw().Tlopen(ctx, 2, 0); err != nil {
 		t.Fatalf("Lopen: %v", err)
 	}
 	if err := cli.Raw().Tfsync(ctx, 2, false); err != nil {
@@ -630,7 +630,7 @@ func TestRaw_Tremove_RoundTrip(t *testing.T) {
 		if _, ok := root.Children()["gone"]; ok {
 			t.Error("file \"gone\" still present after Tremove")
 		}
-		if err := cli.Raw().Clunk(ctx, 2); err == nil {
+		if err := cli.Raw().Tclunk(ctx, 2); err == nil {
 			t.Fatal("post-Tremove Clunk(fid=2): want error, got nil")
 		}
 		return

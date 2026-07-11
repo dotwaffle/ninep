@@ -56,7 +56,7 @@ func TestFlushAndWait_GraceTearsDownWedgedPeer(t *testing.T) {
 	readCtx, readCancel := context.WithCancel(t.Context())
 	resCh := make(chan error, 1)
 	go func() {
-		_, rerr := c.Read(readCtx, proto.Fid(1), 0, 64)
+		_, rerr := c.tread(readCtx, proto.Fid(1), 0, 64)
 		resCh <- rerr
 	}()
 

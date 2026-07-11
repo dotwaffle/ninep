@@ -218,19 +218,9 @@ func expectRType(msg proto.Message, wantTypes ...proto.MessageType) error {
 	return fmt.Errorf("client: unexpected response type %v", got)
 }
 
-// AttachFid associates fid with the root of the file tree named by
-// aname and establishes the session for user uname. This is the
-// low-level wire op; [Conn.Attach] wraps it to return a *File with an
-// allocator-owned fid. Only afid=NoFid (no authentication) is
-// supported; Tauth is not implemented. aname selects the mount point,
-// server-defined; the empty string is the conventional "default"
-// root.
-//
-// Returns the root QID on success, or a *Error translated from Rlerror/Rerror
-// on server-side failure.
-//
-// Reachable via [Raw.Attach] for callers that manage fids themselves.
-func (c *Conn) AttachFid(ctx context.Context, fid proto.Fid, uname, aname string) (proto.QID, error) {
+// tattach implements [Raw.Tattach]; [Conn.Attach] wraps it to return a
+// *File with an allocator-owned fid.
+func (c *Conn) tattach(ctx context.Context, fid proto.Fid, uname, aname string) (proto.QID, error) {
 	req := &proto.Tattach{
 		Fid:   fid,
 		Afid:  proto.NoFid,
@@ -249,14 +239,8 @@ func (c *Conn) AttachFid(ctx context.Context, fid proto.Fid, uname, aname string
 	return qid, nil
 }
 
-// Walk descends from fid along names, creating newFid at the final element.
-// An empty names slice clones fid into newFid without navigating. Returns
-// one QID per successfully walked element.
-//
-// The returned []proto.QID is caller-owned -- it is copied out of the pooled
-// Rwalk struct before the struct is returned to the cache, so callers may
-// retain the slice indefinitely.
-func (c *Conn) Walk(ctx context.Context, fid, newFid proto.Fid, names []string) ([]proto.QID, error) {
+// twalk implements [Raw.Twalk].
+func (c *Conn) twalk(ctx context.Context, fid, newFid proto.Fid, names []string) ([]proto.QID, error) {
 	req := &proto.Twalk{Fid: fid, NewFid: newFid, Names: names}
 	r, err := rtrip[*proto.Rwalk](ctx, c, req)
 	if err != nil {
@@ -270,10 +254,8 @@ func (c *Conn) Walk(ctx context.Context, fid, newFid proto.Fid, names []string) 
 	return qids, nil
 }
 
-// Clunk releases fid. After a successful clunk, fid is no longer valid;
-// the server deallocates any associated state. Errors from Rlerror/Rerror
-// surface as *Error; type-mismatch as a descriptive error.
-func (c *Conn) Clunk(ctx context.Context, fid proto.Fid) error {
+// tclunk implements [Raw.Tclunk].
+func (c *Conn) tclunk(ctx context.Context, fid proto.Fid) error {
 	r, err := rtrip[*proto.Rclunk](ctx, c, &proto.Tclunk{Fid: fid})
 	if err != nil {
 		return err
@@ -282,15 +264,8 @@ func (c *Conn) Clunk(ctx context.Context, fid proto.Fid) error {
 	return nil
 }
 
-// Flush asks the server to abort the request identified by oldTag.
-// Per the 9P spec the server responds with Rflush regardless of
-// whether oldTag matches an outstanding request. As such, a nil return
-// does NOT confirm the original request was cancelled - the request
-// may have completed before Flush was received.
-//
-// Flush is a raw wire-level primitive; high-level callers usually let
-// roundTrip drive auto-flush on ctx cancellation.
-func (c *Conn) Flush(ctx context.Context, oldTag proto.Tag) error {
+// tflush implements [Raw.Tflush].
+func (c *Conn) tflush(ctx context.Context, oldTag proto.Tag) error {
 	r, err := rtrip[*proto.Rflush](ctx, c, &proto.Tflush{OldTag: oldTag})
 	if err != nil {
 		return err
@@ -302,20 +277,8 @@ func (c *Conn) Flush(ctx context.Context, oldTag proto.Tag) error {
 	return nil
 }
 
-// Read reads up to count bytes from fid starting at offset. Returns the
-// bytes actually read, which may be fewer than count (EOF or short read).
-//
-// The returned slice is caller-owned - it is copied out of the pooled
-// Rread struct (whose Data field aliases a bucket buffer from bufpool)
-// before the struct is returned to the cache. Callers may retain the
-// slice indefinitely.
-//
-// Read does NOT clamp count to the negotiated msize or the file's iounit.
-// Callers that need throughput-optimal chunking should consult the iounit
-// returned by Lopen/Open and size their reads accordingly; passing an
-// over-large count results in whatever the server chooses to return (many
-// servers clamp silently).
-func (c *Conn) Read(ctx context.Context, fid proto.Fid, offset uint64, count uint32) ([]byte, error) {
+// tread implements [Raw.Tread].
+func (c *Conn) tread(ctx context.Context, fid proto.Fid, offset uint64, count uint32) ([]byte, error) {
 	req := &proto.Tread{Fid: fid, Offset: offset, Count: count}
 	r, err := rtrip[*proto.Rread](ctx, c, req)
 	if err != nil {
@@ -340,15 +303,15 @@ func (c *Conn) Read(ctx context.Context, fid proto.Fid, offset uint64, count uin
 // into dst[:count] by the read loop's zero-copy fast path. Returns the
 // number of bytes written into dst.
 //
-// This is the Payloader-symmetric peer of [Conn.Read]. Where
-// Conn.Read pays two allocs per round trip - Rread.Data inside
-// proto.Rread.DecodeFrom plus a result-copy in Conn.Read itself - this
+// This is the Payloader-symmetric peer of [Raw.Tread]. Where
+// tread pays two allocs per round trip - Rread.Data inside
+// proto.Rread.DecodeFrom plus a result-copy in tread itself - this
 // helper pays neither: the read loop copies the response payload
 // directly from its pooled body buffer into the caller's dst, and
 // signals success via the rreadSentinelOK singleton (no Rread cache
 // slot consumed).
 //
-// Conn.Read is intentionally NOT removed: Raw.Read consumers and any
+// tread is intentionally NOT removed: Raw.Tread consumers and any
 // caller without a pre-allocated destination still use it. File.ReadAt
 // routes through readAtZeroCopy because the caller's dst is always
 // available there.
@@ -411,9 +374,8 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 	return 0, err
 }
 
-// Write writes data to fid starting at offset. Returns the number of bytes
-// the server reports as written (may be fewer than len(data)).
-func (c *Conn) Write(ctx context.Context, fid proto.Fid, offset uint64, data []byte) (uint32, error) {
+// twrite implements [Raw.Twrite].
+func (c *Conn) twrite(ctx context.Context, fid proto.Fid, offset uint64, data []byte) (uint32, error) {
 	req := &proto.Twrite{Fid: fid, Offset: offset, Data: data}
 	r, err := rtrip[*proto.Rwrite](ctx, c, req)
 	if err != nil {
@@ -430,15 +392,8 @@ func (c *Conn) Write(ctx context.Context, fid proto.Fid, offset uint64, data []b
 	return count, nil
 }
 
-// Lopen opens an existing file referenced by fid with the given POSIX
-// open flags (O_RDONLY, O_RDWR, etc.). Requires a
-// 9P2000.L-negotiated Conn; on a .u Conn returns ErrNotSupported
-// without touching the wire.
-//
-// Returns the file's QID and the server's suggested iounit (the maximum
-// bytes the server is willing to return in a single Rread or accept in a
-// single Twrite; a value of 0 means "unknown, use msize").
-func (c *Conn) Lopen(ctx context.Context, fid proto.Fid, flags uint32) (proto.QID, uint32, error) {
+// tlopen implements [Raw.Tlopen].
+func (c *Conn) tlopen(ctx context.Context, fid proto.Fid, flags uint32) (proto.QID, uint32, error) {
 	if err := c.requireDialect(protocolL, "Lopen"); err != nil {
 		return proto.QID{}, 0, err
 	}
@@ -451,16 +406,8 @@ func (c *Conn) Lopen(ctx context.Context, fid proto.Fid, flags uint32) (proto.QI
 	return qid, iou, nil
 }
 
-// Lcreate creates and opens a new file named name in the directory
-// referenced by fid. After a successful Lcreate, fid is mutated server-side
-// to refer to the newly-created file (not the parent directory); this
-// matches Plan 9 and the Linux v9fs kernel client. Requires a .L-negotiated
-// Conn.
-//
-// flags is the POSIX open flag set (O_RDWR, O_CREAT already implied, etc.).
-// mode is the POSIX permission bits + file-type. gid is the group to assign
-// to the new file (zero for "use the server default").
-func (c *Conn) Lcreate(ctx context.Context, fid proto.Fid, name string, flags uint32, mode proto.FileMode, gid uint32) (proto.QID, uint32, error) {
+// tlcreate implements [Raw.Tlcreate].
+func (c *Conn) tlcreate(ctx context.Context, fid proto.Fid, name string, flags uint32, mode proto.FileMode, gid uint32) (proto.QID, uint32, error) {
 	if err := c.requireDialect(protocolL, "Lcreate"); err != nil {
 		return proto.QID{}, 0, err
 	}
@@ -480,12 +427,8 @@ func (c *Conn) Lcreate(ctx context.Context, fid proto.Fid, name string, flags ui
 	return qid, iou, nil
 }
 
-// Open is the 9P2000.u file-open operation. Requires a .u-negotiated
-// Conn; on a .L Conn returns ErrNotSupported.
-//
-// mode is a 9P2000.u open mode (OREAD=0, OWRITE=1, ORDWR=2, OEXEC=3 with
-// optional flag bits in the upper bits). Returns QID + iounit.
-func (c *Conn) Open(ctx context.Context, fid proto.Fid, mode uint8) (proto.QID, uint32, error) {
+// topen implements [Raw.Topen].
+func (c *Conn) topen(ctx context.Context, fid proto.Fid, mode uint8) (proto.QID, uint32, error) {
 	if err := c.requireDialect(protocolU, "Open"); err != nil {
 		return proto.QID{}, 0, err
 	}
@@ -500,16 +443,8 @@ func (c *Conn) Open(ctx context.Context, fid proto.Fid, mode uint8) (proto.QID, 
 	return qid, iou, nil
 }
 
-// CreateFid is the 9P2000.u create-and-open wire operation. Requires
-// a .u-negotiated Conn. [Conn.Create] wraps this and the .L-only
-// [Conn.Lcreate] behind a dialect-neutral session method; use
-// CreateFid (or [Raw.Create]) only when explicit fid control is
-// needed.
-//
-// perm is the file-mode + type bits; mode is the 9P2000.u open mode;
-// extension is the .u Extension field (symlink target, device spec,
-// etc. - empty for regular files).
-func (c *Conn) CreateFid(ctx context.Context, fid proto.Fid, name string, perm proto.FileMode, mode uint8, extension string) (proto.QID, uint32, error) {
+// tcreate implements [Raw.Tcreate].
+func (c *Conn) tcreate(ctx context.Context, fid proto.Fid, name string, perm proto.FileMode, mode uint8, extension string) (proto.QID, uint32, error) {
 	if err := c.requireDialect(protocolU, "Create"); err != nil {
 		return proto.QID{}, 0, err
 	}

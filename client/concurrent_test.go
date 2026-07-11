@@ -31,7 +31,7 @@ func TestClient_Concurrent(t *testing.T) {
 	defer cancel()
 
 	rootFid := proto.Fid(0)
-	if _, err := cli.Raw().Attach(ctx, rootFid, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, rootFid, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -45,24 +45,24 @@ func TestClient_Concurrent(t *testing.T) {
 			baseFid := proto.Fid(100 + gid*iters)
 			for i := range iters {
 				fid := baseFid + proto.Fid(i)
-				_, err := cli.Walk(ctx, rootFid, fid, []string{"hello.txt"})
+				_, err := cli.Raw().Twalk(ctx, rootFid, fid, []string{"hello.txt"})
 				if err != nil {
 					t.Errorf("g=%d i=%d Walk: %v", gid, i, err)
 					errCount.Add(1)
 					return
 				}
-				_, _, err = cli.Lopen(ctx, fid, 0) // O_RDONLY
+				_, _, err = cli.Raw().Tlopen(ctx, fid, 0) // O_RDONLY
 				if err != nil {
 					t.Errorf("g=%d i=%d Lopen: %v", gid, i, err)
 					errCount.Add(1)
-					_ = cli.Clunk(ctx, fid)
+					_ = cli.Raw().Tclunk(ctx, fid)
 					return
 				}
-				data, err := cli.Read(ctx, fid, 0, 100)
+				data, err := cli.Raw().Tread(ctx, fid, 0, 100)
 				if err != nil {
 					t.Errorf("g=%d i=%d Read: %v", gid, i, err)
 					errCount.Add(1)
-					_ = cli.Clunk(ctx, fid)
+					_ = cli.Raw().Tclunk(ctx, fid)
 					return
 				}
 				if string(data) != "hello world\n" {
@@ -70,7 +70,7 @@ func TestClient_Concurrent(t *testing.T) {
 						gid, i, data, "hello world\n")
 					errCount.Add(1)
 				}
-				if err := cli.Clunk(ctx, fid); err != nil {
+				if err := cli.Raw().Tclunk(ctx, fid); err != nil {
 					t.Errorf("g=%d i=%d Clunk: %v", gid, i, err)
 					errCount.Add(1)
 				}
@@ -106,18 +106,18 @@ func TestClient_TagReuse_Stress(t *testing.T) {
 	defer cancel()
 
 	rootFid := proto.Fid(0)
-	if _, err := cli.Raw().Attach(ctx, rootFid, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, rootFid, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
 	// Sequential: 1000 Walk+Clunk cycles. After each, inflight MUST be 0.
 	for i := range seqIters {
 		fid := proto.Fid(1 + i%500) // reuse fids to stress allocator churn
-		_, err := cli.Walk(ctx, rootFid, fid, []string{"hello.txt"})
+		_, err := cli.Raw().Twalk(ctx, rootFid, fid, []string{"hello.txt"})
 		if err != nil {
 			t.Fatalf("seq i=%d Walk: %v", i, err)
 		}
-		if err := cli.Clunk(ctx, fid); err != nil {
+		if err := cli.Raw().Tclunk(ctx, fid); err != nil {
 			t.Fatalf("seq i=%d Clunk: %v", i, err)
 		}
 	}
@@ -143,13 +143,13 @@ func TestClient_TagReuse_Stress(t *testing.T) {
 			baseFid := proto.Fid(10000 + gid*concIters)
 			for i := range concIters {
 				fid := baseFid + proto.Fid(i)
-				_, err := cli.Walk(ctx, rootFid, fid, []string{"hello.txt"})
+				_, err := cli.Raw().Twalk(ctx, rootFid, fid, []string{"hello.txt"})
 				if err != nil {
 					t.Errorf("g=%d i=%d Walk: %v", gid, i, err)
 					errCount.Add(1)
 					return
 				}
-				if err := cli.Clunk(ctx, fid); err != nil {
+				if err := cli.Raw().Tclunk(ctx, fid); err != nil {
 					t.Errorf("g=%d i=%d Clunk: %v", gid, i, err)
 					errCount.Add(1)
 				}
@@ -182,7 +182,7 @@ func TestClient_Concurrent_Close(t *testing.T) {
 	defer cancel()
 
 	rootFid := proto.Fid(0)
-	if _, err := cli.Raw().Attach(ctx, rootFid, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, rootFid, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -200,12 +200,12 @@ func TestClient_Concurrent_Close(t *testing.T) {
 			// (Close fired) or we've run enough iterations.
 			for i := range 10000 {
 				fid := proto.Fid(1000 + gid*10000 + i)
-				_, err := cli.Walk(ctx, rootFid, fid, []string{"hello.txt"})
+				_, err := cli.Raw().Twalk(ctx, rootFid, fid, []string{"hello.txt"})
 				if err != nil {
 					errs[gid] = err
 					return
 				}
-				if err := cli.Clunk(ctx, fid); err != nil {
+				if err := cli.Raw().Tclunk(ctx, fid); err != nil {
 					errs[gid] = err
 					return
 				}

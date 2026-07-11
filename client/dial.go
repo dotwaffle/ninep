@@ -219,6 +219,7 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (_ *Conn, retErr err
 		requestTimeout:   cfg.requestTimeout,
 		flushGrace:       defaultFlushGrace,
 	}
+	c.raw = Raw{c: c}
 
 	// Assign the tracer unconditionally when a provider is configured and let
 	// the SDK sampler decide per span; do NOT gate on a one-time probe (that

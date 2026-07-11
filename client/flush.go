@@ -70,7 +70,7 @@ func flushTagFor(oldTag proto.Tag) proto.Tag {
 // Anti-patterns (documented here because they have bitten similar
 // helpers elsewhere):
 //
-//   - Do NOT call [Conn.Flush] (the public wire-op wrapper). It goes
+//   - Do NOT call [Raw.Tflush] (the public wire-op wrapper). It goes
 //     through [Conn.roundTrip], which re-enters the ctx.Done arm on
 //     an already-Done ctx and would recurse.
 //   - Do NOT draw flushTag from [tagAllocator.acquire]. Under mass
@@ -110,7 +110,7 @@ func (c *Conn) flushAndWait(
 
 	// Send the Tflush frame. writeT handles the isClosed pre-flight
 	// + the signalShutdown race at write time. We use writeT directly
-	// instead of [Conn.Flush] to avoid recursing through roundTrip on
+	// instead of [Raw.Tflush] to avoid recursing through roundTrip on
 	// an already-Done ctx.
 	if _, err := c.writeT(flushTag, &proto.Tflush{OldTag: oldTag}); err != nil {
 		if c.isClosed() {

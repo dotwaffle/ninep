@@ -185,12 +185,13 @@
 //
 // # Raw Sub-Surface
 //
-// The [Raw] type returned by [Conn.Raw] exposes direct 9P wire
-// operations with explicit fid arguments -- [Raw.Read], [Raw.Write],
-// [Raw.Walk], [Raw.Clunk], [Raw.Flush], [Raw.Lopen], [Raw.Lcreate],
-// [Raw.Open], [Raw.Create], [Raw.Attach]. Plus [Raw.AcquireFid] and
-// [Raw.ReleaseFid] integrate with the Conn's fid allocator for
-// callers doing fully-explicit lifecycle management.
+// The [Raw] type returned by [Conn.Raw] is the canonical wire surface:
+// every T-message the client can issue appears as a method named after
+// it -- [Raw.Tattach], [Raw.Twalk], [Raw.Tclunk], [Raw.Tflush],
+// [Raw.Tread], [Raw.Twrite], [Raw.Tlopen], [Raw.Tlcreate], [Raw.Topen],
+// [Raw.Tcreate], plus the advanced .L/.u ops (Tsymlink through Tstat).
+// [Raw.AcquireFid] and [Raw.ReleaseFid] integrate with the Conn's fid
+// allocator for callers doing fully-explicit lifecycle management.
 //
 // Raw is the escape hatch for callers that need to pipeline
 // T-messages manually, track fids in a parallel data structure, or

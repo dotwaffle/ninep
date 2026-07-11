@@ -183,7 +183,7 @@ func TestFile_CloseClunksOnWire(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	// Server must reject Raw.Read against the now-unbound fid.
-	_, err = cli.Raw().Read(ctx, fid, 0, 16)
+	_, err = cli.Raw().Tread(ctx, fid, 0, 16)
 	if err == nil {
 		t.Fatal("Raw.Read on clunked fid: got nil, want server error")
 	}

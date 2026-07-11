@@ -10,6 +10,7 @@ import (
 func TestDialect_RequireL_OnUConn(t *testing.T) {
 	t.Parallel()
 	c := &Conn{dialect: protocolU}
+	c.raw = Raw{c: c}
 	err := c.requireDialect(protocolL, "Lopen")
 	if err == nil {
 		t.Fatal("requireDialect returned nil, want ErrNotSupported")
@@ -24,6 +25,7 @@ func TestDialect_RequireL_OnUConn(t *testing.T) {
 func TestDialect_RequireU_OnLConn(t *testing.T) {
 	t.Parallel()
 	c := &Conn{dialect: protocolL}
+	c.raw = Raw{c: c}
 	err := c.requireDialect(protocolU, "Open")
 	if err == nil {
 		t.Fatal("requireDialect returned nil, want ErrNotSupported")
@@ -37,11 +39,13 @@ func TestDialect_RequireU_OnLConn(t *testing.T) {
 func TestDialect_Match(t *testing.T) {
 	t.Parallel()
 	cL := &Conn{dialect: protocolL}
+	cL.raw = Raw{c: cL}
 	if err := cL.requireDialect(protocolL, "Lopen"); err != nil {
 		t.Errorf("requireDialect L/L = %v, want nil", err)
 	}
 
 	cU := &Conn{dialect: protocolU}
+	cU.raw = Raw{c: cU}
 	if err := cU.requireDialect(protocolU, "Open"); err != nil {
 		t.Errorf("requireDialect U/U = %v, want nil", err)
 	}
