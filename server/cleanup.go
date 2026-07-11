@@ -38,6 +38,7 @@ func (c *conn) cleanup() {
 		c.logger.Warn("cleanup: timed out waiting for inflight requests",
 			slog.Int("remaining", c.inflight.len()),
 		)
+		c.otelInst.recordAbnormalEvent(reasonDrainTimeout)
 	}
 
 	// Step 3: Close net.Conn so the recvMu-holder's read errors out and

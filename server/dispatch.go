@@ -428,6 +428,7 @@ func (c *conn) handleFlush(ctx context.Context, tf *proto.Tflush) proto.Message 
 		c.logger.Warn("flush: timed out waiting for flushed request; closing connection",
 			slog.Uint64("oldtag", uint64(tf.OldTag)),
 		)
+		c.otelInst.recordAbnormalEvent(reasonFlushWaitTimeout)
 		c.signalRecvShutdown()
 		_ = c.nc.Close()
 		return nil

@@ -10,6 +10,7 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9l"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -856,5 +857,53 @@ func TestOTelPartialNoopInstalls(t *testing.T) {
 				t.Errorf("c.otelInst = nil, want non-nil (partial config MUST install middleware)")
 			}
 		})
+	}
+}
+
+// TestOTelAbnormalEventsHandlerPanic asserts the abnormal_events counter
+// records a handler panic with the reason attribute. The panic path is the
+// only abnormal event triggerable without waiting out a multi-second
+// deadline; the other reasons share the same recordAbnormalEvent plumbing.
+func TestOTelAbnormalEventsHandlerPanic(t *testing.T) {
+	t.Parallel()
+
+	mp, metricReader := NewTestMeterProvider(t)
+
+	root := &panicNode{}
+	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
+
+	cp := newConnPair(t, root, WithMeter(mp))
+	defer cp.close(t)
+	cp.attach(t, 1, 0, "user", "")
+
+	// Twalk calls panicNode.Lookup; the server recovers and replies EIO.
+	sendMessage(t, cp.client, 10, &proto.Twalk{
+		Fid:    0,
+		NewFid: 1,
+		Names:  []string{"anything"},
+	})
+	_, msg := readResponse(t, cp.client)
+	isError(t, msg, proto.EIO)
+
+	rm := collectMetrics(t, metricReader)
+	m := findMetric(rm, "ninep.server.abnormal_events")
+	if m == nil {
+		t.Fatal("expected metric 'ninep.server.abnormal_events', not found")
+	}
+	sum, ok := m.Data.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("expected Sum[int64], got %T", m.Data)
+	}
+	if len(sum.DataPoints) != 1 {
+		t.Fatalf("data points = %d, want 1", len(sum.DataPoints))
+	}
+	dp := sum.DataPoints[0]
+	if dp.Value != 1 {
+		t.Errorf("abnormal_events = %d, want 1", dp.Value)
+	}
+	reason, ok := dp.Attributes.Value(attribute.Key("reason"))
+	if !ok || reason.AsString() != reasonHandlerPanic {
+		t.Errorf("reason attribute = %q (present=%v), want %q",
+			reason.AsString(), ok, reasonHandlerPanic)
 	}
 }

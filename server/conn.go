@@ -778,6 +778,7 @@ func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message
 				slog.Any("panic", r),
 				slog.String("message_type", msg.Type().String()),
 			)
+			c.otelInst.recordAbnormalEvent(reasonHandlerPanic)
 			c.sendResponse(tag, c.errorMsg(proto.EIO))
 		}
 		if bufPtr != nil {
@@ -855,6 +856,7 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 		c.logger.Warn("re-negotiation: inflight drain timed out; closing connection",
 			slog.Int("remaining", c.inflight.len()),
 		)
+		c.otelInst.recordAbnormalEvent(reasonForcedClose)
 		_ = c.nc.Close() // Fatal error policy
 		return
 	}

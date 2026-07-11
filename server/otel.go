@@ -274,11 +274,28 @@ func buildOpNameAttrs() map[proto.MessageType]metric.MeasurementOption {
 	return m
 }
 
+// Abnormal-event reason attribute values recorded on the
+// ninep.server.abnormal_events counter.
+const (
+	// reasonHandlerPanic: a handler panicked and the server replied EIO.
+	reasonHandlerPanic = "handler_panic"
+	// reasonFlushWaitTimeout: a Tflush waited out the flush deadline for
+	// the flushed handler's response; the connection was closed.
+	reasonFlushWaitTimeout = "flush_wait_timeout"
+	// reasonDrainTimeout: connection cleanup timed out waiting for
+	// inflight handlers to drain.
+	reasonDrainTimeout = "drain_timeout"
+	// reasonForcedClose: a mid-session Tversion could not drain inflight
+	// handlers and the connection was closed.
+	reasonForcedClose = "forced_close"
+)
+
 // connOTelInstruments holds connection-level and fid-level gauge instruments.
 // These are lifecycle metrics, not per-request.
 type connOTelInstruments struct {
-	connGauge metric.Int64UpDownCounter
-	fidGauge  metric.Int64UpDownCounter
+	connGauge      metric.Int64UpDownCounter
+	fidGauge       metric.Int64UpDownCounter
+	abnormalEvents metric.Int64Counter
 }
 
 // newConnOTelInstruments creates connection-level metric instruments from the
@@ -294,6 +311,9 @@ func newConnOTelInstruments(mp metric.MeterProvider) *connOTelInstruments {
 		)),
 		fidGauge: must(meter.Int64UpDownCounter("ninep.server.fid.count",
 			metric.WithDescription("Number of active fids"),
+		)),
+		abnormalEvents: must(meter.Int64Counter("ninep.server.abnormal_events",
+			metric.WithDescription("Abnormal server events (handler panics, drain timeouts, forced closes), by reason"),
 		)),
 	}
 }
@@ -312,6 +332,17 @@ func (o *connOTelInstruments) recordFidChange(delta int64) {
 		return
 	}
 	o.fidGauge.Add(context.Background(), delta)
+}
+
+// recordAbnormalEvent counts one abnormal server event with the given reason
+// attribute (one of the reason* constants). These paths are rare by
+// definition, so the per-call attribute allocation is acceptable.
+func (o *connOTelInstruments) recordAbnormalEvent(reason string) {
+	if o == nil {
+		return
+	}
+	o.abnormalEvents.Add(context.Background(), 1,
+		metric.WithAttributes(attribute.String("reason", reason)))
 }
 
 // serverOTelInstruments holds server-level (pre-connection) OTel instruments.
