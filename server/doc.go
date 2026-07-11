@@ -18,7 +18,7 @@
 //	    return copy(buf, "hello"), nil
 //	}
 //
-// Approximately 22 capability interfaces are defined (see node.go), covering
+// 24 capability interfaces are defined (see node.go), covering
 // file I/O, directory operations, symlinks, device nodes, xattrs, locking,
 // and filesystem statistics.
 //
@@ -59,6 +59,8 @@
 // Configure the server with:
 //   - [WithMaxMsize] -- maximum negotiated message size (default 1MiB)
 //   - [WithMaxInflight] -- concurrent request limit per connection (default 64)
+//   - [WithMaxConnections] -- concurrent connection cap (default unlimited)
+//   - [WithMaxFids] -- per-connection fid cap (default unlimited)
 //   - [WithLogger] -- structured logger with automatic trace ID correlation
 //   - [WithRequestLogging] -- per-request Debug logging via the trace-correlated logger
 //   - [WithIdleTimeout] -- per-connection idle timeout (set for untrusted peers)

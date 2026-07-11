@@ -6,7 +6,9 @@
 // [testing.TB.Cleanup]. [MemfsPair] is sugar for the common case where
 // the server root is a [memfs] tree -- it allocates a fresh
 // *server.QIDGenerator, builds an empty *memfs.MemDir, and hands the
-// root to a caller-supplied build callback before pairing.
+// root to a caller-supplied build callback before pairing. [UnixPair]
+// swaps the net.Pipe transport for a real unix-domain socket, for tests
+// that depend on transport behavior (writev, kernel buffering).
 //
 // The package mirrors [net/http/httptest] in shape and ergonomics.
 // External consumers -- projects that depend on ninep and want to build
@@ -16,9 +18,10 @@
 //
 // # Stability
 //
-// The exported surface (Pair, MemfsPair, Option, WithServerOpts,
-// WithClientOpts, WithMsize, WithCtx) is part of ninep's public API and
-// follows the same semver guarantees as the rest of the module. Test
+// The exported surface (Pair, MemfsPair, UnixPair, Option,
+// WithServerOpts, WithClientOpts, WithMsize, WithCtx) is part of
+// ninep's public API and follows the same semver guarantees as the
+// rest of the module. Test
 // harness helpers that leak internal ninep types are explicit design
 // decisions; callers relying on specific server/client methods via the
 // returned pair are protected by ninep's normal API stability rules.
