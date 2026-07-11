@@ -18,9 +18,8 @@ import (
 //
 // Call cleanup exactly once -- or never, when ownership of the fid moves
 // on (into a *File, whose Close takes over the clunk and release).
-// cleanup clunks with context.Background(): an undeadlined clunk cannot
-// expire mid-flight, so its only failure modes (server Rlerror,
-// connection shutdown) leave the fid safe to release either way.
+// Cleanup uses the Conn's bounded fid-retirement path. If the server does not
+// acknowledge Tclunk, the fid number is quarantined instead of reused.
 func (c *Conn) walkNew(ctx context.Context, base proto.Fid, names []string, what string) (proto.Fid, func(), error) {
 	fid, err := c.fids.acquire()
 	if err != nil {
@@ -36,8 +35,7 @@ func (c *Conn) walkNew(ctx context.Context, base proto.Fid, names []string, what
 		return 0, nil, fmt.Errorf("client: partial walk to %s (%d of %d steps)", what, len(qids), len(names))
 	}
 	cleanup := func() {
-		_ = c.tclunk(context.Background(), fid)
-		c.fids.release(fid)
+		_ = c.cleanupFid(fid)
 	}
 	return fid, cleanup, nil
 }

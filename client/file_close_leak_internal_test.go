@@ -19,17 +19,20 @@ import (
 // deadline.
 type wedgedReleaseFile struct {
 	server.Inode
+	release <-chan struct{}
 }
 
 func (f *wedgedReleaseFile) Open(_ context.Context, _ uint32) (server.FileHandle, uint32, error) {
-	return &wedgedHandle{}, 0, nil
+	return &wedgedHandle{release: f.release}, 0, nil
 }
 
-type wedgedHandle struct{}
+type wedgedHandle struct {
+	release <-chan struct{}
+}
 
-func (h *wedgedHandle) Release(ctx context.Context) error {
-	<-ctx.Done()
-	return ctx.Err()
+func (h *wedgedHandle) Release(context.Context) error {
+	<-h.release
+	return nil
 }
 
 // TestFileClose_TimedOutClunkLeaksFidNumber asserts File.Close does NOT
@@ -47,7 +50,8 @@ func TestFileClose_TimedOutClunkLeaksFidNumber(t *testing.T) {
 	gen := &server.QIDGenerator{}
 	root := &struct{ server.Inode }{}
 	root.Init(gen.Next(proto.QTDIR), root)
-	wedged := &wedgedReleaseFile{}
+	release := make(chan struct{})
+	wedged := &wedgedReleaseFile{release: release}
 	wedged.Init(gen.Next(proto.QTFILE), wedged)
 	root.AddChild("wedged", wedged.EmbeddedInode())
 
@@ -60,11 +64,13 @@ func TestFileClose_TimedOutClunkLeaksFidNumber(t *testing.T) {
 	srvDone := make(chan struct{})
 	go func() { defer close(srvDone); srv.ServeConn(srvCtx, srvNC) }()
 	t.Cleanup(func() { srvCancel(); _ = srvNC.Close(); <-srvDone })
+	t.Cleanup(func() { close(release) })
 
 	dialCtx, dialCancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer dialCancel()
 	cli, err := Dial(dialCtx, cliNC,
 		WithMsize(65536),
+		WithCleanupTimeout(50*time.Millisecond),
 		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 	)
 	if err != nil {
@@ -81,10 +87,17 @@ func TestFileClose_TimedOutClunkLeaksFidNumber(t *testing.T) {
 	}
 	fid := f.Fid()
 
-	// Close: the wedged Release delays Rclunk past the 5s clunk deadline.
+	// Keep the ordinary cancellation flush grace much longer than the
+	// cleanup timeout. Cleanup clunks must not inherit that extra wait.
+	cli.flushGrace = 2 * time.Second
+	started := time.Now()
 	err = f.Close()
+	elapsed := time.Since(started)
 	if err == nil {
 		t.Fatal("Close succeeded; expected a deadline error from the wedged Rclunk")
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("Close took %v; cleanup timeout was extended by flush grace", elapsed)
 	}
 	if errors.Is(err, ErrClosed) {
 		t.Fatalf("Close error = %v; conn closed underneath the test", err)

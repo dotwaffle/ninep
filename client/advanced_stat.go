@@ -89,6 +89,10 @@ func statToFileInfo(st p9u.Stat) FileInfo {
 // [File.RefreshSize] so [File.Seek] with [io.SeekEnd] has a
 // predictable refresh primitive.
 func (f *File) Stat(ctx context.Context) (FileInfo, error) {
+	if err := f.beginOp(); err != nil {
+		return FileInfo{}, err
+	}
+	defer f.endOp()
 	r := f.conn.Raw()
 	switch f.conn.dialect {
 	case protocolL:
@@ -121,6 +125,10 @@ func (f *File) Stat(ctx context.Context) (FileInfo, error) {
 // Requires a 9P2000.L-negotiated Conn; returns a wrapped
 // [ErrNotSupported] on a .u Conn. The gate fires before any wire op.
 func (f *File) Getattr(ctx context.Context, mask proto.AttrMask) (proto.Attr, error) {
+	if err := f.beginOp(); err != nil {
+		return proto.Attr{}, err
+	}
+	defer f.endOp()
 	if err := f.conn.requireDialect(protocolL, "Getattr"); err != nil {
 		return proto.Attr{}, err
 	}

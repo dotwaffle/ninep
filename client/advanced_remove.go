@@ -32,6 +32,10 @@ func (c *Conn) Remove(ctx context.Context, p string) error {
 	if root == nil {
 		return errors.New("client: Remove requires a prior Attach")
 	}
+	if err := root.beginOp(); err != nil {
+		return err
+	}
+	defer root.endOp()
 	full := splitPath(p)
 	if len(full) == 0 {
 		return errors.New("client: Remove requires a non-root path")

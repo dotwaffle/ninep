@@ -27,6 +27,10 @@ func (c *Conn) Link(ctx context.Context, existingPath, newPath string) error {
 	if root == nil {
 		return errors.New("client: Link requires a prior Attach")
 	}
+	if err := root.beginOp(); err != nil {
+		return err
+	}
+	defer root.endOp()
 	srcFull := splitPath(existingPath)
 	dstFull := splitPath(newPath)
 	if len(srcFull) == 0 || len(dstFull) == 0 {

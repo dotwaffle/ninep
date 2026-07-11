@@ -6,10 +6,7 @@ import (
 	"time"
 )
 
-// cleanupDeadline is the default drain window for Close(). Mirrors
-// server/cleanup.go:11 exactly - the asymmetry (client 1 MiB msize, server
-// 4 MiB) does not apply here; drain deadline is a liveness property, not a
-// throughput property.
+// cleanupDeadline is the default connection drain window for Close.
 const cleanupDeadline = 5 * time.Second
 
 // Close initiates an orderly shutdown with a default 5-second drain

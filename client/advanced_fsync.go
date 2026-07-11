@@ -17,5 +17,9 @@ import "context"
 // Requires a 9P2000.L-negotiated Conn. Returns [ErrNotSupported]
 // (wrapped with op context) on a .u Conn before touching the wire.
 func (f *File) Fsync(ctx context.Context, dataSync bool) error {
+	if err := f.beginOp(); err != nil {
+		return err
+	}
+	defer f.endOp()
 	return f.conn.Raw().Tfsync(ctx, f.fid, dataSync)
 }

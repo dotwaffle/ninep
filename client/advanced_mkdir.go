@@ -33,6 +33,10 @@ func (c *Conn) Mkdir(ctx context.Context, path string, mode proto.FileMode, gid 
 	if root == nil {
 		return nil, errors.New("client: Mkdir requires a prior Attach")
 	}
+	if err := root.beginOp(); err != nil {
+		return nil, err
+	}
+	defer root.endOp()
 	full := splitPath(path)
 	if len(full) == 0 {
 		return nil, errors.New("client: Mkdir requires a non-root path")

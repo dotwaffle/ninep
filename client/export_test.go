@@ -24,7 +24,9 @@ func StatToFileInfoForTest(st p9u.Stat) FileInfo { return statToFileInfo(st) }
 // Only exposed to the external client_test package via the _test.go
 // suffix. Not part of the public API surface.
 func RegisterStuckCaller(c *Conn) func() {
-	c.callerWG.Add(1)
+	if !c.beginCall() {
+		return func() {}
+	}
 	// Use a tag far above the allocator's range (NoTag-1) so there's no
 	// collision with real ops.
 	tag := proto.Tag(0xFFFE)
@@ -36,7 +38,7 @@ func RegisterStuckCaller(c *Conn) func() {
 		}
 		released = true
 		c.inflight.unregister(tag)
-		c.callerWG.Done()
+		c.endCall()
 	}
 }
 

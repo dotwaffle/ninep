@@ -48,8 +48,15 @@ import (
 // message's interpretation: toError translation, type assertion, and
 // the cache return.
 func (c *Conn) exchange(ctx context.Context, span trace.Span, msg proto.Message, dst []byte) (resp proto.Message, n int, err error) {
-	c.callerWG.Add(1)
-	defer c.callerWG.Done()
+	return c.exchangeWithFlush(ctx, span, msg, dst, true)
+}
+
+func (c *Conn) exchangeWithFlush(ctx context.Context, span trace.Span, msg proto.Message, dst []byte, flushOnCancel bool) (resp proto.Message, n int, err error) {
+	if !c.beginCall() {
+		c.recordError(span, ErrClosed)
+		return nil, 0, ErrClosed
+	}
+	defer c.endCall()
 
 	tag, err := c.tags.acquire(ctx, c.closeCh)
 	if err != nil {
@@ -114,6 +121,19 @@ func (c *Conn) exchange(ctx context.Context, span trace.Span, msg proto.Message,
 		}
 		return r, n, nil
 	case <-ctx.Done():
+		if !flushOnCancel {
+			c.inflight.unregister(tag)
+			select {
+			case late := <-respCh:
+				putCachedRMsg(late)
+			default:
+			}
+			// Do not release the tag. Without an acknowledged Tflush, a late
+			// response could otherwise be delivered to a new request that
+			// reused the same tag.
+			c.recordError(span, ctx.Err())
+			return nil, 0, ctx.Err()
+		}
 		// Delegate to flushAndWait, which sends Tflush(tag) and owns
 		// the unregister + release of tag (and the derived flushTag).
 		// The returned error wraps ctx.Err() so
@@ -144,6 +164,10 @@ func (c *Conn) exchange(ctx context.Context, span trace.Span, msg proto.Message,
 // then type-asserting to the expected concrete type; [rtrip] bundles
 // those steps.
 func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message, error) {
+	return c.roundTripWithFlush(ctx, msg, true)
+}
+
+func (c *Conn) roundTripWithFlush(ctx context.Context, msg proto.Message, flushOnCancel bool) (proto.Message, error) {
 	if c.isClosed() {
 		return nil, ErrClosed
 	}
@@ -163,7 +187,7 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 		start = time.Now()
 	}
 
-	resp, _, err := c.exchange(ctx, span, msg, nil)
+	resp, _, err := c.exchangeWithFlush(ctx, span, msg, nil, flushOnCancel)
 	if err != nil {
 		return nil, err
 	}
@@ -269,6 +293,27 @@ func (c *Conn) tclunk(ctx context.Context, fid proto.Fid) error {
 	}
 	putCachedRMsg(r)
 	return nil
+}
+
+func (c *Conn) cleanupFid(fid proto.Fid) error {
+	ctx, cancel := context.WithTimeout(context.Background(), c.cleanupTimeout)
+	defer cancel()
+	resp, err := c.roundTripWithFlush(ctx, &proto.Tclunk{Fid: fid}, false)
+	if err == nil {
+		if serverErr := toError(resp); serverErr != nil {
+			err = serverErr
+		} else if _, ok := resp.(*proto.Rclunk); !ok {
+			err = fmt.Errorf("client: expected Rclunk, got %v", resp.Type())
+			putCachedRMsg(resp)
+		} else {
+			putCachedRMsg(resp)
+		}
+	}
+	var serverErr *Error
+	if err == nil || errors.As(err, &serverErr) || errors.Is(err, ErrClosed) {
+		c.fids.release(fid)
+	}
+	return err
 }
 
 // tflush implements [Raw.Tflush].

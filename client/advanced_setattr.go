@@ -16,6 +16,10 @@ import (
 // the error message reads "Setattr requires 9P2000.L" rather than
 // "Tsetattr requires 9P2000.L".
 func (f *File) Setattr(ctx context.Context, attr proto.SetAttr) error {
+	if err := f.beginOp(); err != nil {
+		return err
+	}
+	defer f.endOp()
 	if err := f.conn.requireDialect(protocolL, "Setattr"); err != nil {
 		return err
 	}

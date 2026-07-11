@@ -38,6 +38,10 @@ func (c *Conn) Symlink(ctx context.Context, linkPath, target string) (*File, err
 	if root == nil {
 		return nil, errors.New("client: Symlink requires a prior Attach")
 	}
+	if err := root.beginOp(); err != nil {
+		return nil, err
+	}
+	defer root.endOp()
 	full := splitPath(linkPath)
 	if len(full) == 0 {
 		return nil, errors.New("client: Symlink requires a non-root path")
@@ -90,6 +94,10 @@ func (c *Conn) Symlink(ctx context.Context, linkPath, target string) (*File, err
 // renamed concurrently, the fid continues to point at the same inode and
 // Readlink returns the same target.
 func (f *File) Readlink(ctx context.Context) (string, error) {
+	if err := f.beginOp(); err != nil {
+		return "", err
+	}
+	defer f.endOp()
 	if err := f.conn.requireDialect(protocolL, "Readlink"); err != nil {
 		return "", err
 	}

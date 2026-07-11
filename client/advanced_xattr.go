@@ -55,21 +55,13 @@ func (f *File) xattrChunk() uint32 {
 // against proto.MaxDataSize (16 MiB) BEFORE allocation and surface an
 // error without draining a single Tread byte.
 //
-// On every exit path the freshly-allocated xattr fid is clunked
-// (best-effort) and released to the fid allocator. Errors from the
-// cleanup Clunk are suppressed -- the primary error is what the caller
-// needs to see, and the fid is returned to the allocator regardless.
-//
-// The cleanup Clunk always uses context.Background(), never the
-// caller's ctx, matching every other advanced_*.go cleanup Clunk
-// (mknod/symlink/link/remove/rename/session). A ctx that fires mid-
-// Clunk races the Tflush protocol's inherent ambiguity: on the
-// Rflush-first path (see flushAndWait), the client cannot tell whether
-// the server had already processed the Tclunk before the flush caught
-// it. Releasing the fid back to the allocator regardless would then
-// risk a future Twalk/Tattach reusing a number the server may still
-// consider bound. Background() makes that ambiguity unreachable here.
+// Every bound xattr fid is retired through the Conn's bounded cleanup path.
+// An unacknowledged fid is quarantined instead of returned to the allocator.
 func (f *File) twoPhaseXattrRead(ctx context.Context, name string) ([]byte, error) {
+	if err := f.beginOp(); err != nil {
+		return nil, err
+	}
+	defer f.endOp()
 	if err := f.conn.requireDialect(protocolL, "XattrGet"); err != nil {
 		return nil, err
 	}
@@ -86,19 +78,16 @@ func (f *File) twoPhaseXattrRead(ctx context.Context, name string) ([]byte, erro
 	}
 	// Reject oversized server declarations before allocation.
 	if size > uint64(proto.MaxDataSize) {
-		_ = r.Tclunk(context.Background(), newFid)
-		f.conn.fids.release(newFid)
+		_ = f.conn.cleanupFid(newFid)
 		return nil, fmt.Errorf("client: xattr size %d exceeds MaxDataSize %d", size, proto.MaxDataSize)
 	}
 	if size == 0 {
 		// Zero-size short-circuit: no Tread round-trips, just clunk and
 		// return a non-nil empty slice (matches Linux getxattr(2)'s
 		// "attribute exists with empty value" semantics).
-		if err := r.Tclunk(context.Background(), newFid); err != nil {
-			f.conn.fids.release(newFid)
+		if err := f.conn.cleanupFid(newFid); err != nil {
 			return nil, err
 		}
-		f.conn.fids.release(newFid)
 		return []byte{}, nil
 	}
 
@@ -109,8 +98,7 @@ func (f *File) twoPhaseXattrRead(ctx context.Context, name string) ([]byte, erro
 		// Conn msize is at or below the per-message framing floor
 		// (only reachable against a pathological mock server -- Dial
 		// enforces minMsize=256). No forward progress is possible.
-		_ = r.Tclunk(context.Background(), newFid)
-		f.conn.fids.release(newFid)
+		_ = f.conn.cleanupFid(newFid)
 		return nil, fmt.Errorf("client: xattr chunk is 0 (msize %d ≤ ioFrameOverhead %d)",
 			f.conn.Msize(), ioFrameOverhead)
 	}
@@ -122,15 +110,13 @@ func (f *File) twoPhaseXattrRead(ctx context.Context, name string) ([]byte, erro
 		}
 		data, err := r.Tread(ctx, newFid, off, want)
 		if err != nil {
-			_ = r.Tclunk(context.Background(), newFid)
-			f.conn.fids.release(newFid)
+			_ = f.conn.cleanupFid(newFid)
 			return nil, err
 		}
 		if len(data) == 0 {
 			// Server promised `size` bytes via Rxattrwalk but returned
 			// zero at offset off -- short read, surface as an error.
-			_ = r.Tclunk(context.Background(), newFid)
-			f.conn.fids.release(newFid)
+			_ = f.conn.cleanupFid(newFid)
 			return nil, fmt.Errorf("client: xattr short read at offset %d/%d", off, size)
 		}
 		// Guard against an over-read: the server must not return more
@@ -139,19 +125,16 @@ func (f *File) twoPhaseXattrRead(ctx context.Context, name string) ([]byte, erro
 		// the backing array is safe, but advancing off by len(data)
 		// would silently truncate the tail. Surface as an error.
 		if uint64(len(data)) > remaining {
-			_ = r.Tclunk(context.Background(), newFid)
-			f.conn.fids.release(newFid)
+			_ = f.conn.cleanupFid(newFid)
 			return nil, fmt.Errorf("client: xattr over-read: server returned %d bytes at offset %d, only %d remaining",
 				len(data), off, remaining)
 		}
 		copy(buf[off:], data)
 		off += uint64(len(data))
 	}
-	if err := r.Tclunk(context.Background(), newFid); err != nil {
-		f.conn.fids.release(newFid)
+	if err := f.conn.cleanupFid(newFid); err != nil {
 		return nil, err
 	}
-	f.conn.fids.release(newFid)
 	return buf, nil
 }
 
@@ -202,13 +185,9 @@ func (f *File) XattrGet(ctx context.Context, name string) ([]byte, error) {
 // Performance Note: XattrSet clones the current file internally to
 // preserve the fid's open/offset state. This consumes one transient fid.
 //
-// Every Clunk in this method (both the error-path cleanup and the
-// final commit) uses context.Background(), never the caller's ctx --
-// see the matching note on [File.twoPhaseXattrRead]. The commit Clunk
-// in particular is where the xattr write actually lands server-side;
-// letting the caller's ctx fire during it would leave the outcome
-// ambiguous while this method still hands clone.fid back to the
-// allocator for reuse.
+// Every Clunk in this method uses the Conn's cleanup timeout. The final Clunk
+// commits the xattr write; an unacknowledged commit is returned as an error and
+// its fid is quarantined.
 func (f *File) XattrSet(ctx context.Context, name string, data []byte, flags uint32) error {
 	if err := f.conn.requireDialect(protocolL, "XattrSet"); err != nil {
 		return err
@@ -229,8 +208,7 @@ func (f *File) XattrSet(ctx context.Context, name string, data []byte, flags uin
 		// Txattrcreate failed -> server state unchanged. Clone's fid is
 		// still in the walked state, so a normal Clunk is the right
 		// release gesture.
-		_ = r.Tclunk(context.Background(), clone.fid)
-		f.conn.fids.release(clone.fid)
+		_ = f.conn.cleanupFid(clone.fid)
 		return err
 	}
 
@@ -243,8 +221,7 @@ func (f *File) XattrSet(ctx context.Context, name string, data []byte, flags uin
 		// Conn msize is at or below the per-message framing floor
 		// (only reachable against a pathological mock server -- Dial
 		// enforces minMsize=256). No forward progress is possible.
-		_ = r.Tclunk(context.Background(), clone.fid)
-		f.conn.fids.release(clone.fid)
+		_ = f.conn.cleanupFid(clone.fid)
 		return fmt.Errorf("client: xattr chunk is 0 (msize %d ≤ ioFrameOverhead %d)",
 			f.conn.Msize(), ioFrameOverhead)
 	}
@@ -256,26 +233,21 @@ func (f *File) XattrSet(ctx context.Context, name string, data []byte, flags uin
 			// Must still Clunk to release server state; the server
 			// validates written==declared and returns EIO on mismatch,
 			// which is expected here -- swallow that secondary error.
-			_ = r.Tclunk(context.Background(), clone.fid)
-			f.conn.fids.release(clone.fid)
+			_ = f.conn.cleanupFid(clone.fid)
 			return err
 		}
 		if n == 0 {
-			_ = r.Tclunk(context.Background(), clone.fid)
-			f.conn.fids.release(clone.fid)
+			_ = f.conn.cleanupFid(clone.fid)
 			return fmt.Errorf("client: xattr short write at offset %d/%d", off, size)
 		}
 		off += uint64(n)
 	}
 	// Tclunk commits: server runs SetXattr(name, data) (or RemoveXattr
 	// when size==0). Any error here is a real commit failure and must
-	// surface to the caller. Uses context.Background(), not ctx -- see
-	// the doc comment above.
-	if err := r.Tclunk(context.Background(), clone.fid); err != nil {
-		f.conn.fids.release(clone.fid)
+	// surface to the caller.
+	if err := f.conn.cleanupFid(clone.fid); err != nil {
 		return err
 	}
-	f.conn.fids.release(clone.fid)
 	return nil
 }
 

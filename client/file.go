@@ -44,18 +44,10 @@ var (
 //
 // # Concurrency
 //
-// The per-File mutex (f.mu) serializes [File.Read], [File.Write],
-// [File.ReadAt], and [File.WriteAt] so that offset mutation in the
-// sequential path is race-free. [File.ReadAt] and [File.WriteAt]
-// still conform to their [io.ReaderAt]/[io.WriterAt] contracts -- the
-// contracts permit parallel CALLS and the implementation satisfies
-// "does not panic or corrupt" by serializing. Callers that want
-// actual parallel I/O spawn [File.Clone]s per goroutine; each clone
-// has its own fid and mutex.
-//
-// [File.Close] does NOT take the File mutex -- a Close issued while a
-// Read is in flight unblocks via the Conn's closeCh path rather than
-// deadlocking on the handle mutex.
+// Sequential Read, Write, Seek, and ReadDir calls share a state mutex.
+// ReadAt and WriteAt do not touch that state and may run concurrently.
+// A lifecycle lock prevents Close from retiring the fid while any file
+// operation is using it; operations started after Close return [ErrClosed].
 type File struct {
 	conn *Conn
 	fid  proto.Fid
@@ -65,7 +57,10 @@ type File struct {
 	// File.Read/Write clamp to min(iounit, msize - frame overhead).
 	iounit uint32
 
-	mu     sync.Mutex // serializes Read/Write/ReadAt/WriteAt; guards offset + cachedSize + readdirOffset
+	lifecycleMu sync.RWMutex
+	closed      bool
+
+	mu     sync.Mutex // serializes sequential state; guards offset + cachedSize + readdirOffset
 	offset int64      // local seek offset
 	// cachedSize is consulted by Seek(SeekEnd); populated by File.RefreshSize
 	// via Tgetattr/Tstat.
@@ -76,9 +71,6 @@ type File struct {
 	// f.offset because directory enumeration uses server-provided
 	// per-entry offsets rather than byte positions. Guarded by f.mu.
 	readdirOffset uint64
-
-	closeOnce sync.Once // idempotent Close
-	closeErr  error     // captured by the first Close; NOT returned on subsequent calls
 }
 
 // newFile constructs a *File. Internal helper used by session.go and
@@ -108,6 +100,19 @@ func (f *File) Fid() proto.Fid {
 	return f.fid
 }
 
+func (f *File) beginOp() error {
+	f.lifecycleMu.RLock()
+	if f.closed {
+		f.lifecycleMu.RUnlock()
+		return ErrClosed
+	}
+	return nil
+}
+
+func (f *File) endOp() {
+	f.lifecycleMu.RUnlock()
+}
+
 // Close clunks the fid on the server and marks the File as closed.
 // Subsequent Close calls return nil without touching the wire. The fid
 // number returns to the allocator's reuse cache only when the server's
@@ -117,52 +122,19 @@ func (f *File) Fid() proto.Fid {
 // against a server that may still hold the fid would alias a new
 // caller's Twalk onto the old binding.
 //
-// The error from the first Close (if Tclunk returned one) is returned
-// to THAT caller and captured into f.closeErr for diagnostics;
-// subsequent callers receive nil regardless of what the first call
-// observed. Close does not take f.mu -- a concurrent in-flight
-// Read/Write on this File unblocks via the Conn's shutdown path
-// (Conn.Close / Conn.Shutdown), not via the handle mutex.
+// The first caller receives any cleanup error. Concurrent and later calls
+// wait for that cleanup to finish and then return nil.
 //
 // Context: Close does NOT use [Conn.opCtx] / [WithRequestTimeout].
-// Clunk is a cleanup op whose ceiling is governed by the Conn-wide
-// drain deadline (5s), not a per-request user-configurable timeout.
-// Using [WithRequestTimeout] here would let a caller with a
-// pathological sub-millisecond value strand fids on the server; the
-// fixed cleanupDeadline is the safer invariant.
+// Clunk is governed by [WithCleanupTimeout], not [WithRequestTimeout].
 func (f *File) Close() error {
-	first := false
-	f.closeOnce.Do(func() {
-		first = true
-		// Close uses a bounded ctx so a wedged Tclunk does not hang
-		// the caller indefinitely. The Conn's drain deadline (5s) is
-		// the correct ceiling -- longer than any reasonable server
-		// response, shorter than a test timeout. We do NOT use opCtx
-		// here - see godoc above.
-		ctx, cancel := context.WithTimeout(context.Background(), cleanupDeadline)
-		defer cancel()
-		err := f.conn.tclunk(ctx, f.fid)
-		// Release only when the server-side fid is known to be gone:
-		// Rclunk landed (nil), the server answered with an error (per
-		// clunk(5) the fid is clunked even then), or the connection is
-		// down and every fid died with it. A flush or deadline expiry
-		// leaves the server's view unknown -- the Tclunk may never have
-		// been processed -- so the number is leaked rather than handed
-		// to a new caller whose Twalk would alias the still-bound fid.
-		var srvErr *Error
-		if err == nil || errors.As(err, &srvErr) || errors.Is(err, ErrClosed) {
-			f.conn.fids.release(f.fid)
-		}
-		f.closeErr = err
-	})
-	if !first {
-		// Idempotent: only the first Close returns the Tclunk
-		// result. Subsequent callers see nil even if the first call
-		// surfaced an error (which stays captured in f.closeErr for
-		// diagnostic inspection via a hypothetical future accessor).
+	f.lifecycleMu.Lock()
+	defer f.lifecycleMu.Unlock()
+	if f.closed {
 		return nil
 	}
-	return f.closeErr
+	f.closed = true
+	return f.conn.cleanupFid(f.fid)
 }
 
 // Walk returns a new *File for the node reached by following names
@@ -175,6 +147,10 @@ func (f *File) Close() error {
 // On error, any reserved fid slot is released to the allocator before
 // the error is returned.
 func (f *File) Walk(ctx context.Context, names []string) (*File, error) {
+	if err := f.beginOp(); err != nil {
+		return nil, err
+	}
+	defer f.endOp()
 	if len(names) == 0 {
 		return nil, errors.New("client: File.Walk requires at least one name (use File.Clone for 0-step walk)")
 	}
@@ -207,6 +183,10 @@ func (f *File) Walk(ctx context.Context, names []string) (*File, error) {
 // 0-step Walk binds newFid server-side only on success, so no Tclunk
 // is needed on the error path.
 func (f *File) Clone(ctx context.Context) (*File, error) {
+	if err := f.beginOp(); err != nil {
+		return nil, err
+	}
+	defer f.endOp()
 	newFid, err := f.conn.fids.acquire()
 	if err != nil {
 		return nil, err
@@ -281,6 +261,10 @@ func chunkLen(n int, m uint32) uint32 {
 // satisfies [errors.Is] against ctx.Err() (Canceled or DeadlineExceeded)
 // and, on the Rflush-first path, also against [ErrFlushed].
 func (f *File) ReadCtx(ctx context.Context, p []byte) (int, error) {
+	if err := f.beginOp(); err != nil {
+		return 0, err
+	}
+	defer f.endOp()
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -336,6 +320,10 @@ func (f *File) Read(p []byte) (int, error) {
 // For parallel I/O, use [File.Clone]. On ctx cancellation or deadline
 // expiry, a Tflush(oldtag) is sent for the in-flight Twrite.
 func (f *File) WriteCtx(ctx context.Context, p []byte) (int, error) {
+	if err := f.beginOp(); err != nil {
+		return 0, err
+	}
+	defer f.endOp()
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -412,6 +400,10 @@ func (f *File) Write(p []byte) (int, error) {
 //
 // Thread safety: serialized with I/O methods via f.mu.
 func (f *File) Seek(offset int64, whence int) (int64, error) {
+	if err := f.beginOp(); err != nil {
+		return 0, err
+	}
+	defer f.endOp()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var abs int64
@@ -446,18 +438,19 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 // sub-slice of p, skipping both the intermediate Rread.Data allocation
 // AND the tread result-copy.
 //
-// Does NOT advance the local offset - the [io.ReaderAt] contract is
-// preserved regardless of what the caller's ctx does. Serializes
-// against other I/O methods on the same *File via f.mu.
+// Does NOT advance the local offset. Positional reads on the same File may
+// run concurrently and are synchronized with Close by the lifecycle lock.
 func (f *File) ReadAtCtx(ctx context.Context, p []byte, off int64) (int, error) {
+	if err := f.beginOp(); err != nil {
+		return 0, err
+	}
+	defer f.endOp()
 	if len(p) == 0 {
 		return 0, nil
 	}
 	if off < 0 {
 		return 0, fmt.Errorf("client: ReadAt negative offset %d", off)
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	total := 0
 	for total < len(p) {
 		count := chunkLen(len(p)-total, f.maxChunk())
@@ -482,11 +475,8 @@ func (f *File) ReadAtCtx(ctx context.Context, p []byte, off int64) (int, error) 
 // n < len(p), specifically [io.EOF] when the short return is at the
 // end of file.
 //
-// ReadAt does NOT advance the local offset -- it is independent of
-// [File.Read] and [File.Seek] state. Concurrent callers on the same
-// *File serialize via f.mu; callers wanting actual parallel I/O on the
-// same server-side file should use [File.Clone] to obtain independent
-// handles.
+// ReadAt does NOT advance the local offset and may run concurrently with
+// other positional I/O on the same File.
 //
 // Internally loops issuing Treads against the offset until either p
 // is filled or the server returns zero bytes (EOF). Each Tread is
@@ -540,17 +530,19 @@ func (f *File) ReadDir(n int) ([]os.DirEntry, error) {
 
 // WriteAtCtx is the ctx-taking variant of [File.WriteAt]. Chunks p
 // over multiple Twrites at off, off+n1, off+n1+n2, ...; each chunk
-// uses the caller's ctx verbatim. Does NOT advance the local offset.
-// Serializes against other I/O methods on the same *File via f.mu.
+// uses the caller's ctx verbatim. Does NOT advance the local offset and may
+// run concurrently with other positional I/O on the same File.
 func (f *File) WriteAtCtx(ctx context.Context, p []byte, off int64) (int, error) {
+	if err := f.beginOp(); err != nil {
+		return 0, err
+	}
+	defer f.endOp()
 	if len(p) == 0 {
 		return 0, nil
 	}
 	if off < 0 {
 		return 0, fmt.Errorf("client: WriteAt negative offset %d", off)
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	total := 0
 	for total < len(p) {
 		chunk := p[total:]
@@ -573,9 +565,8 @@ func (f *File) WriteAtCtx(ctx context.Context, p []byte, off int64) (int, error)
 // the [io.WriterAt] contract: returns a non-nil error whenever
 // n < len(p).
 //
-// WriteAt does NOT advance the local offset -- it is independent of
-// [File.Write] and [File.Seek] state. Concurrent callers on the same
-// *File serialize via f.mu; use [File.Clone] for parallel writes.
+// WriteAt does NOT advance the local offset and may run concurrently with
+// other positional I/O on the same File.
 //
 // Chunks the payload over multiple Twrites when len(p) exceeds
 // min(iounit, msize - ioFrameOverhead). Returns [io.ErrShortWrite] if

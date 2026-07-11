@@ -270,6 +270,7 @@ func (c *Conn) readLoop() {
 // lives in close.go; this helper just fires the signals.
 func (c *Conn) signalShutdown() {
 	c.closeOnce.Do(func() {
+		c.closeAdmission()
 		close(c.closeCh)
 		_ = c.nc.Close()
 		c.inflight.cancelAll()

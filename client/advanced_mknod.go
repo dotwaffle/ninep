@@ -39,6 +39,10 @@ func (c *Conn) Mknod(ctx context.Context, path string, mode proto.FileMode, majo
 	if root == nil {
 		return nil, errors.New("client: Mknod requires a prior Attach")
 	}
+	if err := root.beginOp(); err != nil {
+		return nil, err
+	}
+	defer root.endOp()
 	full := splitPath(path)
 	if len(full) == 0 {
 		return nil, errors.New("client: Mknod requires a non-root path")

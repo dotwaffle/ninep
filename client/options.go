@@ -30,6 +30,7 @@ type config struct {
 	// kernel client for trans=tcp mounts. Negative values are invalid. The
 	// *Ctx variants honor the caller-supplied ctx verbatim.
 	requestTimeout time.Duration
+	cleanupTimeout time.Duration
 	tracerProvider trace.TracerProvider
 	meterProvider  metric.MeterProvider
 }
@@ -43,6 +44,8 @@ const (
 	// defaultMaxInflight is the number of concurrent outstanding requests
 	// per Conn. Mirrors server.WithMaxInflight's default.
 	defaultMaxInflight int = 64
+
+	defaultCleanupTimeout = 5 * time.Second
 
 	// maxMaxInflight is the upper bound on maxInflight. The tag space is
 	// split in half: request tags live in [1..maxMaxInflight] and each
@@ -66,9 +69,24 @@ var _ = [1]struct{}{}[int(uint16(proto.NoTag))-1-(flushTagBit+maxMaxInflight)]
 // of the returned config mutate it in place.
 func newConfig() *config {
 	return &config{
-		msize:       defaultMsize,
-		maxInflight: defaultMaxInflight,
-		logger:      slog.Default(),
+		msize:          defaultMsize,
+		maxInflight:    defaultMaxInflight,
+		cleanupTimeout: defaultCleanupTimeout,
+		logger:         slog.Default(),
+	}
+}
+
+// WithCleanupTimeout bounds internal Tclunk operations used to retire fids
+// after Close and failure-path cleanup. Cleanup does not use the ordinary
+// request cancellation flush grace: an unacknowledged fid is quarantined
+// instead of delaying the caller or risking reuse. Dial rejects non-positive
+// values. Default: 5s.
+func WithCleanupTimeout(d time.Duration) Option {
+	return func(c *config) {
+		c.cleanupTimeout = d
+		if d <= 0 {
+			c.setError(errors.New("client: cleanup timeout must be positive"))
+		}
 	}
 }
 

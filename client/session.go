@@ -79,6 +79,10 @@ func (c *Conn) OpenFile(ctx context.Context, p string, flags int, mode os.FileMo
 	if root == nil {
 		return nil, errors.New("client: OpenFile requires a prior Attach")
 	}
+	if err := root.beginOp(); err != nil {
+		return nil, err
+	}
+	defer root.endOp()
 	names := splitPath(p)
 	fileFid, err := c.fids.acquire()
 	if err != nil {
@@ -111,11 +115,8 @@ func (c *Conn) OpenFile(ctx context.Context, p string, flags int, mode os.FileMo
 		err = fmt.Errorf("%w: %v", ErrDialectInvariant, c.dialect)
 	}
 	if err != nil {
-		// Walk succeeded -> fileFid is server-bound. Clunk before
-		// release. Use context.Background() for the cleanup clunk
-		// because the caller's ctx may already be cancelled.
-		_ = c.tclunk(context.Background(), fileFid)
-		c.fids.release(fileFid)
+		// Walk succeeded, so the fid requires bounded server-side cleanup.
+		_ = c.cleanupFid(fileFid)
 		return nil, err
 	}
 	return newFile(c, fileFid, qid, iounit), nil
@@ -146,6 +147,10 @@ func (c *Conn) Create(ctx context.Context, p string, flags int, mode os.FileMode
 	if root == nil {
 		return nil, errors.New("client: Create requires a prior Attach")
 	}
+	if err := root.beginOp(); err != nil {
+		return nil, err
+	}
+	defer root.endOp()
 	full := splitPath(p)
 	if len(full) == 0 {
 		return nil, errors.New("client: Create requires a non-root path")

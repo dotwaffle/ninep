@@ -20,6 +20,10 @@ import (
 // Filesystem statistics can change between calls; callers that observe
 // them over time should treat each result as a point-in-time snapshot.
 func (f *File) Statfs(ctx context.Context) (proto.FSStat, error) {
+	if err := f.beginOp(); err != nil {
+		return proto.FSStat{}, err
+	}
+	defer f.endOp()
 	if err := f.conn.requireDialect(protocolL, "Statfs"); err != nil {
 		return proto.FSStat{}, err
 	}

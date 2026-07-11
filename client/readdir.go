@@ -25,6 +25,10 @@ import (
 // directory-enumeration wire op (Tread on a directory fid returning
 // packed Stat.u entries) which is out of scope here.
 func (f *File) readDir(ctx context.Context, n int) ([]os.DirEntry, error) {
+	if err := f.beginOp(); err != nil {
+		return nil, err
+	}
+	defer f.endOp()
 	if f.conn.dialect != protocolL {
 		return nil, fmt.Errorf("%w: File.ReadDir requires 9P2000.L", ErrNotSupported)
 	}

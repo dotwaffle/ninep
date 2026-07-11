@@ -37,6 +37,10 @@ func (c *Conn) Rename(ctx context.Context, fromPath, toPath string) error {
 	if root == nil {
 		return errors.New("client: Rename requires a prior Attach")
 	}
+	if err := root.beginOp(); err != nil {
+		return err
+	}
+	defer root.endOp()
 	fromFull := splitPath(fromPath)
 	toFull := splitPath(toPath)
 	if len(fromFull) == 0 || len(toFull) == 0 {

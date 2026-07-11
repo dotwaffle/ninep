@@ -93,6 +93,11 @@ type Conn struct {
 	closeCh   chan struct{}
 	closeOnce sync.Once
 
+	// admissionMu makes request admission and shutdown mutually exclusive.
+	// Once closing is set, callerWG receives no further positive Add calls.
+	admissionMu sync.Mutex
+	closing     bool
+
 	// callerWG tracks outstanding op-method goroutines (each holds a tag).
 	// readerWG tracks the single read goroutine. Both are awaited by
 	// Close/Shutdown.
@@ -112,6 +117,7 @@ type Conn struct {
 	// parent ctx as-is" - matches Linux v9fs parity.
 	// Set at Dial time via [WithRequestTimeout]; immutable after Dial.
 	requestTimeout time.Duration
+	cleanupTimeout time.Duration
 
 	// flushGrace bounds how long flushAndWait waits for the server to
 	// acknowledge a Tflush (via Rflush or the original response) once the
@@ -130,6 +136,26 @@ type Conn struct {
 	// raw is the wire surface returned by [Conn.Raw]; embedding it here
 	// keeps Raw() allocation-free. Its back-pointer is set once in Dial.
 	raw Raw
+}
+
+func (c *Conn) beginCall() bool {
+	c.admissionMu.Lock()
+	defer c.admissionMu.Unlock()
+	if c.closing {
+		return false
+	}
+	c.callerWG.Add(1)
+	return true
+}
+
+func (c *Conn) endCall() {
+	c.callerWG.Done()
+}
+
+func (c *Conn) closeAdmission() {
+	c.admissionMu.Lock()
+	c.closing = true
+	c.admissionMu.Unlock()
 }
 
 // isClosed returns true once signalShutdown has fired. Non-blocking

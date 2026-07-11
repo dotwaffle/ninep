@@ -30,6 +30,10 @@ import (
 // returns size via the returned FileInfo without mutating
 // f.cachedSize).
 func (f *File) RefreshSize() error {
+	if err := f.beginOp(); err != nil {
+		return err
+	}
+	defer f.endOp()
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupDeadline)
 	defer cancel()
 	var size int64
