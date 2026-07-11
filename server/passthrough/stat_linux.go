@@ -48,7 +48,7 @@ func statToQID(st *unix.Stat_t) proto.QID {
 	}
 	return proto.QID{
 		Type:    t,
-		Version: qidVersion(st.Ctim.Sec, st.Ctim.Nsec),
+		Version: qidVersion(int64(st.Ctim.Sec), int64(st.Ctim.Nsec)),
 		Path:    st.Ino,
 	}
 }
