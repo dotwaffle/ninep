@@ -341,6 +341,49 @@ func TestNegotiateVersion_DrainsOversizedTversionBody(t *testing.T) {
 	<-done
 }
 
+// TestNegotiateVersion_RejectsOversizedVersionFrame asserts the first frame's
+// declared size is clamped to maxVersionFrame, not maxMsize: a peer declaring
+// a huge Tversion frame is disconnected before the body allocation, instead
+// of being allowed to demand a maxMsize-sized buffer pre-negotiation.
+func TestNegotiateVersion_RejectsOversizedVersionFrame(t *testing.T) {
+	t.Parallel()
+
+	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
+	root := newDirNode(rootQID)
+	srv := New(root, WithLogger(discardLogger())) // default maxMsize 1 MiB
+
+	client, server := net.Pipe()
+	defer func() { _ = client.Close() }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); srv.ServeConn(ctx, server) }()
+
+	// Declared frame size just above the version-frame clamp but far below
+	// maxMsize. Only the 4-byte size prefix goes on the wire: the server
+	// rejects on the declared size alone, and net.Pipe's synchronous writes
+	// mean any further bytes would race the server's close.
+	var prefix []byte
+	prefix = binary.LittleEndian.AppendUint32(prefix, maxVersionFrame+1)
+	if _, err := client.Write(prefix); err != nil {
+		t.Fatalf("write oversized version size prefix: %v", err)
+	}
+
+	// The server must close the connection without replying.
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not close connection for oversized version frame")
+	}
+	// ServeConn has returned, so the server end is closed; a read must
+	// error immediately rather than yield an Rversion.
+	buf := make([]byte, 1)
+	if _, err := client.Read(buf); err == nil {
+		t.Fatal("expected read error after rejection, got data")
+	}
+}
+
 // TestNegotiateVersion_HandshakeDeadlineClosesStalledPeer asserts that even
 // with no idle timeout configured, a peer that connects and never sends
 // Tversion is closed by the always-on handshake deadline rather than pinning

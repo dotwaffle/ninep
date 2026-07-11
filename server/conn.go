@@ -57,6 +57,12 @@ func (p protocol) String() string {
 // least a header plus a small error response.
 const minMsize = 256
 
+// maxVersionFrame bounds the size of the initial Tversion frame, read before
+// any msize has been negotiated. The body is msize[4] plus a length-prefixed
+// version string, so 1 KiB accommodates any plausible version token while
+// keeping the pre-negotiation allocation small.
+const maxVersionFrame = 1024
+
 // negotiationResult carries the validated outcome of a Tversion exchange:
 // the negotiated msize, the selected protocol, and the version string to
 // echo back to the client. selected == protocolNone means the client
@@ -318,11 +324,13 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read version size: %w", err)
 	}
-	// msize is not negotiated yet, so bound the frame against the largest
-	// msize this server will ever accept; this keeps the body allocation
-	// below safe against an oversized declared size.
-	if size > c.server.maxMsize {
-		return fmt.Errorf("version frame size %d exceeds maximum %d", size, c.server.maxMsize)
+	// msize is not negotiated yet, so bound the frame tightly: a Tversion
+	// body is msize[4] plus a short version string, so maxVersionFrame is
+	// generous. Without this clamp the body allocation below would trust
+	// the declared size up to maxMsize (default 1 MiB), letting a peer
+	// demand a large allocation before proving it speaks 9P.
+	if limit := min(c.server.maxMsize, maxVersionFrame); size > limit {
+		return fmt.Errorf("version frame size %d exceeds maximum %d", size, limit)
 	}
 
 	msgType, err := proto.ReadUint8(c.nc)
