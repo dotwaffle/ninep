@@ -73,6 +73,10 @@ func (c *conn) cleanup() {
 		c.otelInst.recordFidChange(-int64(len(states)))
 	}
 	for _, fs := range states {
+		// decRefNode unconditionally: the fid is gone from the table either
+		// way, so it no longer references its node regardless of whether the
+		// handle/node release below also runs.
+		decRefNode(fs.currentNode())
 		// Release handles and close nodes only when handlers drained. A stuck
 		// handler may still be reading through fs.handle; closing its fd here
 		// would race that read (use-after-close on an fd that could be

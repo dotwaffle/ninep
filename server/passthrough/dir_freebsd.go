@@ -53,10 +53,10 @@ func (n *Node) Lookup(_ context.Context, name string) (server.Node, error) {
 
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name, dev: uint64(st.Dev)}
 	child.Init(statToQID(&st), child)
-	// See dir_linux.go Lookup: the child is recorded for Trename/Trenameat name
-	// resolution and persists for the parent's lifetime (bounded by distinct
-	// names walked); it is not pruned on clunk because a node may be shared by
-	// several fids and the server tracks no per-node fid refcount.
+	// See dir_linux.go Lookup: SetPrunable opts this child into the server's
+	// fid-refcounted pruning, and AddChild records it for Trename/Trenameat
+	// name resolution until its fid refcount drops to zero.
+	child.EmbeddedInode().SetPrunable()
 	n.EmbeddedInode().AddChild(name, child.EmbeddedInode())
 
 	return child, nil
@@ -89,6 +89,7 @@ func (n *Node) Create(_ context.Context, name string, flags uint32, mode proto.F
 
 	child := &Node{fd: pathFd, root: n.root, parentFd: n.fd, name: name, dev: uint64(st.Dev)}
 	child.Init(statToQID(&st), child)
+	child.EmbeddedInode().SetPrunable()
 
 	return child, &fileHandle{fd: fd}, 0, nil
 }
@@ -116,6 +117,7 @@ func (n *Node) Mkdir(_ context.Context, name string, mode proto.FileMode, _ uint
 
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name, dev: uint64(st.Dev)}
 	child.Init(statToQID(&st), child)
+	child.EmbeddedInode().SetPrunable()
 
 	return child, nil
 }
@@ -143,6 +145,7 @@ func (n *Node) Symlink(_ context.Context, name, target string, _ uint32) (server
 
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name, dev: uint64(st.Dev)}
 	child.Init(statToQID(&st), child)
+	child.EmbeddedInode().SetPrunable()
 
 	return child, nil
 }
@@ -175,6 +178,7 @@ func (n *Node) Mknod(_ context.Context, name string, mode proto.FileMode, major,
 
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name, dev: uint64(st.Dev)}
 	child.Init(statToQID(&st), child)
+	child.EmbeddedInode().SetPrunable()
 
 	return child, nil
 }

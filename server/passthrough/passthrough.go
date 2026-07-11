@@ -99,6 +99,7 @@ func (n *Node) lookupParent() (server.Node, error) {
 		child.name = ""
 	}
 	child.Init(statToQID(&cst), child)
+	child.EmbeddedInode().SetPrunable()
 	return child, nil
 }
 

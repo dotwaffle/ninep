@@ -353,6 +353,96 @@ func TestInodeRemoveChild(t *testing.T) {
 	}
 }
 
+func TestInodePrune_RemovesOnLastDecRef(t *testing.T) {
+	t.Parallel()
+
+	parent := &Inode{}
+	parent.Init(proto.QID{Type: proto.QTDIR, Path: 1}, nil)
+
+	child := &Inode{}
+	child.Init(proto.QID{Type: proto.QTFILE, Path: 2}, nil)
+	child.SetPrunable()
+
+	parent.AddChild("file", child)
+	child.incRef()
+	child.incRef() // Simulates two fids referencing the same walked node.
+
+	child.decRef()
+	if _, err := parent.Lookup(t.Context(), "file"); err != nil {
+		t.Fatalf("Lookup after first decRef: %v, want still present", err)
+	}
+
+	child.decRef()
+	if _, err := parent.Lookup(t.Context(), "file"); !errors.Is(err, proto.ENOENT) {
+		t.Errorf("Lookup after last decRef: error = %v, want ENOENT (pruned)", err)
+	}
+}
+
+func TestInodePrune_NotPrunableByDefault(t *testing.T) {
+	t.Parallel()
+
+	parent := &Inode{}
+	parent.Init(proto.QID{Type: proto.QTDIR, Path: 1}, nil)
+
+	child := &Inode{}
+	child.Init(proto.QID{Type: proto.QTFILE, Path: 2}, nil)
+	// No SetPrunable: mirrors memfs, whose children map IS the filesystem
+	// and must never be pruned by fid refcounting.
+
+	parent.AddChild("file", child)
+	child.incRef()
+	child.decRef()
+
+	if _, err := parent.Lookup(t.Context(), "file"); err != nil {
+		t.Errorf("Lookup after decRef to zero: %v, want still present (not prunable)", err)
+	}
+}
+
+// TestInodePrune_PointerIdentityGuardsAgainstReplacedChild covers the hazard
+// decRef's doc comment describes: passthrough constructs a fresh *Node (and
+// therefore a fresh *Inode) on every Lookup, so re-walking the same name
+// without cloning the fid overwrites the parent's map entry with a
+// different Inode while an older fid may still alias the original. decRef
+// must scan for the exact Inode pointer being dropped, not delete by name,
+// or it would evict the newer, still-live replacement.
+func TestInodePrune_PointerIdentityGuardsAgainstReplacedChild(t *testing.T) {
+	t.Parallel()
+
+	parent := &Inode{}
+	parent.Init(proto.QID{Type: proto.QTDIR, Path: 1}, nil)
+
+	original := &Inode{}
+	original.Init(proto.QID{Type: proto.QTFILE, Path: 2}, nil)
+	original.SetPrunable()
+	parent.AddChild("file", original)
+	original.incRef() // An older fid still aliases `original`.
+
+	// A second, unrelated Lookup for the same name re-resolves to a fresh
+	// Inode (passthrough's actual behavior) and overwrites the map entry.
+	replacement := &Inode{}
+	replacement.Init(proto.QID{Type: proto.QTFILE, Path: 3}, nil)
+	replacement.SetPrunable()
+	parent.AddChild("file", replacement)
+	replacement.incRef()
+
+	// The older fid on `original` clunks. Its decRef must NOT evict
+	// `replacement`, which is what "file" now points to.
+	original.decRef()
+	node, err := parent.Lookup(t.Context(), "file")
+	if err != nil {
+		t.Fatalf("Lookup after original.decRef: %v, want replacement still present", err)
+	}
+	if node.QID().Path != 3 {
+		t.Errorf("Lookup returned QID.Path = %d, want 3 (replacement)", node.QID().Path)
+	}
+
+	// Now the replacement's fid clunks too; its entry should prune.
+	replacement.decRef()
+	if _, err := parent.Lookup(t.Context(), "file"); !errors.Is(err, proto.ENOENT) {
+		t.Errorf("Lookup after replacement.decRef: error = %v, want ENOENT (pruned)", err)
+	}
+}
+
 func TestComposableReadOnlyFile(t *testing.T) {
 	t.Parallel()
 

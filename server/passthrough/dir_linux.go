@@ -55,12 +55,16 @@ func (n *Node) Lookup(_ context.Context, name string) (server.Node, error) {
 
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
 	child.Init(statToQID(&st), child)
+	// SetPrunable opts this child into the server's fid-refcounted pruning:
+	// passthrough's Lookup always re-resolves from the host filesystem (it
+	// never consults the children map as a forward-path cache), so once no
+	// fid references the child, the server can safely drop its entry from
+	// the parent's children map instead of retaining it for the parent's
+	// entire lifetime.
+	child.EmbeddedInode().SetPrunable()
 	// The child is recorded in the parent's Inode tree so the server can map
-	// names to nodes for Trename/Trenameat. Entries persist for the parent
-	// node's lifetime (pruned only on Unlink/Rename), bounded by the number of
-	// distinct real names walked. They are not pruned on clunk: a node may be
-	// shared by several fids via walk-clone, so safe pruning would require
-	// per-node fid refcounting the server does not track.
+	// names to nodes for Trename/Trenameat and prune the entry once its
+	// fid refcount drops to zero.
 	n.EmbeddedInode().AddChild(name, child.EmbeddedInode())
 
 	return child, nil
@@ -93,6 +97,7 @@ func (n *Node) Create(_ context.Context, name string, flags uint32, mode proto.F
 
 	child := &Node{fd: pathFd, root: n.root, parentFd: n.fd, name: name}
 	child.Init(statToQID(&st), child)
+	child.EmbeddedInode().SetPrunable()
 
 	return child, &fileHandle{fd: fd}, 0, nil
 }
@@ -120,6 +125,7 @@ func (n *Node) Mkdir(_ context.Context, name string, mode proto.FileMode, _ uint
 
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
 	child.Init(statToQID(&st), child)
+	child.EmbeddedInode().SetPrunable()
 
 	return child, nil
 }
@@ -147,6 +153,7 @@ func (n *Node) Symlink(_ context.Context, name, target string, _ uint32) (server
 
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
 	child.Init(statToQID(&st), child)
+	child.EmbeddedInode().SetPrunable()
 
 	return child, nil
 }
@@ -181,6 +188,7 @@ func (n *Node) Mknod(_ context.Context, name string, mode proto.FileMode, major,
 
 	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: name}
 	child.Init(statToQID(&st), child)
+	child.EmbeddedInode().SetPrunable()
 
 	return child, nil
 }

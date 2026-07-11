@@ -508,6 +508,10 @@ func (c *conn) handleLcreate(ctx context.Context, m *p9l.Tlcreate) proto.Message
 		releaseFileHandle(ctx, handle, c.logger)
 		return c.errorMsg(proto.EBADF)
 	}
+	// The fid rebinds from parentNode to child: parentNode loses this
+	// reference, child gains one.
+	decRefNode(parentNode)
+	incRefNode(child)
 
 	// Register child in parent Inode tree if both implement InodeEmbedder.
 	if parentIE, ok := parentNode.(InodeEmbedder); ok {
@@ -558,6 +562,10 @@ func (c *conn) handleUCreate(ctx context.Context, m *p9u.Tcreate) proto.Message 
 		releaseFileHandle(ctx, handle, c.logger)
 		return c.errorMsg(proto.EBADF)
 	}
+	// The fid rebinds from parentNode to child: parentNode loses this
+	// reference, child gains one.
+	decRefNode(parentNode)
+	incRefNode(child)
 
 	if parentIE, ok := parentNode.(InodeEmbedder); ok {
 		if childIE, ok := child.(InodeEmbedder); ok {
@@ -1004,6 +1012,7 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 			return c.errorMsg(proto.EBADF)
 		}
 		c.otelInst.recordFidChange(1)
+		incRefNode(xfs.node)
 		return &p9l.Rxattrwalk{Size: uint64(len(data))}
 	}
 
@@ -1043,6 +1052,7 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 			return c.errorMsg(proto.EBADF)
 		}
 		c.otelInst.recordFidChange(1)
+		incRefNode(xfs.node)
 		return &p9l.Rxattrwalk{Size: uint64(len(buf))}
 	}
 
@@ -1069,6 +1079,7 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 		return c.errorMsg(proto.EBADF)
 	}
 	c.otelInst.recordFidChange(1)
+	incRefNode(xfs.node)
 	return &p9l.Rxattrwalk{Size: uint64(len(data))}
 }
 

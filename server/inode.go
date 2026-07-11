@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"sync"
+	"sync/atomic"
 
 	"github.com/dotwaffle/ninep/proto"
 )
@@ -20,6 +21,95 @@ type Inode struct {
 	children map[string]*Inode
 	mu       sync.Mutex
 	node     InodeEmbedder // back-reference to the user's struct
+
+	// refs counts live fids whose fidState.node currently equals this
+	// Inode's embedding Node (including walk-clone aliases, which
+	// increment the same Inode's refs rather than creating a new one).
+	// Only meaningful when prunable is true.
+	refs atomic.Int32
+
+	// prunable marks this Inode as safe to remove from its parent's
+	// children map once refs drops to zero. Off by default: a shared
+	// Lookup implementation (like memfs's, which never overrides
+	// Inode.Lookup) uses the children map as the authoritative
+	// filesystem, and pruning it would delete the user's data. A
+	// filesystem whose own Lookup always re-resolves from an external
+	// source of truth (like passthrough's, which never consults this
+	// map on the forward path -- see SetPrunable) opts in explicitly.
+	prunable bool
+}
+
+// SetPrunable marks this Inode as eligible for removal from its parent's
+// children map once no fid references it. Call this only from a Lookup
+// (or Create/Mkdir/etc.) implementation that never itself reads the
+// children map to resolve names -- i.e. the map is pure bookkeeping for
+// the shared Trename/Tremove-by-fid reverse lookup (see
+// removeViaInodeTree, handleRename), not a forward-path cache. memfs's
+// Lookup is the shared map-based Inode.Lookup and must never call this;
+// passthrough's Lookup always re-resolves from the host filesystem and
+// calls this on every child it constructs.
+func (i *Inode) SetPrunable() {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.prunable = true
+}
+
+// incRef records one more live fid referencing this Inode.
+func (i *Inode) incRef() {
+	i.refs.Add(1)
+}
+
+// decRef records one fewer live fid referencing this Inode and, if that
+// was the last one and this Inode is prunable, removes it from its
+// parent's children map.
+//
+// The removal re-scans the parent for an entry whose value is THIS exact
+// Inode pointer before deleting, rather than deleting by name: passthrough
+// constructs a fresh *Node (and therefore a fresh *Inode) on every Lookup,
+// so re-walking the same name without cloning overwrites the parent's map
+// entry with a different Inode while an older fid may still alias the
+// original. Deleting by name alone could evict the newer, still-live
+// entry; comparing pointers first (the same pattern already used by
+// removeViaInodeTree and handleRename to recover a name from an Inode)
+// guards against that.
+func (i *Inode) decRef() {
+	if i.refs.Add(-1) != 0 {
+		return
+	}
+	i.mu.Lock()
+	prunable := i.prunable
+	parent := i.parent
+	i.mu.Unlock()
+	if !prunable || parent == nil {
+		return
+	}
+
+	parent.mu.Lock()
+	defer parent.mu.Unlock()
+	for name, child := range parent.children {
+		if child == i {
+			delete(parent.children, name)
+			break
+		}
+	}
+}
+
+// incRefNode increments the reference count on node's embedded Inode, if it
+// has one. Nodes that do not implement InodeEmbedder are unaffected.
+func incRefNode(n Node) {
+	if ie, ok := n.(InodeEmbedder); ok {
+		ie.EmbeddedInode().incRef()
+	}
+}
+
+// decRefNode decrements the reference count on node's embedded Inode, if it
+// has one, pruning it from its parent's children map once no fid
+// references it (see Inode.decRef). Nodes that do not implement
+// InodeEmbedder are unaffected.
+func decRefNode(n Node) {
+	if ie, ok := n.(InodeEmbedder); ok {
+		ie.EmbeddedInode().decRef()
+	}
 }
 
 // Compile-time assertions that *Inode implements all capability interfaces.

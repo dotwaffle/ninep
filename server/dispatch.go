@@ -146,6 +146,7 @@ func (c *conn) handleAttach(ctx context.Context, ta *proto.Tattach) proto.Messag
 	}
 
 	c.otelInst.recordFidChange(1)
+	incRefNode(node)
 	return &proto.Rattach{QID: node.QID()}
 }
 
@@ -164,7 +165,8 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 		// Clone: newfid points to same node with same path. Reading node and
 		// path through their locked accessors matters here: another in-place
 		// Twalk on src.Fid can be rewriting both concurrently.
-		fs := &fidState{node: src.currentNode(), path: c.fids.getPath(tw.Fid), state: fidAllocated}
+		cloneNode := src.currentNode()
+		fs := &fidState{node: cloneNode, path: c.fids.getPath(tw.Fid), state: fidAllocated}
 		if err := c.fids.add(tw.NewFid, fs, c.maxFids); err != nil {
 			if errors.Is(err, ErrFidLimitExceeded) {
 				return c.errorMsg(proto.EMFILE)
@@ -172,6 +174,7 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 			return c.errorMsg(proto.EBADF)
 		}
 		c.otelInst.recordFidChange(1)
+		incRefNode(cloneNode)
 		return &proto.Rwalk{}
 	}
 
@@ -231,8 +234,13 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 	if len(qids) == len(tw.Names) {
 		newPath := path.Clean(c.fids.getPath(tw.Fid) + "/" + strings.Join(tw.Names, "/"))
 		if tw.Fid == tw.NewFid {
+			// In-place walk rebinds tw.Fid from its prior node to current:
+			// the prior node loses this reference, current gains one.
+			oldNode := src.currentNode()
 			c.fids.update(tw.Fid, current)
 			c.fids.setPath(tw.Fid, newPath)
+			decRefNode(oldNode)
+			incRefNode(current)
 		} else {
 			fs := &fidState{node: current, path: newPath, state: fidAllocated}
 			if err := c.fids.add(tw.NewFid, fs, c.maxFids); err != nil {
@@ -242,6 +250,7 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 				return c.errorMsg(proto.EBADF)
 			}
 			c.otelInst.recordFidChange(1)
+			incRefNode(current)
 		}
 	}
 
@@ -256,6 +265,7 @@ func (c *conn) handleClunk(ctx context.Context, tc *proto.Tclunk) proto.Message 
 		return c.errorMsg(proto.EBADF)
 	}
 	c.otelInst.recordFidChange(-1)
+	decRefNode(fs.currentNode())
 
 	// Handle xattr commit/cleanup before normal clunk logic. clunk() has
 	// already removed the fid from the table, so no further handler can
@@ -320,7 +330,13 @@ func (c *conn) handleRemove(ctx context.Context, tr *proto.Tremove) proto.Messag
 	}
 	c.otelInst.recordFidChange(-1)
 
+	// removeViaInodeTree must run before decRefNode: it locates this fid's
+	// name in the parent's children map by pointer scan, which requires the
+	// entry still be present. decRefNode may itself prune that same entry
+	// once refs hits zero, so running it first would make the node
+	// unreachable via name lookup and break removal entirely.
 	removeErr := removeViaInodeTree(ctx, fs.currentNode())
+	decRefNode(fs.currentNode())
 	fs.finishClunk(ctx, c.logger)
 
 	if removeErr != nil {

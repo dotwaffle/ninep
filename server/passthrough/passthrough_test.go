@@ -716,8 +716,14 @@ func TestLookupSetattr_SizeUsesResolvedFD(t *testing.T) {
 	}
 }
 
+// TestRoot_Close deliberately does not call t.Parallel(): it asserts that
+// Getattr fails against root's now-closed fd number, which only holds if
+// that exact number has not been reopened as something else in the
+// meantime. Running in the serial phase (before any t.Parallel() sibling
+// starts) is what makes this deterministic -- otherwise the fd number can
+// be recycled by an unrelated concurrent test between Close and Getattr,
+// making the assertion flaky under -race with a large parallel suite.
 func TestRoot_Close(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 
 	root, err := NewRoot(dir)
