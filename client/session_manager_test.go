@@ -1,11 +1,14 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -294,6 +297,69 @@ func TestSession_Flaky(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+// TestSession_ReconnectBackoffOverride asserts WithReconnectBackoff
+// replaces the default schedule and that every failed dial attempt emits
+// a Debug record on the session logger.
+func TestSession_ReconnectBackoffOverride(t *testing.T) {
+	t.Parallel()
+
+	var dials int
+	dialer := func(_ context.Context) (net.Conn, error) {
+		dials++
+		if dials < 5 {
+			return nil, net.ErrClosed
+		}
+		c1, s1 := net.Pipe()
+		runMockVersionServer(t, s1)
+		return c1, nil
+	}
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	s := NewSessionWithOptions(dialer, nil,
+		WithReconnectBackoff([]time.Duration{time.Millisecond}),
+		WithSessionLogger(logger),
+	)
+	t.Cleanup(func() { _ = s.Close() })
+
+	start := time.Now()
+	if _, err := s.Conn(context.Background()); err != nil {
+		t.Fatalf("Conn: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	if dials != 5 {
+		t.Errorf("dials = %d, want 5", dials)
+	}
+	// 4 failures on the default schedule sleep >= 150ms; the 1ms override
+	// with max +50% jitter sleeps <= 6ms total. 100ms splits the two with
+	// slack for scheduler noise.
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("elapsed = %v; the 1ms override schedule was not used", elapsed)
+	}
+	if got := strings.Count(logBuf.String(), "session dial failed"); got != 4 {
+		t.Errorf("logged %d dial-failure records, want 4:\n%s", got, logBuf.String())
+	}
+}
+
+// TestDialJitter_Bounds asserts jitter only ever lengthens the sleep and
+// by at most half the base duration.
+func TestDialJitter_Bounds(t *testing.T) {
+	t.Parallel()
+
+	if got := dialJitter(0); got != 0 {
+		t.Errorf("dialJitter(0) = %v, want 0", got)
+	}
+	for _, d := range []time.Duration{10 * time.Millisecond, 5 * time.Second} {
+		for range 100 {
+			got := dialJitter(d)
+			if got < d || got > d+d/2 {
+				t.Fatalf("dialJitter(%v) = %v, want in [%v, %v]", d, got, d, d+d/2)
+			}
+		}
+	}
 }
 
 // TestSession_Close asserts Close shuts the session down: the live conn is

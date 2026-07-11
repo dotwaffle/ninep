@@ -804,6 +804,14 @@ func (s *Session) Close() error
 // every time the Session establishes a new connection (initial dial
 // or reconnect after failure) -- e.g. to re-Attach and re-open files.
 func WithOnReconnect(fn func(context.Context, *Conn) error) SessionOption
+
+// WithReconnectBackoff overrides the dial retry schedule (default 10ms
+// doubling to a 5s cap; up to +50% jitter on every sleep).
+func WithReconnectBackoff(schedule []time.Duration) SessionOption
+
+// WithSessionLogger sets the logger that receives one Debug record per
+// failed dial attempt. Defaults to slog.Default().
+func WithSessionLogger(logger *slog.Logger) SessionOption
 ```
 
 ### Error

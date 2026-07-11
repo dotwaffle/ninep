@@ -227,6 +227,8 @@ behavior is configured with `SessionOption` values passed to
 | Option | Signature | Description |
 |--------|-----------|-------------|
 | `WithOnReconnect` | `WithOnReconnect(fn func(context.Context, *Conn) error) SessionOption` | Registers a callback invoked with the fresh `*Conn` every time the Session establishes a new connection (initial dial or reconnect after a failure) -- typically used to re-`Attach` and re-open files that the caller needs to keep using across reconnects. |
+| `WithReconnectBackoff` | `WithReconnectBackoff(schedule []time.Duration) SessionOption` | Overrides the dial retry schedule (default 10ms doubling to a 5s cap). After the last entry the cadence stays at that entry; every sleep gets up to +50% random jitter. An empty slice is ignored; the slice is copied. |
+| `WithSessionLogger` | `WithSessionLogger(logger *slog.Logger) SessionOption` | Sets the logger that receives one Debug record per failed dial attempt (attempt number, backoff, error). Defaults to `slog.Default()`. Distinct from the per-`Conn` `WithLogger` option. |
 
 ```go
 sess := client.NewSessionWithOptions(dialer, []client.Option{client.WithMsize(1 << 20)},

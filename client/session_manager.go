@@ -2,10 +2,45 @@ package client
 
 import (
 	"context"
+	"log/slog"
+	"math/rand/v2"
 	"net"
 	"sync"
 	"time"
 )
+
+// defaultDialBackoff is the retry cadence for Session reconnection. It
+// starts low so a transient blip (server restart, dropped socket) is
+// retried almost immediately, then doubles up to a 5s cap so a peer that
+// stays down is probed at a sustainable rate rather than hammered at the
+// sub-second cadence a lock poll wants. Each sleep gets up to +50%
+// random jitter (see dialJitter) so a fleet of clients that lost the
+// same server does not reconnect in lockstep.
+//
+// Override via [WithReconnectBackoff].
+var defaultDialBackoff = []time.Duration{
+	10 * time.Millisecond,
+	20 * time.Millisecond,
+	40 * time.Millisecond,
+	80 * time.Millisecond,
+	160 * time.Millisecond,
+	320 * time.Millisecond,
+	640 * time.Millisecond,
+	1280 * time.Millisecond,
+	2560 * time.Millisecond,
+	5 * time.Second,
+}
+
+// dialJitter widens d by a uniform random extension in [0, d/2]. Jitter
+// only ever lengthens the sleep, so schedule entries remain lower bounds
+// (tests asserting minimum elapsed time stay valid) while simultaneous
+// reconnecters decorrelate.
+func dialJitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	return d + rand.N(d/2+1)
+}
 
 // Session manages a stateful 9P connection that handles automatic
 // reconnection with backoff.
@@ -30,6 +65,12 @@ type Session struct {
 	closed  bool
 
 	onReconnect func(context.Context, *Conn) error
+	// backoff is the reconnect retry schedule (never empty; defaults to
+	// defaultDialBackoff). Immutable after construction.
+	backoff []time.Duration
+	// logger receives a Debug record per failed dial attempt. Never nil;
+	// defaults to slog.Default(). Immutable after construction.
+	logger *slog.Logger
 }
 
 // SessionOption configures a Session.
@@ -45,6 +86,32 @@ func WithOnReconnect(fn func(context.Context, *Conn) error) SessionOption {
 	}
 }
 
+// WithReconnectBackoff overrides the retry schedule used when a dial or
+// handshake fails (default [defaultDialBackoff]: 10ms doubling to a 5s
+// cap). After the last entry the cadence stays at that entry; up to +50%
+// random jitter is added to every sleep. An empty schedule is ignored.
+// The slice is copied, so callers may reuse theirs after the call.
+func WithReconnectBackoff(schedule []time.Duration) SessionOption {
+	return func(s *Session) {
+		if len(schedule) == 0 {
+			return
+		}
+		s.backoff = append([]time.Duration(nil), schedule...)
+	}
+}
+
+// WithSessionLogger sets the structured logger the Session uses to report
+// failed dial attempts (one Debug record per failure). A nil logger is
+// ignored - the existing logger (by default [slog.Default]) is kept. This
+// is distinct from [WithLogger], which configures the per-Conn logger.
+func WithSessionLogger(logger *slog.Logger) SessionOption {
+	return func(s *Session) {
+		if logger != nil {
+			s.logger = logger
+		}
+	}
+}
+
 // NewSession returns a new Session that uses the provided dialer to
 // establish connections.
 func NewSession(dialer func(ctx context.Context) (net.Conn, error), opts ...Option) *Session {
@@ -52,6 +119,8 @@ func NewSession(dialer func(ctx context.Context) (net.Conn, error), opts ...Opti
 		dialer:  dialer,
 		opts:    opts,
 		closeCh: make(chan struct{}),
+		backoff: defaultDialBackoff,
+		logger:  slog.Default(),
 	}
 }
 
@@ -62,6 +131,8 @@ func NewSessionWithOptions(dialer func(ctx context.Context) (net.Conn, error), o
 		dialer:  dialer,
 		opts:    opts,
 		closeCh: make(chan struct{}),
+		backoff: defaultDialBackoff,
+		logger:  slog.Default(),
 	}
 	for _, opt := range sopts {
 		opt(s)
@@ -77,8 +148,9 @@ func NewSessionWithOptions(dialer func(ctx context.Context) (net.Conn, error), o
 // dialer call; the others will block until the connection is ready.
 //
 // On dialer or handshake failure, Conn retries with exponential backoff
-// (default 10/20/40/80/160/320/500ms cap) until a connection is
-// established or the provided context is cancelled.
+// (default 10ms doubling to a 5s cap, plus jitter; see
+// [WithReconnectBackoff]) until a connection is established or the
+// provided context is cancelled.
 func (s *Session) Conn(ctx context.Context) (*Conn, error) {
 	for {
 		s.mu.Lock()
@@ -155,7 +227,13 @@ func (s *Session) dialWithBackoff(ctx context.Context) (*Conn, error) {
 			return nil, ErrSessionClosed
 		default:
 		}
-		t := time.NewTimer(backoffFor(defaultLockBackoff, i))
+		d := dialJitter(backoffFor(s.backoff, i))
+		s.logger.Debug("client: session dial failed",
+			slog.Int("attempt", i+1),
+			slog.Duration("backoff", d),
+			slog.Any("error", err),
+		)
+		t := time.NewTimer(d)
 		select {
 		case <-t.C:
 		case <-ctx.Done():
