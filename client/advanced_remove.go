@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/dotwaffle/ninep/proto"
 )
@@ -14,20 +13,17 @@ import (
 const atRemoveDir = 0x200
 
 // Remove removes the file or directory at path. On 9P2000.L the wire op is
-// Tunlinkat against the parent fid; auto-detects directories via a probe
-// walk that reads QID.Type and sets the AT_REMOVEDIR flag accordingly. On
-// 9P2000.u, Remove returns wrapped [ErrNotSupported] - .u lacks Tunlinkat
-// and this library's server does not implement a Tremove handler (so a .u
-// fallback cannot succeed anywhere).
+// Tunlinkat against the parent fid; directories are auto-detected by
+// retry -- flags=0 first, then AT_REMOVEDIR when the server answers
+// EISDIR. On 9P2000.u, Remove returns wrapped [ErrNotSupported] - .u
+// lacks Tunlinkat and this library's server does not implement a Tremove
+// handler (so a .u fallback cannot succeed anywhere).
 //
 // The path must be non-root. All intermediate parent directories must
 // exist; a missing parent surfaces the server's ENOENT as a *[Error].
 //
-// Fid lifecycle: Remove acquires up to two fids (parent + probe target),
-// clunks and releases both on every exit path - no fid leaks on any
-// failure mode. No separate Clunk is needed for the probe
-// fid; Tunlinkat operates against the parent fid and the probe exists
-// only to determine the AT_REMOVEDIR flag value.
+// Fid lifecycle: Remove acquires one fid (the parent directory), clunked
+// and released on every exit path - no fid leaks on any failure mode.
 func (c *Conn) Remove(ctx context.Context, p string) error {
 	if err := c.requireDialect(protocolL, "Remove"); err != nil {
 		return err
@@ -44,56 +40,21 @@ func (c *Conn) Remove(ctx context.Context, p string) error {
 	name := full[len(full)-1]
 
 	// Walk to the parent directory.
-	dirFid, err := c.fids.acquire()
+	dirFid, dirCleanup, err := c.walkNew(ctx, root.fid, parents, "parent")
 	if err != nil {
 		return err
 	}
-	qids, err := c.Walk(ctx, root.fid, dirFid, parents)
-	if err != nil {
-		c.fids.release(dirFid)
-		return err
-	}
-	if len(parents) > 0 && len(qids) != len(parents) {
-		c.fids.release(dirFid)
-		return fmt.Errorf("client: partial walk to parent (%d of %d steps)", len(qids), len(parents))
-	}
+	defer dirCleanup()
 
-	// Probe walk: clone dirFid into a fresh fid stepped one level to
-	// `name`, read the QID type, then clunk+release the probe. This
-	// lets Remove pick the right AT_REMOVEDIR flag without the caller
-	// supplying it. A failed probe (ENOENT) surfaces immediately.
-	probeFid, err := c.fids.acquire()
-	if err != nil {
-		_ = c.Clunk(context.Background(), dirFid)
-		c.fids.release(dirFid)
-		return err
+	// Try the file case first: most removals target files, and the
+	// server distinguishes for us -- Tunlinkat with flags=0 on a
+	// directory fails with EISDIR, the cue to retry with AT_REMOVEDIR.
+	// This replaces the old probe walk (a Twalk+Tclunk round-trip per
+	// removal) and closes its TOCTOU window, where the target could
+	// change type between the probe and the unlink.
+	err = c.Raw().Tunlinkat(ctx, dirFid, name, 0)
+	if errors.Is(err, proto.EISDIR) {
+		err = c.Raw().Tunlinkat(ctx, dirFid, name, atRemoveDir)
 	}
-	probeQIDs, err := c.Walk(ctx, dirFid, probeFid, []string{name})
-	if err != nil {
-		c.fids.release(probeFid)
-		_ = c.Clunk(context.Background(), dirFid)
-		c.fids.release(dirFid)
-		return err
-	}
-	if len(probeQIDs) != 1 {
-		// Partial walk on a single-step op means the target doesn't
-		// exist. probeFid is NOT server-bound; no Clunk.
-		c.fids.release(probeFid)
-		_ = c.Clunk(context.Background(), dirFid)
-		c.fids.release(dirFid)
-		return fmt.Errorf("client: Remove target not found: %s", name)
-	}
-	flags := uint32(0)
-	if probeQIDs[0].Type&proto.QTDIR != 0 {
-		flags = atRemoveDir
-	}
-	_ = c.Clunk(context.Background(), probeFid)
-	c.fids.release(probeFid)
-
-	// Issue Tunlinkat; clunk+release the parent fid regardless of
-	// outcome.
-	unlinkErr := c.Raw().Tunlinkat(ctx, dirFid, name, flags)
-	_ = c.Clunk(context.Background(), dirFid)
-	c.fids.release(dirFid)
-	return unlinkErr
+	return err
 }
