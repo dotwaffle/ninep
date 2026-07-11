@@ -214,10 +214,8 @@ Sentinel errors for internal server logic live in `server/errors.go`:
 ```go
 var (
     ErrFidInUse      = errors.New("fid already in use")
-    ErrFidNotFound   = errors.New("fid not found")
     ErrNotNegotiated = errors.New("version not negotiated")
     ErrMsizeTooSmall = errors.New("msize too small")
-    ErrNotDirectory  = errors.New("not a directory")
 )
 ```
 

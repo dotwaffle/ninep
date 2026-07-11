@@ -148,7 +148,7 @@ func TestInflightMap_StartRejectsDuplicateTag(t *testing.T) {
 
 	firstDone := first.Done()
 	secondDone := second.Done()
-	im.flush(1)
+	im.flushWait(1)
 
 	select {
 	case <-firstDone:
@@ -181,7 +181,7 @@ func TestInflightMap_FlushCancelsContext(t *testing.T) {
 	done := rctx.Done()
 
 	// Flush should cancel the context.
-	im.flush(1)
+	im.flushWait(1)
 
 	select {
 	case <-done:
@@ -210,7 +210,7 @@ func TestInflightMap_FlushNonexistentTag(t *testing.T) {
 	im := newInflightMap()
 
 	// Should not panic.
-	im.flush(999)
+	im.flushWait(999)
 }
 
 func TestInflightMap_CancelAll(t *testing.T) {
@@ -267,7 +267,7 @@ func TestInflightMap_Wait(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		im.wait()
+		_ = im.waitWithDeadline(context.Background())
 		close(done)
 	}()
 

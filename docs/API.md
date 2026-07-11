@@ -471,10 +471,8 @@ Wire format per entry: `qid[13] + offset[8] + type[1] + name[s]` (where `name[s]
 | Error | Description |
 |-------|-------------|
 | `ErrFidInUse` | Fid already present in the fid table |
-| `ErrFidNotFound` | Fid lookup failed |
 | `ErrNotNegotiated` | Message received before version negotiation |
 | `ErrMsizeTooSmall` | Client proposed msize too small for useful payload |
-| `ErrNotDirectory` | Walk targets a node that does not implement `NodeLookuper` |
 | `ErrFidLimitExceeded` | Per-connection fid cap (`WithMaxFids`) reached; mapped to `proto.EMFILE` on the wire |
 
 ---

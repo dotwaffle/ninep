@@ -171,17 +171,6 @@ func (im *inflightMap) drainChan() chan struct{} {
 	return im.drained
 }
 
-// flush cancels the context of the request with the given tag without waiting
-// for it to finish. It does NOT remove the entry -- the handler goroutine is
-// still running and will call finish when done.
-func (im *inflightMap) flush(tag proto.Tag) {
-	im.mu.Lock()
-	defer im.mu.Unlock()
-	if entry, ok := im.entries[tag]; ok {
-		entry.rctx.flush(errTflushCancelled)
-	}
-}
-
 // flushWait cancels the request with the given tag and returns a channel that
 // closes when its handler finishes (after its response is written). It does
 // NOT remove the entry -- the handler goroutine is still running and will call
@@ -211,17 +200,6 @@ func (im *inflightMap) cancelAll() {
 	for _, entry := range im.entries {
 		entry.rctx.flush(errConnCleanup)
 	}
-}
-
-// wait blocks until all in-flight handler goroutines have called finish.
-func (im *inflightMap) wait() {
-	im.mu.Lock()
-	ch := im.drainChan()
-	im.mu.Unlock()
-	if ch == nil {
-		return
-	}
-	<-ch
 }
 
 // waitWithDeadline blocks until all in-flight handlers finish or the context

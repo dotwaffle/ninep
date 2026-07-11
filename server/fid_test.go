@@ -403,18 +403,18 @@ func TestFidTable_MarkOpened(t *testing.T) {
 		t.Fatalf("add: %v", err)
 	}
 
-	if !ft.markOpened(1) {
-		t.Fatal("markOpened: got false, want true")
+	if !ft.markOpenedWithHandle(1, nil) {
+		t.Fatal("markOpenedWithHandle: got false, want true")
 	}
 
 	got := ft.get(1)
 	if got.state != fidOpened {
-		t.Errorf("state after markOpened: got %v, want fidOpened", got.state)
+		t.Errorf("state after markOpenedWithHandle: got %v, want fidOpened", got.state)
 	}
 
 	// Second markOpened should fail (already opened).
-	if ft.markOpened(1) {
-		t.Error("second markOpened: got true, want false (already opened)")
+	if ft.markOpenedWithHandle(1, nil) {
+		t.Error("second markOpenedWithHandle: got true, want false (already opened)")
 	}
 }
 
@@ -422,8 +422,8 @@ func TestFidTable_MarkOpenedNonexistent(t *testing.T) {
 	t.Parallel()
 
 	ft := newFidTable()
-	if ft.markOpened(42) {
-		t.Error("markOpened nonexistent fid: got true, want false")
+	if ft.markOpenedWithHandle(42, nil) {
+		t.Error("markOpenedWithHandle nonexistent fid: got true, want false")
 	}
 }
 

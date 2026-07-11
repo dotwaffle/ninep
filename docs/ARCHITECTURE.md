@@ -123,7 +123,7 @@ The server core. Key files and their roles:
 | `composable.go` | `ReadOnlyFile`, `ReadOnlyDir` convenience types |
 | `helpers.go` | `Symlink`, `Device`, `StaticFS` helper node types; `QIDGenerator`, `PathQID` |
 | `qid.go` | `QIDGenerator` (atomic counter), `PathQID` (FNV-1a deterministic), `nodeQID` resolution |
-| `errors.go` | Sentinel errors: `ErrFidInUse`, `ErrFidNotFound`, `ErrNotNegotiated`, `ErrMsizeTooSmall` |
+| `errors.go` | Sentinel errors: `ErrFidInUse`, `ErrNotNegotiated`, `ErrMsizeTooSmall`, `ErrFidLimitExceeded` |
 
 ### `server/memfs/`
 
