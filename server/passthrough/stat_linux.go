@@ -12,11 +12,11 @@ import (
 
 // statToAttr converts a unix.Stat_t to proto.Attr with all fields mapped.
 // UID/GID are transformed through mapper.FromHost for protocol-level reporting.
-func statToAttr(st *unix.Stat_t, mapper UIDMapper) proto.Attr {
-	uid, gid := mapper.FromHost(st.Uid, st.Gid)
+func statToAttr(st *unix.Stat_t, root *Root) proto.Attr {
+	uid, gid := root.mapper.FromHost(st.Uid, st.Gid)
 	return proto.Attr{
 		Valid:     proto.AttrAll,
-		QID:       statToQID(st),
+		QID:       root.qidFor(st),
 		Mode:      st.Mode,
 		UID:       uid,
 		GID:       gid,
@@ -34,9 +34,8 @@ func statToAttr(st *unix.Stat_t, mapper UIDMapper) proto.Attr {
 	}
 }
 
-// statToQID extracts a QID from a unix.Stat_t. The type is derived from
-// the file mode, the version from ctime seconds, and the path from the inode
-// number.
+// statToQID extracts the platform fields of a QID. Root.qidFor replaces Path
+// with a root-scoped device/inode identity before exposing it to clients.
 func statToQID(st *unix.Stat_t) proto.QID {
 	var t proto.QIDType
 	switch st.Mode & unix.S_IFMT {
@@ -49,7 +48,7 @@ func statToQID(st *unix.Stat_t) proto.QID {
 	}
 	return proto.QID{
 		Type:    t,
-		Version: uint32(st.Ctim.Sec),
+		Version: qidVersion(st.Ctim.Sec, st.Ctim.Nsec),
 		Path:    st.Ino,
 	}
 }

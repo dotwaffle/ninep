@@ -37,13 +37,33 @@ func TestNewRoot_Success(t *testing.T) {
 	if qid.Type != proto.QTDIR {
 		t.Errorf("QID.Type = %d, want QTDIR (%d)", qid.Type, proto.QTDIR)
 	}
-	// Path should be the real inode number from stat.
-	var st syscall.Stat_t
-	if err := syscall.Stat(dir, &st); err != nil {
-		t.Fatalf("stat %q: %v", dir, err)
+	if qid.Path == 0 {
+		t.Error("QID.Path = 0, want a root-scoped identity")
 	}
-	if qid.Path != st.Ino {
-		t.Errorf("QID.Path = %d, want inode %d", qid.Path, st.Ino)
+}
+
+func TestQIDPathsUseDeviceAndInodeIdentity(t *testing.T) {
+	t.Parallel()
+	root := &Root{qidPaths: make(map[fileIdentity]uint64), nextQIDPath: 1}
+	first := &unix.Stat_t{Dev: 1, Ino: 7, Mode: syscall.S_IFREG}
+	same := &unix.Stat_t{Dev: 1, Ino: 7, Mode: syscall.S_IFREG}
+	otherDevice := &unix.Stat_t{Dev: 2, Ino: 7, Mode: syscall.S_IFREG}
+
+	firstQID := root.qidFor(first)
+	if got := root.qidFor(same); got.Path != firstQID.Path {
+		t.Fatalf("same identity path = %d, want %d", got.Path, firstQID.Path)
+	}
+	if got := root.qidFor(otherDevice); got.Path == firstQID.Path {
+		t.Fatalf("different devices with inode 7 share QID.Path %d", got.Path)
+	}
+}
+
+func TestQIDVersionIncludesCTimeNanoseconds(t *testing.T) {
+	t.Parallel()
+	first := &unix.Stat_t{Mode: syscall.S_IFREG, Ctim: unix.Timespec{Sec: 1000, Nsec: 1}}
+	second := &unix.Stat_t{Mode: syscall.S_IFREG, Ctim: unix.Timespec{Sec: 1000, Nsec: 2}}
+	if statToQID(first).Version == statToQID(second).Version {
+		t.Fatal("QID version did not change with ctime nanoseconds")
 	}
 }
 
@@ -137,8 +157,8 @@ func TestStatToAttr(t *testing.T) {
 		t.Fatalf("stat: %v", err)
 	}
 
-	mapper := IdentityMapper()
-	attr := statToAttr(&st, mapper)
+	root := &Root{mapper: IdentityMapper(), qidPaths: make(map[fileIdentity]uint64), nextQIDPath: 1}
+	attr := statToAttr(&st, root)
 
 	if attr.Valid != proto.AttrAll {
 		t.Errorf("Valid = %x, want AttrAll (%x)", attr.Valid, proto.AttrAll)
@@ -216,8 +236,8 @@ func TestStatToQID(t *testing.T) {
 			if qid.Path != 12345 {
 				t.Errorf("Path = %d, want 12345", qid.Path)
 			}
-			if qid.Version != 1000 {
-				t.Errorf("Version = %d, want 1000", qid.Version)
+			if qid.Version != qidVersion(1000, 0) {
+				t.Errorf("Version = %d, want %d", qid.Version, qidVersion(1000, 0))
 			}
 		})
 	}
@@ -661,6 +681,14 @@ func TestLinkUsesResolvedSource(t *testing.T) {
 	}
 	if got := string(data); got != "original" {
 		t.Fatalf("hardlink data = %q, want %q", got, "original")
+	}
+	hardlink, err := root.Lookup(t.Context(), "hardlink")
+	if err != nil {
+		t.Fatalf("Lookup hardlink: %v", err)
+	}
+	t.Cleanup(func() { _ = hardlink.(*Node).Close(t.Context()) })
+	if hardlink.QID().Path != target.QID().Path {
+		t.Fatalf("hardlink QID.Path = %d, want target path %d", hardlink.QID().Path, target.QID().Path)
 	}
 }
 

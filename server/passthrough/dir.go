@@ -91,11 +91,11 @@ func (n *Node) Lookup(_ context.Context, name string) (server.Node, error) {
 		return nil, toProtoErr(err)
 	}
 
-	child, err := n.childNode(fd, name, uint64(st.Dev))
+	child, err := n.childNode(fd, name, uint64(st.Dev), st.Ino)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
-	child.Init(statToQID(&st), child)
+	child.Init(n.root.qidFor(&st), child)
 	// SetPrunable opts this child into the server's fid-refcounted pruning:
 	// passthrough's Lookup always re-resolves from the host filesystem (it
 	// never consults the children map as a forward-path cache), so once no
@@ -137,12 +137,12 @@ func (n *Node) Create(_ context.Context, name string, flags uint32, mode proto.F
 		return nil, nil, 0, toProtoErr(err)
 	}
 
-	child, err := n.childNode(pathFd, name, uint64(st.Dev))
+	child, err := n.childNode(pathFd, name, uint64(st.Dev), st.Ino)
 	if err != nil {
 		_ = unix.Close(fd)
 		return nil, nil, 0, toProtoErr(err)
 	}
-	child.Init(statToQID(&st), child)
+	child.Init(n.root.qidFor(&st), child)
 	child.EmbeddedInode().SetPrunable()
 
 	return child, &fileHandle{fd: fd}, 0, nil
@@ -169,11 +169,11 @@ func (n *Node) Mkdir(_ context.Context, name string, mode proto.FileMode, _ uint
 		return nil, toProtoErr(err)
 	}
 
-	child, err := n.childNode(fd, name, uint64(st.Dev))
+	child, err := n.childNode(fd, name, uint64(st.Dev), st.Ino)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
-	child.Init(statToQID(&st), child)
+	child.Init(n.root.qidFor(&st), child)
 	child.EmbeddedInode().SetPrunable()
 
 	return child, nil
@@ -200,11 +200,11 @@ func (n *Node) Symlink(_ context.Context, name, target string, _ uint32) (server
 		return nil, toProtoErr(err)
 	}
 
-	child, err := n.childNode(fd, name, uint64(st.Dev))
+	child, err := n.childNode(fd, name, uint64(st.Dev), st.Ino)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
-	child.Init(statToQID(&st), child)
+	child.Init(n.root.qidFor(&st), child)
 	child.EmbeddedInode().SetPrunable()
 
 	return child, nil
@@ -235,11 +235,11 @@ func (n *Node) Mknod(_ context.Context, name string, mode proto.FileMode, major,
 		return nil, toProtoErr(err)
 	}
 
-	child, err := n.childNode(fd, name, uint64(st.Dev))
+	child, err := n.childNode(fd, name, uint64(st.Dev), st.Ino)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
-	child.Init(statToQID(&st), child)
+	child.Init(n.root.qidFor(&st), child)
 	child.EmbeddedInode().SetPrunable()
 
 	return child, nil

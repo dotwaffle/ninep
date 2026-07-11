@@ -35,7 +35,7 @@ func (n *Node) openResolved(flags uint32) (int, error) {
 		_ = unix.Close(fd)
 		return -1, err
 	}
-	if uint64(st.Dev) != n.dev || st.Ino != n.QID().Path {
+	if uint64(st.Dev) != n.dev || st.Ino != n.ino {
 		_ = unix.Close(fd)
 		return -1, unix.ESTALE
 	}

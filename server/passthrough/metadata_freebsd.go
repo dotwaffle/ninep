@@ -42,7 +42,7 @@ func (n *Node) verifyNamedIdentity() error {
 	if err := unix.Fstatat(n.parentFd, n.name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return err
 	}
-	if uint64(st.Dev) != n.dev || st.Ino != n.QID().Path {
+	if uint64(st.Dev) != n.dev || st.Ino != n.ino {
 		return unix.ESTALE
 	}
 	return nil

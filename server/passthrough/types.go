@@ -3,6 +3,8 @@
 package passthrough
 
 import (
+	"sync"
+
 	"golang.org/x/sys/unix"
 
 	"github.com/dotwaffle/ninep/server"
@@ -28,14 +30,10 @@ type Node struct {
 	parentFd int    // owned dup of parent directory fd, for *at calls; 0 for root
 	name     string // entry name in parent, for *at calls
 
-	// dev is the device number this node's file lived on at Lookup/create
-	// time. FreeBSD's openResolved (reopen_freebsd.go) has no /proc/self/fd
-	// equivalent to reopen a stale fd directly, so it falls back to
-	// re-resolving parentFd+name; dev (together with QID().Path, which
-	// already holds the inode number) lets it detect a concurrent
-	// rename/symlink swap of that directory entry instead of silently
-	// operating on whatever now occupies the name.
+	// dev and ino identify the held host inode for name-based FreeBSD
+	// fallbacks. They are independent of the root-scoped QID path.
 	dev uint64
+	ino uint64
 }
 
 // Root is the top-level node of a passthrough filesystem. It wraps a Node
@@ -50,6 +48,9 @@ type Root struct {
 	dev         uint64
 	ino         uint64
 	allowDevice bool
+	qidMu       sync.Mutex
+	qidPaths    map[fileIdentity]uint64
+	nextQIDPath uint64
 }
 
 // Option configures a Root. Pass to NewRoot.
@@ -86,13 +87,13 @@ type dirHandle struct {
 // FreeBSD reopen fallback) keep working after the parent node is clunked
 // and its own fd closed. The duplicate is released in Node.Close. On error
 // fd is closed and ownership returns to nobody.
-func (n *Node) childNode(fd int, name string, dev uint64) (*Node, error) {
+func (n *Node) childNode(fd int, name string, dev, ino uint64) (*Node, error) {
 	pfd, err := unix.FcntlInt(uintptr(n.fd), unix.F_DUPFD_CLOEXEC, 0)
 	if err != nil {
 		_ = unix.Close(fd)
 		return nil, err
 	}
-	return &Node{fd: fd, root: n.root, parentFd: pfd, name: name, dev: dev}, nil
+	return &Node{fd: fd, root: n.root, parentFd: pfd, name: name, dev: dev, ino: ino}, nil
 }
 
 // xattrFd opens a short-lived real fd for xattr syscalls via openResolved.

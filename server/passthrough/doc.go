@@ -14,6 +14,10 @@
 // namespace lookup, the implementation resolves through a held parent and
 // verifies device and inode before operating.
 //
+// QID paths are stable for a Root's lifetime and keyed by host device and
+// inode, preserving hard-link identity without colliding across devices. QID
+// versions incorporate nanosecond ctime precision.
+//
 // On FreeBSD/{amd64,arm64,arm,386} the O_PATH flag is sourced from a local
 // constant rather than golang.org/x/sys (which doesn't yet export it for
 // those architectures); the value matches FreeBSD's <sys/fcntl.h> and is

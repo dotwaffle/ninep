@@ -28,10 +28,12 @@ func NewRoot(hostPath string, opts ...Option) (*Root, error) {
 	}
 
 	r := &Root{
-		Node:   Node{fd: fd},
-		mapper: IdentityMapper(),
-		dev:    uint64(st.Dev),
-		ino:    st.Ino,
+		Node:        Node{fd: fd, dev: uint64(st.Dev), ino: st.Ino},
+		mapper:      IdentityMapper(),
+		dev:         uint64(st.Dev),
+		ino:         st.Ino,
+		qidPaths:    make(map[fileIdentity]uint64),
+		nextQIDPath: 1,
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -42,7 +44,7 @@ func NewRoot(hostPath string, opts ...Option) (*Root, error) {
 	}
 
 	r.root = r
-	r.Init(statToQID(&st), r)
+	r.Init(r.qidFor(&st), r)
 
 	return r, nil
 }
@@ -99,15 +101,15 @@ func (n *Node) lookupParent() (server.Node, error) {
 		// held fd or the root's host path, never resolving rootFd/".." up
 		// into the host parent outside the export. Anchoring the clamped
 		// child would point these ops at the host parent.
-		child = &Node{fd: fd, root: n.root, dev: uint64(cst.Dev)}
+		child = &Node{fd: fd, root: n.root, dev: uint64(cst.Dev), ino: cst.Ino}
 	} else {
 		var cerr error
-		child, cerr = n.childNode(fd, "..", uint64(cst.Dev))
+		child, cerr = n.childNode(fd, "..", uint64(cst.Dev), cst.Ino)
 		if cerr != nil {
 			return nil, toProtoErr(cerr)
 		}
 	}
-	child.Init(statToQID(&cst), child)
+	child.Init(n.root.qidFor(&cst), child)
 	child.EmbeddedInode().SetPrunable()
 	return child, nil
 }
@@ -157,7 +159,7 @@ func (n *Node) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) 
 	if err := unix.Fstat(n.fd, &st); err != nil {
 		return proto.Attr{}, toProtoErr(err)
 	}
-	return statToAttr(&st, n.root.mapper), nil
+	return statToAttr(&st, n.root), nil
 }
 
 // Setattr modifies file attributes based on the valid mask.
