@@ -13,7 +13,7 @@ import (
 // OTel middleware overhead benchmarks.
 //
 // These benchmarks isolate the per-request cost of the metric path inside
-// newOTelMiddleware so the audit's measure-first decision (Fix #5) can be
+// the OTel middleware so the audit's measure-first decision (Fix #5) can be
 // made on numbers rather than intuition. Two configurations are compared:
 //
 //   - cfg=baseline    -- no OTel middleware (no WithMeter / WithTracer)

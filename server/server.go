@@ -42,6 +42,8 @@ type Server struct {
 	tracerProvider   trace.TracerProvider
 	meterProvider    metric.MeterProvider
 	otelInst         *serverOTelInstruments // server-level metrics (nil if no MeterProvider)
+	otelCore         *otelCore              // shared request-middleware state (nil unless a probe passed)
+	connInst         *connOTelInstruments   // shared conn/fid gauges (nil unless a probe passed)
 
 	// tracerRecording is true when the configured TracerProvider produces
 	// recording spans. Populated once by probeOTelProviders in New(), then
@@ -86,6 +88,13 @@ func New(root Node, opts ...Option) *Server {
 	}
 
 	s.otelInst = newServerOTelInstruments(s.meterProvider) // nil if no MeterProvider
+	if s.tracerRecording || s.meterEnabled {
+		// Build the shared middleware core and conn/fid gauges once here
+		// rather than per connection: instrument creation takes the SDK
+		// registry mutex and the attribute cache is ~30 map entries.
+		s.otelCore = newOTelCore(s.tracerProvider, s.meterProvider)
+		s.connInst = newConnOTelInstruments(s.meterProvider)
+	}
 	return s
 }
 

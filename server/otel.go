@@ -38,7 +38,7 @@ func WithMeter(mp metric.MeterProvider) Option {
 }
 
 // otelInstruments holds all OTel metric instruments for a connection. Created
-// once per connection in newOTelMiddleware so instruments are not allocated
+// once per Server in newOTelCore so instruments are not allocated
 // per-request.
 type otelInstruments struct {
 	duration   metric.Float64Histogram
@@ -47,40 +47,57 @@ type otelInstruments struct {
 	activeReqs metric.Int64UpDownCounter
 }
 
-// newOTelMiddleware creates a Middleware that instruments every 9P operation
-// with OTel spans and metrics. Instruments are created once in the constructor.
-// The conn is used to resolve fid paths and protocol version for span attributes.
-func newOTelMiddleware(tp trace.TracerProvider, mp metric.MeterProvider, c *conn) Middleware {
-	tracer := tp.Tracer(instrumentationName)
+// otelCore holds the per-Server OTel state the request middleware needs:
+// the tracer, the request-scoped instruments, and the per-message-type
+// attribute cache. Built once in server.New; every connection's middleware
+// closure shares it. Instrument creation walks the SDK's instrument
+// registry under a mutex, so doing it per connection would both contend
+// and re-allocate the ~30-entry attribute map on every accept.
+type otelCore struct {
+	tracer      trace.Tracer
+	inst        otelInstruments
+	opNameAttrs map[proto.MessageType]metric.MeasurementOption
+}
+
+// newOTelCore builds the shared OTel state from the configured providers.
+// Called once from server.New when either probe reported a live provider.
+func newOTelCore(tp trace.TracerProvider, mp metric.MeterProvider) *otelCore {
 	meter := mp.Meter(instrumentationName)
-
-	inst := otelInstruments{
-		duration: must(meter.Float64Histogram("ninep.server.duration",
-			metric.WithUnit("s"),
-			metric.WithDescription("Duration of 9P server operations"),
-		)),
-		reqSize: must(meter.Int64Counter("ninep.server.request.size",
-			metric.WithUnit("By"),
-			metric.WithDescription("Size of 9P request messages"),
-		)),
-		respSize: must(meter.Int64Counter("ninep.server.response.size",
-			metric.WithUnit("By"),
-			metric.WithDescription("Size of 9P response messages"),
-		)),
-		activeReqs: must(meter.Int64UpDownCounter("ninep.server.active_requests",
-			metric.WithDescription("Number of active 9P requests"),
-		)),
+	return &otelCore{
+		tracer: tp.Tracer(instrumentationName),
+		inst: otelInstruments{
+			duration: must(meter.Float64Histogram("ninep.server.duration",
+				metric.WithUnit("s"),
+				metric.WithDescription("Duration of 9P server operations"),
+			)),
+			reqSize: must(meter.Int64Counter("ninep.server.request.size",
+				metric.WithUnit("By"),
+				metric.WithDescription("Size of 9P request messages"),
+			)),
+			respSize: must(meter.Int64Counter("ninep.server.response.size",
+				metric.WithUnit("By"),
+				metric.WithDescription("Size of 9P response messages"),
+			)),
+			activeReqs: must(meter.Int64UpDownCounter("ninep.server.active_requests",
+				metric.WithDescription("Number of active 9P requests"),
+			)),
+		},
+		// Per-message-type cache of metric.MeasurementOption holding the
+		// rpc.method attribute, so the hot path's duration.Record call
+		// avoids the allocation metric.WithAttributes would otherwise
+		// impose every request. The set of T-message types is closed and
+		// known at compile time.
+		opNameAttrs: buildOpNameAttrs(),
 	}
+}
 
-	// Build a per-message-type cache of metric.MeasurementOption holding the
-	// rpc.method attribute. Constructed once at middleware build time so the
-	// hot path's duration.Record call avoids the allocation that
-	// metric.WithAttributes(attribute.String(...)) would otherwise impose
-	// every request. The set of T-message types is closed and known at
-	// compile time; iterate the proto.MessageType "Type*" constants used by
-	// dispatch and skip the R-prefixed responses (responses never enter
-	// middleware as msg).
-	opNameAttrs := buildOpNameAttrs()
+// middleware returns the per-connection OTel middleware. Only the conn
+// binding is per-connection (fid-path and protocol span attributes); all
+// instruments and caches come from the shared core.
+func (o *otelCore) middleware(c *conn) Middleware {
+	tracer := o.tracer
+	inst := o.inst
+	opNameAttrs := o.opNameAttrs
 
 	return func(next Handler) Handler {
 		return func(ctx context.Context, tag proto.Tag, msg proto.Message) proto.Message {

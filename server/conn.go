@@ -208,8 +208,8 @@ func newConn(s *Server, nc net.Conn) *conn {
 	// is true and both s.tracerProvider and s.meterProvider are non-nil.
 	mws := s.middlewares
 	if s.tracerRecording || s.meterEnabled {
-		mws = append([]Middleware{newOTelMiddleware(s.tracerProvider, s.meterProvider, c)}, mws...)
-		c.otelInst = newConnOTelInstruments(s.meterProvider)
+		mws = append([]Middleware{s.otelCore.middleware(c)}, mws...)
+		c.otelInst = s.connInst
 	}
 	if s.requestLogging {
 		// Append (innermost) so the log fires inside any OTel span and the
