@@ -187,7 +187,7 @@ for _, tc := range fstest.Cases {
 
 ## Fuzz testing
 
-Fuzz tests exist for both codec packages, verifying the round-trip property: any successfully decoded message must re-encode to identical bytes that decode to an identical message. See `proto/p9l/fuzz_test.go` and `proto/p9u/fuzz_test.go`. The client package adds two more fuzz targets, `FuzzClientLock` and `FuzzClientXattr` (`client/`), exercising the stateful lock and xattr protocol flows against adversarial input.
+Fuzz tests exist for the message and directory-entry codecs, verifying that decoding arbitrary input never panics and that valid messages survive a round trip. The client package adds `FuzzClientLock`, `FuzzClientXattr`, and `FuzzConnReadLoop`, covering stateful protocol flows and response-frame parsing with adversarial input.
 
 ### Running fuzz tests
 
@@ -215,7 +215,7 @@ Run with a time limit:
 go test -fuzz=FuzzCodecRoundTrip -fuzztime=60s ./proto/p9l/
 ```
 
-CI runs a 60-second pass for each of five fuzz targets on every push and pull request (`.github/workflows/ci.yml` `fuzz` job, one matrix leg per target): the p9l codec, p9u codec, dirent codec, `FuzzClientLock`, and `FuzzClientXattr`.
+CI runs a 60-second pass for each of six fuzz targets on every push and pull request (`.github/workflows/ci.yml` `fuzz` job, one matrix leg per target): the p9l codec, p9u codec, dirent codec, `FuzzClientLock`, `FuzzClientXattr`, and `FuzzConnReadLoop`.
 
 Crash inputs are stored in `proto/p9l/testdata/fuzz/` and `proto/p9u/testdata/fuzz/` and are replayed automatically on subsequent `go test` runs.
 
@@ -248,7 +248,7 @@ These tests require:
 
 The `mountV9FS` helper starts a passthrough server on a Unix socket, mounts it with `mount -t 9p`, and registers cleanup (unmount, server shutdown) via `t.Cleanup`.
 
-CI compiles the integration tests every build (`go test -tags integration -run ^$ ./...`) but does not execute them -- the kernel mount machinery is exercised locally or on dedicated runners.
+CI compiles the integration tests in the main test job and executes the Linux kernel mount tests in the dedicated `kernel-mount` job.
 
 ## Writing new tests
 
@@ -341,7 +341,7 @@ Tests commonly define inline node types that embed `server.Inode` and implement 
 - `panicNode` -- panics in Lookup (for panic recovery tests).
 - `stuckNode` -- ignores context cancellation (for drain deadline tests).
 
-Node capability signatures a new test node must match (current as of v1.1.3+ buf-passing Read API):
+Node capability signatures a new test node must match:
 
 ```go
 // Read fills caller-provided buf; returns bytes written.
@@ -462,16 +462,19 @@ The `-count=1` flag disables test caching, ensuring every run exercises the race
 
 ## CI integration
 
-CI is defined in `.github/workflows/ci.yml` and runs on every push to `main` and every pull request. Seven jobs execute in parallel, several with their own runner matrix:
+CI is defined in `.github/workflows/ci.yml` and runs on every push to `main` and every pull request. Ten jobs execute in parallel, several with their own runner matrix:
 
 | Job | Matrix | Command | Purpose |
 |-----|--------|---------|---------|
 | `test` | `ubuntu-latest`, `ubuntu-24.04-arm` | `go vet ./...`, `go test -race -count=1 ./...`, `go build -trimpath ./...`, `go test -tags integration -run ^$ ./...` | Vet, race-enabled test suite, reproducible build, integration-test compile check, on both amd64 and arm64 |
+| `minimum-go` | -- | `go test -race -count=1 ./...`, `go build -trimpath ./...` | Test and build with the minimum Go version declared by `go.mod` |
 | `lint` | -- | `golangci-lint run` (via `golangci/golangci-lint-action@v9`, version `latest`) | Static analysis |
-| `fuzz` | p9l codec, p9u codec, `FuzzClientLock`, `FuzzClientXattr` | `go test -fuzz=<target> -fuzztime=60s -run='^$' <pkg>` | 60s fuzz pass per target, one matrix leg each; crashers are uploaded as artifacts on failure |
+| `vulnerability` | -- | `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` | Scan reachable dependencies against the current Go vulnerability database |
+| `fuzz` | p9l codec, p9u codec, dirent codec, `FuzzClientLock`, `FuzzClientXattr`, `FuzzConnReadLoop` | `go test -fuzz=<target> -fuzztime=60s -run='^$' <pkg>` | 60s fuzz pass per target, one matrix leg each; crashers are uploaded as artifacts on failure |
 | `stress` | `ubuntu-latest`, `ubuntu-24.04-arm` | `go test -tags=stress -race -count=1 ./server/...` | Race-sensitive stress tests targeting the requestCtx concurrency surface |
 | `vsock` | `ubuntu-latest`, `ubuntu-24.04-arm` | `go test -race -count=1 -v ./vsock/...` (fails if any test skips) | AF_VSOCK loopback tests against the real kernel vsock transport |
-| `benchmark` | -- | `go test -bench=BenchmarkClient -run=^$ ./client/` piped through `benchstat` | Client benchmark smoke run |
+| `kernel-mount` | -- | `go test -tags=integration -count=1 -v ./server/passthrough -run '^TestKernelMount'` | Execute passthrough tests through the Linux v9fs kernel client |
+| `freebsd-runtime` | -- | `go test -count=1 ./server/passthrough` in a FreeBSD VM | Execute host-specific passthrough behavior on FreeBSD |
 | `cross-build` | GOOS/GOARCH combinations not covered by the other jobs | `go vet` + `go build` per platform | Compile-only check; exists because an amd64-only CI once missed a passthrough build break on arm/386 |
 
-Go version tracks `stable` via `actions/setup-go@v6`. The integration-test step compiles but does not execute the kernel tests (the `-run ^$` pattern matches no tests); actual kernel mount tests run locally or on dedicated runners.
+The main jobs track Go `stable`; `minimum-go` reads the version from `go.mod`. Workflow actions and installed tools use their latest stable release channels rather than immutable version pins. Integration tests are compiled on the main runner matrix, while the kernel-mount and FreeBSD jobs execute platform-specific behavior.

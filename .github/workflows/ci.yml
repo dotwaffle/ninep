@@ -64,6 +64,23 @@ jobs:
       - name: Compile integration tests
         run: go test -tags integration -run ^$ ./...
 
+  minimum-go:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Test minimum supported Go
+        run: go test -race -count=1 ./...
+
+      - name: Build minimum supported Go
+        run: go build -trimpath ./...
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -94,6 +111,20 @@ jobs:
         with:
           version: latest
 
+  vulnerability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Check known vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
   fuzz:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -116,6 +147,9 @@ jobs:
           - name: client-xattr
             target: FuzzClientXattr
             pkg: ./client/
+          - name: client-read-loop
+            target: FuzzConnReadLoop
+            pkg: ./client/
     steps:
       - uses: actions/checkout@v6
 
@@ -130,7 +164,7 @@ jobs:
           key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
           restore-keys: ${{ runner.os }}-gomod-
 
-      # Per-matrix-leg key: the five legs run in parallel and build
+      # Per-matrix-leg key: the legs run in parallel and build
       # different packages, so a shared key would re-introduce
       # first-writer-wins among them.
       - uses: actions/cache@v5
@@ -265,47 +299,11 @@ jobs:
           prepare: pkg install -y go
           run: go test -count=1 ./server/passthrough
 
-  benchmark:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version: stable
-          cache: false
-
-      - uses: actions/cache@v5
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
-          restore-keys: ${{ runner.os }}-gomod-
-
-      - uses: actions/cache@v5
-        with:
-          path: ~/.cache/go-build
-          key: ${{ runner.os }}-${{ runner.arch }}-gobuild-benchmark-${{ hashFiles('**/go.sum') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-gobuild-benchmark-
-
-      - name: Install benchstat
-        run: go install golang.org/x/perf/cmd/benchstat@latest
-
-      - name: Run benchmarks
-        run: go test -v -bench=BenchmarkClient -run=^$ ./client/ | tee benchmarks.txt
-
-      - name: Process benchmarks
-        run: benchstat benchmarks.txt
-
   cross-build:
     # Compile+vet only (no test execution) on GOOS/GOARCH combinations the
     # test/lint/fuzz/stress/vsock jobs never touch, since those all run on
-    # ubuntu amd64/arm64. This exists because of a real incident: an
-    # unconvert --fix in server/passthrough broke the linux/arm, linux/386,
-    # and linux/arm64 cross-builds while staying invisible to amd64-only CI
-    # (see .golangci.yml). Most of these GOOS targets can't run tests on a
-    # Linux runner anyway, so this only proves the tree still builds and
-    # vets there.
+    # ubuntu amd64/arm64. Most of these targets cannot run tests on a Linux
+    # runner, so this job verifies that the tree still builds and vets there.
     strategy:
       fail-fast: false
       matrix:
@@ -340,7 +338,7 @@ jobs:
           key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
           restore-keys: ${{ runner.os }}-gomod-
 
-      # Per-target key: the six legs run in parallel and cross-compile
+      # Per-target key: the legs run in parallel and cross-compile
       # different GOOS/GOARCH pairs, so a shared key would re-introduce
       # first-writer-wins among them.
       - uses: actions/cache@v5
