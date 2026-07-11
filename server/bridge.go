@@ -239,6 +239,9 @@ func (c *conn) handleWrite(ctx context.Context, m *proto.Twrite) proto.Message {
 			if err != nil {
 				return c.errorMsg(errnoFromError(err))
 			}
+			if !validWriteCount(int64(n), len(m.Data)) {
+				return c.errorMsg(proto.EIO)
+			}
 			return &proto.Rwrite{Count: uint32(n)}
 		}
 		// Simple interface: append data to the xattr buffer. Offset is ignored
@@ -274,6 +277,9 @@ func (c *conn) handleWrite(ctx context.Context, m *proto.Twrite) proto.Message {
 			if err != nil {
 				return c.errorMsg(errnoFromError(err))
 			}
+			if !validWriteCount(int64(count), len(m.Data)) {
+				return c.errorMsg(proto.EIO)
+			}
 			return &proto.Rwrite{Count: count}
 		}
 	}
@@ -288,7 +294,14 @@ func (c *conn) handleWrite(ctx context.Context, m *proto.Twrite) proto.Message {
 	if err != nil {
 		return c.errorMsg(errnoFromError(err))
 	}
+	if !validWriteCount(int64(count), len(m.Data)) {
+		return c.errorMsg(proto.EIO)
+	}
 	return &proto.Rwrite{Count: count}
+}
+
+func validWriteCount(count int64, payloadLen int) bool {
+	return count >= 0 && uint64(count) <= uint64(payloadLen)
 }
 
 // handleGetattr dispatches to NodeGetattrer.

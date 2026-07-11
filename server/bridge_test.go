@@ -708,6 +708,88 @@ func TestBridge_Write(t *testing.T) {
 	}
 }
 
+type fixedWriteNode struct {
+	Inode
+	count uint32
+}
+
+func (n *fixedWriteNode) Write(context.Context, []byte, uint64) (uint32, error) {
+	return n.count, nil
+}
+
+type fixedWriteHandle struct {
+	count uint32
+}
+
+func (h *fixedWriteHandle) Write(context.Context, []byte, uint64) (uint32, error) {
+	return h.count, nil
+}
+
+type fixedXattrWriter struct {
+	count int
+}
+
+func (w *fixedXattrWriter) Write(context.Context, []byte) (int, error) {
+	return w.count, nil
+}
+
+func (w *fixedXattrWriter) Commit(context.Context) error { return nil }
+
+func TestBridgeWriteRejectsInvalidBackendCounts(t *testing.T) {
+	t.Parallel()
+	request := &proto.Twrite{Fid: 1, Data: []byte("abc")}
+	tests := []struct {
+		name  string
+		state *fidState
+	}{
+		{
+			name: "file handle overreports",
+			state: &fidState{
+				state:  fidOpened,
+				handle: &fixedWriteHandle{count: 4},
+			},
+		},
+		{
+			name: "node overreports",
+			state: func() *fidState {
+				node := &fixedWriteNode{count: 4}
+				node.Init(proto.QID{Path: 1}, node)
+				return &fidState{state: fidOpened, node: node}
+			}(),
+		},
+		{
+			name: "xattr writer returns negative count",
+			state: &fidState{
+				state:       fidXattrWrite,
+				xattrWriter: &fixedXattrWriter{count: -1},
+			},
+		},
+		{
+			name: "xattr writer overreports",
+			state: &fidState{
+				state:       fidXattrWrite,
+				xattrWriter: &fixedXattrWriter{count: 4},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &conn{fids: newFidTable(), msize: 1024}
+			if err := c.fids.add(1, tt.state, 0); err != nil {
+				t.Fatalf("add fid: %v", err)
+			}
+			msg := c.handleWrite(t.Context(), request)
+			errMsg, ok := msg.(*p9l.Rlerror)
+			if !ok {
+				t.Fatalf("handleWrite returned %T, want Rlerror", msg)
+			}
+			if errMsg.Ecode != proto.EIO {
+				t.Fatalf("ecode = %v, want EIO", errMsg.Ecode)
+			}
+		})
+	}
+}
+
 func TestBridge_Getattr(t *testing.T) {
 	t.Parallel()
 
