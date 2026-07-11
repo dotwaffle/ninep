@@ -142,8 +142,9 @@
 //     both .L and .u). On .L, internally uses Tgetattr; on .u, uses Tstat.
 //   - [File.Getattr] -- rich .L-specific [proto.Attr] (includes NLink,
 //     Blocks, BTime, Gen, DataVersion dropped by Stat). (.L-only)
-//   - [File.Setattr] -- write metadata (chmod/chown/truncate via
-//     [proto.SetAttr].Valid bitmask). (.L-only)
+//   - [File.Setattr] -- write metadata via a [proto.SetAttr].Valid
+//     bitmask; [File.Chmod], [File.Chown], and [File.Truncate] wrap the
+//     common cases. (.L-only)
 //   - [File.Statfs] -- filesystem-level stats (by value, not pointer).
 //     (.L-only)
 //   - [File.RefreshSize] -- refresh the File's cachedSize from the server
@@ -174,11 +175,6 @@
 // The Tauth afid handshake is not implemented. [Conn.Attach] always
 // passes NoFid; authentication must be handled at the transport layer
 // (TLS, SSH). See the "Authentication Scope" section above.
-//
-// Chmod / Chown / Truncate convenience helpers are deferred -- callers
-// invoke [File.Setattr] with the appropriate [proto.SetAttr].Valid
-// bitmask. A future ergonomic pass may add wrappers if consumer demand
-// surfaces.
 //
 // Twstat is intentionally unexposed on the high-level surface. .u
 // callers that need path-rename or metadata-write semantics compose
