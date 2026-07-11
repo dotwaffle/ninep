@@ -2,7 +2,11 @@
 
 package passthrough
 
-import "golang.org/x/sys/unix"
+import (
+	"errors"
+
+	"golang.org/x/sys/unix"
+)
 
 func (n *Node) openResolved(flags uint32) (int, error) {
 	if n.parentFd == 0 && n.name == "" {
@@ -18,6 +22,11 @@ func (n *Node) openResolved(flags uint32) (int, error) {
 	// (dev, ino) check below catches a same-type substitution (e.g. the
 	// entry unlinked and replaced with a different regular file).
 	fd, err := unix.Openat(n.parentFd, n.name, openFlags(flags)|unix.O_NOFOLLOW, 0)
+	// FreeBSD reports EMLINK when O_NOFOLLOW rejects a final symlink.
+	// Normalize it to the POSIX ELOOP contract used by passthrough callers.
+	if errors.Is(err, unix.EMLINK) {
+		return -1, unix.ELOOP
+	}
 	if err != nil {
 		return -1, err
 	}
