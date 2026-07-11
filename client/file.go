@@ -236,6 +236,19 @@ func (f *File) maxChunk() uint32 {
 	return min(msizeLimit, proto.MaxDataSize)
 }
 
+// chunkLen returns min(n, m) as a uint32. n is compared against m in
+// int space BEFORE any conversion, so a buffer length past uint32's
+// range (>4 GiB, reachable only on 64-bit platforms) clamps to m
+// instead of silently wrapping to a small value -- uint32(n) directly
+// would truncate the high bits first and could produce a count far
+// smaller than the real chunk size.
+func chunkLen(n int, m uint32) uint32 {
+	if n > int(m) {
+		return m
+	}
+	return uint32(n)
+}
+
 // ReadCtx is the ctx-taking variant of [File.Read]. Satisfies the same
 // byte-slice semantics as [File.Read] (advances the local offset,
 // clamps count to min(iounit, msize-overhead), returns [io.EOF] on a
@@ -259,10 +272,7 @@ func (f *File) ReadCtx(ctx context.Context, p []byte) (int, error) {
 	if f.offset < 0 {
 		return 0, fmt.Errorf("client: negative offset %d", f.offset)
 	}
-	count := uint32(len(p))
-	if m := f.maxChunk(); count > m {
-		count = m
-	}
+	count := chunkLen(len(p), f.maxChunk())
 	data, err := f.conn.Read(ctx, f.fid, uint64(f.offset), count)
 	if err != nil {
 		return 0, err
@@ -321,7 +331,7 @@ func (f *File) WriteCtx(ctx context.Context, p []byte) (int, error) {
 	total := 0
 	for total < len(p) {
 		chunk := p[total:]
-		if m := f.maxChunk(); uint32(len(chunk)) > m {
+		if m := f.maxChunk(); len(chunk) > int(m) {
 			chunk = chunk[:m]
 		}
 		n, err := f.conn.Write(ctx, f.fid, uint64(f.offset), chunk)
@@ -437,10 +447,7 @@ func (f *File) ReadAtCtx(ctx context.Context, p []byte, off int64) (int, error) 
 	defer f.mu.Unlock()
 	total := 0
 	for total < len(p) {
-		count := uint32(len(p) - total)
-		if m := f.maxChunk(); count > m {
-			count = m
-		}
+		count := chunkLen(len(p)-total, f.maxChunk())
 		// Zero-copy: dst aliases the caller's buffer at the chunk slot.
 		// readAtZeroCopy decodes Rread.Data directly into dst[:count],
 		// no intermediate copy.
@@ -565,7 +572,7 @@ func (f *File) WriteAtCtx(ctx context.Context, p []byte, off int64) (int, error)
 	total := 0
 	for total < len(p) {
 		chunk := p[total:]
-		if m := f.maxChunk(); uint32(len(chunk)) > m {
+		if m := f.maxChunk(); len(chunk) > int(m) {
 			chunk = chunk[:m]
 		}
 		n, err := f.conn.Write(ctx, f.fid, uint64(off)+uint64(total), chunk)
