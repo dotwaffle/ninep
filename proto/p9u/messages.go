@@ -323,7 +323,9 @@ func (s *Stat) EncodeTo(w io.Writer) error {
 	return nil
 }
 
-// DecodeFrom reads the stat from r: size[2] + body fields.
+// DecodeFrom reads the stat from r: size[2] + body fields. The declared
+// size must match the encoded body exactly; a stat whose size prefix
+// overstates its content is rejected as malformed.
 func (s *Stat) DecodeFrom(r io.Reader) error {
 	size, err := proto.ReadUint16(r)
 	if err != nil {
@@ -332,7 +334,7 @@ func (s *Stat) DecodeFrom(r io.Reader) error {
 	s.Size = size
 
 	// Bound the read to the declared stat size to prevent over-reading.
-	lr := io.LimitReader(r, int64(size))
+	lr := &io.LimitedReader{R: r, N: int64(size)}
 
 	if s.Type, err = proto.ReadUint16(lr); err != nil {
 		return fmt.Errorf("decode stat type: %w", err)
@@ -380,6 +382,9 @@ func (s *Stat) DecodeFrom(r io.Reader) error {
 	}
 	if s.NMuid, err = proto.ReadUint32(lr); err != nil {
 		return fmt.Errorf("decode stat n_muid: %w", err)
+	}
+	if lr.N != 0 {
+		return fmt.Errorf("decode stat: declared size %d exceeds encoded body by %d bytes", size, lr.N)
 	}
 	return nil
 }
@@ -444,10 +449,14 @@ func (m *Rstat) DecodeFrom(r io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("decode rstat nstat: %w", err)
 	}
-	// Bound the stat read to the declared nstat bytes.
-	lr := io.LimitReader(r, int64(nstat))
+	// Bound the stat read to the declared nstat bytes and require the stat
+	// encoding to fill them exactly: nstat = 2-byte size prefix + stat body.
+	lr := &io.LimitedReader{R: r, N: int64(nstat)}
 	if err := m.Stat.DecodeFrom(lr); err != nil {
 		return fmt.Errorf("decode rstat stat: %w", err)
+	}
+	if lr.N != 0 {
+		return fmt.Errorf("decode rstat: nstat %d exceeds stat encoding by %d bytes", nstat, lr.N)
 	}
 	return nil
 }
@@ -492,9 +501,12 @@ func (m *Twstat) DecodeFrom(r io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("decode twstat nstat: %w", err)
 	}
-	lr := io.LimitReader(r, int64(nstat))
+	lr := &io.LimitedReader{R: r, N: int64(nstat)}
 	if err := m.Stat.DecodeFrom(lr); err != nil {
 		return fmt.Errorf("decode twstat stat: %w", err)
+	}
+	if lr.N != 0 {
+		return fmt.Errorf("decode twstat: nstat %d exceeds stat encoding by %d bytes", nstat, lr.N)
 	}
 	return nil
 }

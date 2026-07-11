@@ -192,6 +192,91 @@ func TestDecodeUnknownType(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsOverstatedStatSize(t *testing.T) {
+	t.Parallel()
+
+	stat := p9u.Stat{
+		QID:    proto.QID{Type: proto.QTFILE, Version: 1, Path: 42},
+		Mode:   0644,
+		Length: 4096,
+		Name:   "f",
+		UID:    "u",
+		GID:    "g",
+		MUID:   "m",
+	}
+
+	tests := []struct {
+		name    string
+		encode  func(*bytes.Buffer) error
+		sizePos int // offset of the size field to inflate
+		decode  func(*bytes.Reader) error
+	}{
+		{
+			name:    "stat size prefix",
+			encode:  func(buf *bytes.Buffer) error { return stat.EncodeTo(buf) },
+			sizePos: 0,
+			decode: func(r *bytes.Reader) error {
+				var s p9u.Stat
+				return s.DecodeFrom(r)
+			},
+		},
+		{
+			name: "rstat nstat",
+			encode: func(buf *bytes.Buffer) error {
+				return (&p9u.Rstat{Stat: stat}).EncodeTo(buf)
+			},
+			sizePos: 0,
+			decode: func(r *bytes.Reader) error {
+				var m p9u.Rstat
+				return m.DecodeFrom(r)
+			},
+		},
+		{
+			name: "twstat nstat",
+			encode: func(buf *bytes.Buffer) error {
+				return (&p9u.Twstat{Fid: 1, Stat: stat}).EncodeTo(buf)
+			},
+			sizePos: 4, // after fid[4]
+			decode: func(r *bytes.Reader) error {
+				var m p9u.Twstat
+				return m.DecodeFrom(r)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+			if err := tt.encode(&buf); err != nil {
+				t.Fatalf("encode: %v", err)
+			}
+			data := buf.Bytes()
+
+			// Honest encoding must decode cleanly.
+			if err := tt.decode(bytes.NewReader(data)); err != nil {
+				t.Fatalf("decode of honest encoding: %v", err)
+			}
+
+			// Inflate the declared size beyond the actual content. The body
+			// bytes are unchanged, so field parsing succeeds but leaves the
+			// declared byte count unconsumed.
+			inflated := bytes.Clone(data)
+			size := binary.LittleEndian.Uint16(inflated[tt.sizePos:])
+			binary.LittleEndian.PutUint16(inflated[tt.sizePos:], size+10)
+
+			err := tt.decode(bytes.NewReader(inflated))
+			if err == nil {
+				t.Fatal("expected error for overstated size, got nil")
+			}
+			if !strings.Contains(err.Error(), "exceeds") {
+				t.Errorf("error should mention size mismatch, got: %v", err)
+			}
+		})
+	}
+}
+
 func TestDecodeTruncated(t *testing.T) {
 	t.Parallel()
 
