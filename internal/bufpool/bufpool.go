@@ -5,10 +5,9 @@
 // letting cross-package consumers (proto/p9l, proto/p9u, server) share a
 // single pool.
 //
-// # Two-tier design
+// # Three independent pools
 //
-// The package exposes three independent pools, sized for distinct
-// workloads:
+// The package exposes three pools, sized for distinct workloads:
 //
 //   - [GetBuf] / [PutBuf] -- *bytes.Buffer for arbitrary-size encode
 //     targets. Used by version negotiation and other variable-size

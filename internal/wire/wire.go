@@ -10,10 +10,10 @@
 // and write deadlines. Deadlines are NOT threaded through these helpers;
 // callers set them on the net.Conn directly before calling in.
 //
-// A Framer struct was rejected because the 1%-of-sec-op benchmark
-// gate is tight enough that an extra indirection could move the
-// measurement. Stay close to the inline shape - pass args, return
-// errors, nothing else.
+// A Framer struct was rejected because the extraction was gated on a
+// sub-1% ns/op benchmark delta, tight enough that an extra indirection
+// could move the measurement. Stay close to the inline shape -- pass
+// args, return errors, nothing else.
 //
 // # Read path
 //

@@ -12,8 +12,8 @@
 //
 // Channels give atomic Get/Put without the cross-P balancing overhead that
 // sync.Pool exhibits under goroutine-per-request workloads. The v1.1.15
-// measurement showed ~15% regression when sync.Pool wrapped *proto.Tread
-// (see ninep §Performance); the bounded-chan design sidesteps that entirely.
+// measurement showed ~15% regression when sync.Pool wrapped *proto.Tread;
+// the bounded-chan design sidesteps that entirely.
 //
 // # Aliasing invariant (caller responsibility)
 //
@@ -32,9 +32,8 @@ package pool
 // Cap is the per-Cache channel depth. Matches the msgCacheCap = 3 constant
 // from the pre-extraction server/msgcache.go:14. Three slots hold the few
 // in-flight messages a typical dispatch loop has in the receive-decode-handle
-// pipeline without retaining unused memory. Do NOT change without updating
-// the server §Performance notes and re-running the BenchmarkWalkClunk
-// comparison.
+// pipeline without retaining unused memory. Do NOT change without
+// re-running the BenchmarkWalkClunk comparison.
 const Cap = 3
 
 // Ordering: channel-FIFO. A Put followed by three more Puts and four Gets
