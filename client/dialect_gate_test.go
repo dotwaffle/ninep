@@ -148,8 +148,8 @@ func TestClient_DialectGates_All(t *testing.T) {
 		{"File.Getattr", func() error { _, err := fU.Getattr(ctx, proto.AttrBasic); return err }},
 		{"File.Setattr", func() error { return fU.Setattr(ctx, proto.SetAttr{}) }},
 		{"Conn.Link", func() error { return cU.Link(ctx, "/a", "/b") }},
-		{"Conn.Mknod", func() error { _, err := cU.Mknod(ctx, "/", "fifo", 0o644, 0, 0, 0); return err }},
-		{"Conn.Mkdir", func() error { _, err := cU.Mkdir(ctx, "/", "dir", 0o755, 0); return err }},
+		{"Conn.Mknod", func() error { _, err := cU.Mknod(ctx, "/fifo", 0o644, 0, 0, 0); return err }},
+		{"Conn.Mkdir", func() error { _, err := cU.Mkdir(ctx, "/dir", 0o755, 0); return err }},
 		{"File.Fsync", func() error { return fU.Fsync(ctx, false) }},
 	}
 	for _, tc := range lOnlyCases {

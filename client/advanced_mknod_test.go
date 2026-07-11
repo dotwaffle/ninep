@@ -35,7 +35,7 @@ func TestClient_Mknod_CreatesNode(t *testing.T) {
 	// DeviceNode unconditionally, but the wire encoding still carries
 	// the mode byte correctly.
 	mode := proto.FileMode(0o010000 | 0o0666)
-	f, err := cli.Mknod(ctx, "/", "fifo1", mode, 0, 0, 0)
+	f, err := cli.Mknod(ctx, "/fifo1", mode, 0, 0, 0)
 	if err != nil {
 		t.Fatalf("Mknod: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestClient_Mknod_Subdir(t *testing.T) {
 		t.Fatalf("Attach: %v", err)
 	}
 
-	f, err := cli.Mknod(ctx, "/dev", "null", proto.FileMode(0o020666), 1, 3, 0)
+	f, err := cli.Mknod(ctx, "/dev/null", proto.FileMode(0o020666), 1, 3, 0)
 	if err != nil {
 		t.Fatalf("Mknod subdir: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestClient_Mknod_NotSupportedOnU(t *testing.T) {
 	if _, err := cli.Attach(ctx, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	if _, err := cli.Mknod(ctx, "/", "x", proto.FileMode(0), 0, 0, 0); !errors.Is(err, client.ErrNotSupported) {
+	if _, err := cli.Mknod(ctx, "/x", proto.FileMode(0), 0, 0, 0); !errors.Is(err, client.ErrNotSupported) {
 		t.Fatalf("Mknod err = %v, want ErrNotSupported", err)
 	}
 }

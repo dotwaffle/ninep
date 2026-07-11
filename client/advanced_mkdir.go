@@ -7,9 +7,8 @@ import (
 	"github.com/dotwaffle/ninep/proto"
 )
 
-// Mkdir creates a directory named name under the directory at
-// parentPath. mode carries the POSIX permission bits; gid sets the
-// owning group.
+// Mkdir creates the directory at path. mode carries the POSIX
+// permission bits; gid sets the owning group.
 //
 // The returned [*File] is a stat-only handle bound to the new
 // directory -- callers wanting to enumerate it open it separately via
@@ -18,15 +17,15 @@ import (
 // Requires a 9P2000.L-negotiated Conn; returns wrapped
 // [ErrNotSupported] on .u (Tmkdir is .L-only).
 //
-// parentPath may be "/" (or equivalent: "", "."). name must be a
-// single path component; callers cannot create intermediate
-// directories via Mkdir.
+// path must be non-root. The parent directories along path must
+// already exist (Mkdir does not recursively create intermediates); a
+// missing parent surfaces the server's ENOENT as a *[Error].
 //
 // Fid lifecycle: mirrors [Conn.Mknod] -- acquires up to two fids
 // (parent dir + newly-created node), both clunked and released on
 // every exit path except the returned *File's fid, which lives on
 // until [File.Close].
-func (c *Conn) Mkdir(ctx context.Context, parentPath, name string, mode proto.FileMode, gid uint32) (*File, error) {
+func (c *Conn) Mkdir(ctx context.Context, path string, mode proto.FileMode, gid uint32) (*File, error) {
 	if err := c.requireDialect(protocolL, "Mkdir"); err != nil {
 		return nil, err
 	}
@@ -34,10 +33,11 @@ func (c *Conn) Mkdir(ctx context.Context, parentPath, name string, mode proto.Fi
 	if root == nil {
 		return nil, errors.New("client: Mkdir requires a prior Attach")
 	}
-	if name == "" {
-		return nil, errors.New("client: Mkdir requires a non-empty name")
+	full := splitPath(path)
+	if len(full) == 0 {
+		return nil, errors.New("client: Mkdir requires a non-root path")
 	}
-	parents := splitPath(parentPath)
+	parents, name := full[:len(full)-1], full[len(full)-1]
 
 	// Walk to the parent directory (zero-step walk for "/" clones the
 	// root fid).

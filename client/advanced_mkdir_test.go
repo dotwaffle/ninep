@@ -23,7 +23,7 @@ func TestClient_Mkdir_CreatesDir(t *testing.T) {
 		t.Fatalf("Attach: %v", err)
 	}
 
-	f, err := cli.Mkdir(ctx, "/", "dir1", proto.FileMode(0o0755), 0)
+	f, err := cli.Mkdir(ctx, "/dir1", proto.FileMode(0o0755), 0)
 	if err != nil {
 		t.Fatalf("Mkdir: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestClient_Mkdir_Subdir(t *testing.T) {
 		t.Fatalf("Attach: %v", err)
 	}
 
-	f, err := cli.Mkdir(ctx, "/parent", "child", proto.FileMode(0o0755), 0)
+	f, err := cli.Mkdir(ctx, "/parent/child", proto.FileMode(0o0755), 0)
 	if err != nil {
 		t.Fatalf("Mkdir subdir: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestClient_Mkdir_NotSupportedOnU(t *testing.T) {
 	if _, err := cli.Attach(ctx, "me", ""); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	if _, err := cli.Mkdir(ctx, "/", "x", proto.FileMode(0o0755), 0); !errors.Is(err, client.ErrNotSupported) {
+	if _, err := cli.Mkdir(ctx, "/x", proto.FileMode(0o0755), 0); !errors.Is(err, client.ErrNotSupported) {
 		t.Fatalf("Mkdir err = %v, want ErrNotSupported", err)
 	}
 }

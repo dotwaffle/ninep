@@ -7,11 +7,11 @@ import (
 	"github.com/dotwaffle/ninep/proto"
 )
 
-// Mknod creates a device/fifo/special-file node named name under the
-// directory at parentPath. Mode carries the POSIX mode bits -- the
-// high-order bits select the node type (S_IFIFO/S_IFCHR/S_IFBLK/S_IFSOCK
-// etc.), the low-order bits are the permission bits. major/minor
-// identify the device; gid sets the owning group.
+// Mknod creates a device/fifo/special-file node at path. Mode carries
+// the POSIX mode bits -- the high-order bits select the node type
+// (S_IFIFO/S_IFCHR/S_IFBLK/S_IFSOCK etc.), the low-order bits are the
+// permission bits. major/minor identify the device; gid sets the
+// owning group.
 //
 // The returned [*File] is a stat-only handle bound to the new node --
 // 9P has no "open a device node" mechanism at this layer; the fid is
@@ -22,16 +22,16 @@ import (
 // on .u (Tmknod is .L-only; .u callers historically encoded device
 // nodes via the Tcreate extension field).
 //
-// parentPath may be "/" (or equivalent: "", "."). name must be a single
-// path component; callers cannot create intermediate directories via
-// Mknod.
+// path must be non-root. The parent directories along path must
+// already exist (Mknod does not recursively create intermediates); a
+// missing parent surfaces the server's ENOENT as a *[Error].
 //
 // Fid lifecycle: acquires up to two fids (parent dir + newly-created
 // node). Both are clunked and released on every exit path -- the parent
 // dirFid at method exit, the newFid only on post-Tmknod walk failure.
 // On success the newFid lives on as the returned *File.fid until
 // [File.Close].
-func (c *Conn) Mknod(ctx context.Context, parentPath, name string, mode proto.FileMode, major, minor, gid uint32) (*File, error) {
+func (c *Conn) Mknod(ctx context.Context, path string, mode proto.FileMode, major, minor, gid uint32) (*File, error) {
 	if err := c.requireDialect(protocolL, "Mknod"); err != nil {
 		return nil, err
 	}
@@ -39,10 +39,11 @@ func (c *Conn) Mknod(ctx context.Context, parentPath, name string, mode proto.Fi
 	if root == nil {
 		return nil, errors.New("client: Mknod requires a prior Attach")
 	}
-	if name == "" {
-		return nil, errors.New("client: Mknod requires a non-empty name")
+	full := splitPath(path)
+	if len(full) == 0 {
+		return nil, errors.New("client: Mknod requires a non-root path")
 	}
-	parents := splitPath(parentPath)
+	parents, name := full[:len(full)-1], full[len(full)-1]
 
 	// Walk to the parent directory (zero-step walk for "/" clones the
 	// root fid).
