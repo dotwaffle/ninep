@@ -24,7 +24,7 @@ func TestClient_Link(t *testing.T) {
 	t.Parallel()
 	root := newTestRUDir(t)
 	gen := root.gen
-	src := &memfs.MemFile{Data: []byte("hello world\n")}
+	src := memfs.NewFile([]byte("hello world\n"))
 	src.Init(gen.Next(proto.QTFILE), src)
 	root.AddChild("src.txt", src.EmbeddedInode())
 
@@ -86,7 +86,7 @@ func TestClient_Link_NoFidLeak(t *testing.T) {
 	gen := root.gen
 	// Seed a single source file; linking it many times exercises the
 	// repeated Link path without creating new inodes.
-	src := &memfs.MemFile{Data: []byte("x")}
+	src := memfs.NewFile([]byte("x"))
 	src.Init(gen.Next(proto.QTFILE), src)
 	root.AddChild("src", src.EmbeddedInode())
 

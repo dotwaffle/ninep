@@ -28,7 +28,7 @@ func TestClient_Symlink_Creates(t *testing.T) {
 	// target string is an opaque server-side value, but this mirrors
 	// realistic fixture shapes.
 	gen := root.gen
-	target := &memfs.StaticFile{Content: "hello"}
+	target := memfs.NewStaticFile("hello")
 	target.Init(gen.Next(proto.QTFILE), target)
 	root.AddChild("hello.txt", target.EmbeddedInode())
 

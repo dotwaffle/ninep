@@ -10,7 +10,7 @@
 //	    WithDir("data", func(d *memfs.MemDir) {
 //	        d.AddStaticFile("nested.txt", "nested content\n")
 //	    })
-//	srv := server.New(root)
+//	srv, err := server.New(root)
 //
 // AddStaticFile and WithDir return the receiver for chaining; [MemDir.SubDir]
 // returns the child instead, for building a subtree in a local variable.

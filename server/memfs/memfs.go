@@ -47,10 +47,40 @@ var (
 type MemFile struct {
 	server.Inode
 	mu   sync.RWMutex
-	Data []byte
-	Mode uint32 // POSIX permission bits; defaults to 0o644 if zero.
-	UID  uint32
-	GID  uint32
+	data []byte
+	mode uint32
+	uid  uint32
+	gid  uint32
+}
+
+// NewFile creates an uninitialized in-memory node with an owned copy of data.
+// Call Init before inserting it into a custom inode tree; builder methods do
+// this automatically.
+func NewFile(data []byte) *MemFile {
+	return NewFileWithMode(data, 0o644)
+}
+
+// NewFileWithMode is NewFile with explicit POSIX permission bits.
+func NewFileWithMode(data []byte, mode uint32) *MemFile {
+	return &MemFile{data: append([]byte(nil), data...), mode: mode}
+}
+
+// Snapshot returns an owned copy of the current contents.
+func (f *MemFile) Snapshot() []byte {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return append([]byte(nil), f.data...)
+}
+
+// Replace atomically replaces the file contents with an owned copy.
+func (f *MemFile) Replace(data []byte) error {
+	if uint64(len(data)) > maxMemFileSize {
+		return proto.EFBIG
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.data = append(f.data[:0], data...)
+	return nil
 }
 
 // Open implements server.NodeOpener. MemFile does not use per-open state;
@@ -65,12 +95,12 @@ func (f *MemFile) Read(_ context.Context, buf []byte, offset uint64) (int, error
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
-	size := uint64(len(f.Data))
+	size := uint64(len(f.data))
 	if offset >= size {
 		return 0, nil
 	}
 	end := min(offset+uint64(len(buf)), size)
-	return copy(buf, f.Data[offset:end]), nil
+	return copy(buf, f.data[offset:end]), nil
 }
 
 // Write implements server.NodeWriter. It writes data at offset, extending
@@ -83,12 +113,12 @@ func (f *MemFile) Write(_ context.Context, data []byte, offset uint64) (uint32, 
 	if err != nil {
 		return 0, err
 	}
-	if end > len(f.Data) {
+	if end > len(f.data) {
 		newData := make([]byte, end)
-		copy(newData, f.Data)
-		f.Data = newData
+		copy(newData, f.data)
+		f.data = newData
 	}
-	copy(f.Data[offset:], data)
+	copy(f.data[offset:], data)
 	return uint32(len(data)), nil
 }
 
@@ -98,15 +128,15 @@ func (f *MemFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, erro
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
-	mode := f.Mode
+	mode := f.mode
 	if mode == 0 {
 		mode = 0o644
 	}
 	return proto.Attr{
 		Mode:  mode,
-		UID:   f.UID,
-		GID:   f.GID,
-		Size:  uint64(len(f.Data)),
+		UID:   f.uid,
+		GID:   f.gid,
+		Size:  uint64(len(f.data)),
 		NLink: 1,
 	}, nil
 }
@@ -117,26 +147,26 @@ func (f *MemFile) Setattr(_ context.Context, attr proto.SetAttr) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	if attr.Valid&proto.SetAttrSize != 0 && attr.Size > maxMemFileSize {
+		return proto.EFBIG
+	}
 	if attr.Valid&proto.SetAttrMode != 0 {
-		f.Mode = attr.Mode
+		f.mode = attr.Mode
 	}
 	if attr.Valid&proto.SetAttrUID != 0 {
-		f.UID = attr.UID
+		f.uid = attr.UID
 	}
 	if attr.Valid&proto.SetAttrGID != 0 {
-		f.GID = attr.GID
+		f.gid = attr.GID
 	}
 	if attr.Valid&proto.SetAttrSize != 0 {
-		if attr.Size > maxMemFileSize {
-			return proto.EFBIG
-		}
 		newSize := int(attr.Size)
-		if newSize < len(f.Data) {
-			f.Data = f.Data[:newSize]
-		} else if newSize > len(f.Data) {
+		if newSize < len(f.data) {
+			f.data = f.data[:newSize]
+		} else if newSize > len(f.data) {
 			newData := make([]byte, newSize)
-			copy(newData, f.Data)
-			f.Data = newData
+			copy(newData, f.data)
+			f.data = newData
 		}
 	}
 	return nil
@@ -156,9 +186,9 @@ func checkedSize(offset uint64, count int) (int, error) {
 type MemDir struct {
 	server.Inode
 	gen  *server.QIDGenerator
-	Mode uint32 // POSIX permission bits; defaults to 0o755 if zero.
-	UID  uint32
-	GID  uint32
+	mode uint32
+	uid  uint32
+	gid  uint32
 }
 
 // Open implements server.NodeOpener. MemDir does not use per-open state.
@@ -189,14 +219,14 @@ func (d *MemDir) Readdir(_ context.Context) ([]proto.Dirent, error) {
 // (defaulting to S_IFDIR|0o755) and NLink = 2 + number of children.
 func (d *MemDir) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {
 	children := d.Children()
-	mode := d.Mode
+	mode := d.mode
 	if mode == 0 {
 		mode = 0o755
 	}
 	return proto.Attr{
 		Mode:  sIFDIR | mode,
-		UID:   d.UID,
-		GID:   d.GID,
+		UID:   d.uid,
+		GID:   d.gid,
 		NLink: uint64(2 + len(children)),
 	}, nil
 }
@@ -207,7 +237,7 @@ func (d *MemDir) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error
 // proto.EEXIST, regardless of the open flags, rather than silently
 // replacing the entry.
 func (d *MemDir) Create(_ context.Context, name string, _ uint32, mode proto.FileMode, _ uint32) (server.Node, server.FileHandle, uint32, error) {
-	child := &MemFile{Mode: uint32(mode)}
+	child := NewFileWithMode(nil, uint32(mode))
 	child.Init(d.gen.Next(proto.QTFILE), child)
 	if !d.TryAddChild(name, child.EmbeddedInode()) {
 		return nil, nil, 0, proto.EEXIST
@@ -220,7 +250,7 @@ func (d *MemDir) Create(_ context.Context, name string, _ uint32, mode proto.Fil
 // of the same name already exists it returns proto.EEXIST rather than
 // silently replacing the entry.
 func (d *MemDir) Mkdir(_ context.Context, name string, mode proto.FileMode, _ uint32) (server.Node, error) {
-	child := &MemDir{gen: d.gen, Mode: uint32(mode)}
+	child := &MemDir{gen: d.gen, mode: uint32(mode)}
 	child.Init(d.gen.Next(proto.QTDIR), child)
 	if !d.TryAddChild(name, child.EmbeddedInode()) {
 		return nil, proto.EEXIST
@@ -230,9 +260,27 @@ func (d *MemDir) Mkdir(_ context.Context, name string, mode proto.FileMode, _ ui
 
 // Unlink implements server.NodeUnlinker. It removes the named entry from
 // this directory.
-func (d *MemDir) Unlink(_ context.Context, name string, _ uint32) error {
-	d.EmbeddedInode().RemoveChild(name)
-	return nil
+func (d *MemDir) Unlink(_ context.Context, name string, flags uint32) error {
+	const removeDir = uint32(0x200)
+	if flags != 0 && flags != removeDir {
+		return proto.EINVAL
+	}
+	return d.EmbeddedInode().RemoveChildIf(name, func(node server.Node, childCount int) error {
+		isDir := node.QID().Type == proto.QTDIR
+		if flags == removeDir {
+			if !isDir {
+				return proto.ENOTDIR
+			}
+			if childCount != 0 {
+				return proto.ENOTEMPTY
+			}
+			return nil
+		}
+		if isDir {
+			return proto.EISDIR
+		}
+		return nil
+	})
 }
 
 // StaticFile is a read-only in-memory file. Its content is a string that
@@ -241,8 +289,18 @@ func (d *MemDir) Unlink(_ context.Context, name string, _ uint32) error {
 // NodeGetattrer.
 type StaticFile struct {
 	server.Inode
-	Content string
-	Mode    uint32 // POSIX permission bits; defaults to 0o444 if zero.
+	content string
+	mode    uint32
+}
+
+// NewStaticFile creates an immutable file with default read-only permissions.
+func NewStaticFile(content string) *StaticFile {
+	return NewStaticFileWithMode(content, 0o444)
+}
+
+// NewStaticFileWithMode is NewStaticFile with explicit permission bits.
+func NewStaticFileWithMode(content string, mode uint32) *StaticFile {
+	return &StaticFile{content: content, mode: mode}
 }
 
 // Open implements server.NodeOpener. StaticFile does not use per-open state.
@@ -253,7 +311,7 @@ func (f *StaticFile) Open(_ context.Context, _ uint32) (server.FileHandle, uint3
 // Read implements server.NodeReader. It copies bytes from Content starting
 // at offset into buf. Returns 0, nil when offset is at or past the end.
 func (f *StaticFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
-	data := []byte(f.Content)
+	data := []byte(f.content)
 	size := uint64(len(data))
 	if offset >= size {
 		return 0, nil
@@ -265,13 +323,13 @@ func (f *StaticFile) Read(_ context.Context, buf []byte, offset uint64) (int, er
 // Getattr implements server.NodeGetattrer. It returns the file mode
 // (defaulting to 0o444), size, and NLink=1.
 func (f *StaticFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {
-	mode := f.Mode
+	mode := f.mode
 	if mode == 0 {
 		mode = 0o444
 	}
 	return proto.Attr{
 		Mode:  mode,
-		Size:  uint64(len(f.Content)),
+		Size:  uint64(len(f.content)),
 		NLink: 1,
 	}, nil
 }

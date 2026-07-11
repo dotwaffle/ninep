@@ -36,7 +36,7 @@ func (d *MemDir) AddFile(name string, data []byte) *MemDir {
 // AddFileWithMode creates a new MemFile child with the given data and
 // custom mode. Returns the parent directory for chaining.
 func (d *MemDir) AddFileWithMode(name string, data []byte, mode uint32) *MemDir {
-	child := &MemFile{Data: data, Mode: mode}
+	child := NewFileWithMode(data, mode)
 	child.Init(d.gen.Next(proto.QTFILE), child)
 	d.AddChild(name, child.EmbeddedInode())
 	return d
@@ -45,7 +45,7 @@ func (d *MemDir) AddFileWithMode(name string, data []byte, mode uint32) *MemDir 
 // AddStaticFile creates a new StaticFile child with the given content
 // and default mode (0o444). Returns the parent directory for chaining.
 func (d *MemDir) AddStaticFile(name string, content string) *MemDir {
-	child := &StaticFile{Content: content}
+	child := NewStaticFile(content)
 	child.Init(d.gen.Next(proto.QTFILE), child)
 	d.AddChild(name, child.EmbeddedInode())
 	return d

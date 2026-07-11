@@ -242,6 +242,32 @@ func (i *Inode) RemoveChild(name string) {
 	delete(i.children, name)
 }
 
+// RemoveChildIf atomically checks and removes a named child. The check receives
+// the child's node and direct-child count while both parent and child inode
+// locks are held, preventing replacement or mutation after validation. The
+// callback must not call methods that lock either inode. Missing names return
+// ENOENT.
+func (i *Inode) RemoveChildIf(name string, check func(Node, int) error) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	child, ok := i.children[name]
+	if !ok {
+		return proto.ENOENT
+	}
+	child.mu.Lock()
+	defer child.mu.Unlock()
+	node, ok := child.node.(Node)
+	if !ok {
+		return proto.EIO
+	}
+	if err := check(node, len(child.children)); err != nil {
+		return err
+	}
+	delete(i.children, name)
+	child.parent = nil
+	return nil
+}
+
 // Children returns a snapshot copy of the children map.
 func (i *Inode) Children() map[string]*Inode {
 	i.mu.Lock()

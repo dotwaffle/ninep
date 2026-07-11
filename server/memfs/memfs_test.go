@@ -14,12 +14,22 @@ func newGen() *server.QIDGenerator {
 	return &server.QIDGenerator{}
 }
 
+func TestNewFileCopiesInput(t *testing.T) {
+	t.Parallel()
+	input := []byte("same")
+	f := NewFile(input)
+	input[0] = 'X'
+	if got := string(f.Snapshot()); got != "same" {
+		t.Fatalf("Snapshot = %q, want %q", got, "same")
+	}
+}
+
 // --- MemFile Tests ---
 
 func TestMemFileRead(t *testing.T) {
 	t.Parallel()
 	gen := newGen()
-	f := &MemFile{Data: []byte("hello world")}
+	f := NewFile([]byte("hello world"))
 	f.Init(gen.Next(proto.QTFILE), f)
 
 	tests := []struct {
@@ -58,7 +68,7 @@ func TestMemFileWrite(t *testing.T) {
 
 	t.Run("overwrite", func(t *testing.T) {
 		t.Parallel()
-		f := &MemFile{Data: []byte("hello")}
+		f := NewFile([]byte("hello"))
 		f.Init(gen.Next(proto.QTFILE), f)
 
 		n, err := f.Write(t.Context(), []byte("world"), 0)
@@ -68,14 +78,14 @@ func TestMemFileWrite(t *testing.T) {
 		if n != 5 {
 			t.Errorf("Write returned %d, want 5", n)
 		}
-		if string(f.Data) != "world" {
-			t.Errorf("Data = %q, want %q", f.Data, "world")
+		if string(f.Snapshot()) != "world" {
+			t.Errorf("Data = %q, want %q", f.Snapshot(), "world")
 		}
 	})
 
 	t.Run("extend", func(t *testing.T) {
 		t.Parallel()
-		f := &MemFile{Data: []byte("hi")}
+		f := NewFile([]byte("hi"))
 		f.Init(gen.Next(proto.QTFILE), f)
 
 		n, err := f.Write(t.Context(), []byte("hello"), 0)
@@ -85,14 +95,14 @@ func TestMemFileWrite(t *testing.T) {
 		if n != 5 {
 			t.Errorf("Write returned %d, want 5", n)
 		}
-		if string(f.Data) != "hello" {
-			t.Errorf("Data = %q, want %q", f.Data, "hello")
+		if string(f.Snapshot()) != "hello" {
+			t.Errorf("Data = %q, want %q", f.Snapshot(), "hello")
 		}
 	})
 
 	t.Run("append", func(t *testing.T) {
 		t.Parallel()
-		f := &MemFile{Data: []byte("hello")}
+		f := NewFile([]byte("hello"))
 		f.Init(gen.Next(proto.QTFILE), f)
 
 		n, err := f.Write(t.Context(), []byte(" world"), 5)
@@ -102,14 +112,14 @@ func TestMemFileWrite(t *testing.T) {
 		if n != 6 {
 			t.Errorf("Write returned %d, want 6", n)
 		}
-		if string(f.Data) != "hello world" {
-			t.Errorf("Data = %q, want %q", f.Data, "hello world")
+		if string(f.Snapshot()) != "hello world" {
+			t.Errorf("Data = %q, want %q", f.Snapshot(), "hello world")
 		}
 	})
 
 	t.Run("write with gap", func(t *testing.T) {
 		t.Parallel()
-		f := &MemFile{Data: []byte("hi")}
+		f := NewFile([]byte("hi"))
 		f.Init(gen.Next(proto.QTFILE), f)
 
 		n, err := f.Write(t.Context(), []byte("!"), 5)
@@ -119,11 +129,11 @@ func TestMemFileWrite(t *testing.T) {
 		if n != 1 {
 			t.Errorf("Write returned %d, want 1", n)
 		}
-		if len(f.Data) != 6 {
-			t.Errorf("Data len = %d, want 6", len(f.Data))
+		if len(f.Snapshot()) != 6 {
+			t.Errorf("Data len = %d, want 6", len(f.Snapshot()))
 		}
-		if f.Data[5] != '!' {
-			t.Errorf("Data[5] = %d, want %d", f.Data[5], '!')
+		if f.Snapshot()[5] != '!' {
+			t.Errorf("Data[5] = %d, want %d", f.Snapshot()[5], '!')
 		}
 	})
 }
@@ -132,14 +142,14 @@ func TestMemFileWriteRejectsOversizedGrowth(t *testing.T) {
 	t.Parallel()
 
 	gen := newGen()
-	f := &MemFile{Data: []byte("hi")}
+	f := NewFile([]byte("hi"))
 	f.Init(gen.Next(proto.QTFILE), f)
 
 	if _, err := f.Write(t.Context(), []byte("!"), uint64(proto.MaxDataSize)); !errors.Is(err, proto.EFBIG) {
 		t.Fatalf("Write err = %v, want EFBIG", err)
 	}
-	if string(f.Data) != "hi" {
-		t.Fatalf("Data = %q, want unchanged %q", f.Data, "hi")
+	if string(f.Snapshot()) != "hi" {
+		t.Fatalf("Data = %q, want unchanged %q", f.Snapshot(), "hi")
 	}
 }
 
@@ -147,14 +157,14 @@ func TestMemFileWriteRejectsOffsetOverflow(t *testing.T) {
 	t.Parallel()
 
 	gen := newGen()
-	f := &MemFile{Data: []byte("hi")}
+	f := NewFile([]byte("hi"))
 	f.Init(gen.Next(proto.QTFILE), f)
 
 	if _, err := f.Write(t.Context(), []byte("!"), ^uint64(0)); !errors.Is(err, proto.EFBIG) {
 		t.Fatalf("Write err = %v, want EFBIG", err)
 	}
-	if string(f.Data) != "hi" {
-		t.Fatalf("Data = %q, want unchanged %q", f.Data, "hi")
+	if string(f.Snapshot()) != "hi" {
+		t.Fatalf("Data = %q, want unchanged %q", f.Snapshot(), "hi")
 	}
 }
 
@@ -162,7 +172,7 @@ func TestMemFileSetattrRejectsOversizedSize(t *testing.T) {
 	t.Parallel()
 
 	gen := newGen()
-	f := &MemFile{Data: []byte("hi")}
+	f := NewFile([]byte("hi"))
 	f.Init(gen.Next(proto.QTFILE), f)
 
 	err := f.Setattr(t.Context(), proto.SetAttr{
@@ -172,8 +182,55 @@ func TestMemFileSetattrRejectsOversizedSize(t *testing.T) {
 	if !errors.Is(err, proto.EFBIG) {
 		t.Fatalf("Setattr err = %v, want EFBIG", err)
 	}
-	if string(f.Data) != "hi" {
-		t.Fatalf("Data = %q, want unchanged %q", f.Data, "hi")
+	if string(f.Snapshot()) != "hi" {
+		t.Fatalf("Data = %q, want unchanged %q", f.Snapshot(), "hi")
+	}
+}
+
+func TestMemFileSetattrValidatesBeforeMutation(t *testing.T) {
+	t.Parallel()
+	f := NewFileWithMode([]byte("hi"), 0o600)
+	err := f.Setattr(t.Context(), proto.SetAttr{
+		Valid: proto.SetAttrMode | proto.SetAttrSize,
+		Mode:  0o644,
+		Size:  uint64(proto.MaxDataSize) + 1,
+	})
+	if !errors.Is(err, proto.EFBIG) {
+		t.Fatalf("Setattr err = %v, want EFBIG", err)
+	}
+	attr, err := f.Getattr(t.Context(), proto.AttrAll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attr.Mode != 0o600 {
+		t.Fatalf("mode after rejected Setattr = %#o, want %#o", attr.Mode, 0o600)
+	}
+}
+
+func TestMemDirUnlinkSemantics(t *testing.T) {
+	t.Parallel()
+	root := NewDir(newGen()).
+		AddFile("file", nil).
+		WithDir("empty", func(*MemDir) {}).
+		WithDir("nonempty", func(d *MemDir) { d.AddFile("child", nil) })
+
+	if err := root.Unlink(t.Context(), "missing", 0); !errors.Is(err, proto.ENOENT) {
+		t.Errorf("unlink missing = %v, want ENOENT", err)
+	}
+	if err := root.Unlink(t.Context(), "file", 0x200); !errors.Is(err, proto.ENOTDIR) {
+		t.Errorf("rmdir file = %v, want ENOTDIR", err)
+	}
+	if err := root.Unlink(t.Context(), "empty", 0); !errors.Is(err, proto.EISDIR) {
+		t.Errorf("unlink directory = %v, want EISDIR", err)
+	}
+	if err := root.Unlink(t.Context(), "nonempty", 0x200); !errors.Is(err, proto.ENOTEMPTY) {
+		t.Errorf("rmdir nonempty = %v, want ENOTEMPTY", err)
+	}
+	if err := root.Unlink(t.Context(), "empty", 0x200); err != nil {
+		t.Errorf("rmdir empty: %v", err)
+	}
+	if err := root.Unlink(t.Context(), "file", 0); err != nil {
+		t.Errorf("unlink file: %v", err)
 	}
 }
 
@@ -183,7 +240,7 @@ func TestMemFileGetattr(t *testing.T) {
 
 	t.Run("default mode", func(t *testing.T) {
 		t.Parallel()
-		f := &MemFile{Data: []byte("test")}
+		f := NewFile([]byte("test"))
 		f.Init(gen.Next(proto.QTFILE), f)
 
 		attr, err := f.Getattr(t.Context(), proto.AttrAll)
@@ -203,7 +260,7 @@ func TestMemFileGetattr(t *testing.T) {
 
 	t.Run("custom mode", func(t *testing.T) {
 		t.Parallel()
-		f := &MemFile{Data: []byte("test"), Mode: 0o600}
+		f := NewFileWithMode([]byte("test"), 0o600)
 		f.Init(gen.Next(proto.QTFILE), f)
 
 		attr, err := f.Getattr(t.Context(), proto.AttrAll)
@@ -219,7 +276,7 @@ func TestMemFileGetattr(t *testing.T) {
 func TestMemFileOpen(t *testing.T) {
 	t.Parallel()
 	gen := newGen()
-	f := &MemFile{}
+	f := NewFile(nil)
 	f.Init(gen.Next(proto.QTFILE), f)
 
 	fh, flags, err := f.Open(t.Context(), 0)
@@ -237,7 +294,7 @@ func TestMemFileOpen(t *testing.T) {
 func TestMemFileConcurrent(t *testing.T) {
 	t.Parallel()
 	gen := newGen()
-	f := &MemFile{Data: make([]byte, 100)}
+	f := NewFile(make([]byte, 100))
 	f.Init(gen.Next(proto.QTFILE), f)
 
 	var wg sync.WaitGroup
@@ -268,11 +325,11 @@ func TestMemDirReaddir(t *testing.T) {
 	dir.Init(gen.Next(proto.QTDIR), dir)
 
 	// Add children.
-	f1 := &MemFile{Data: []byte("a")}
+	f1 := NewFile([]byte("a"))
 	f1.Init(gen.Next(proto.QTFILE), f1)
 	dir.AddChild("file1", f1.EmbeddedInode())
 
-	f2 := &MemFile{Data: []byte("b")}
+	f2 := NewFile([]byte("b"))
 	f2.Init(gen.Next(proto.QTFILE), f2)
 	dir.AddChild("file2", f2.EmbeddedInode())
 
@@ -321,7 +378,7 @@ func TestMemDirGetattr(t *testing.T) {
 	dir.Init(gen.Next(proto.QTDIR), dir)
 
 	// Add one child.
-	f := &MemFile{}
+	f := NewFile(nil)
 	f.Init(gen.Next(proto.QTFILE), f)
 	dir.AddChild("file", f.EmbeddedInode())
 
@@ -450,7 +507,7 @@ func TestStaticFileRead(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			f := &StaticFile{Content: tt.content}
+			f := NewStaticFile(tt.content)
 			f.Init(gen.Next(proto.QTFILE), f)
 
 			buf := make([]byte, tt.count)
@@ -471,7 +528,7 @@ func TestStaticFileGetattr(t *testing.T) {
 
 	t.Run("default mode", func(t *testing.T) {
 		t.Parallel()
-		f := &StaticFile{Content: "test data"}
+		f := NewStaticFile("test data")
 		f.Init(gen.Next(proto.QTFILE), f)
 
 		attr, err := f.Getattr(t.Context(), proto.AttrAll)
@@ -491,7 +548,7 @@ func TestStaticFileGetattr(t *testing.T) {
 
 	t.Run("custom mode", func(t *testing.T) {
 		t.Parallel()
-		f := &StaticFile{Content: "x", Mode: 0o400}
+		f := NewStaticFileWithMode("x", 0o400)
 		f.Init(gen.Next(proto.QTFILE), f)
 
 		attr, err := f.Getattr(t.Context(), proto.AttrAll)
@@ -507,7 +564,7 @@ func TestStaticFileGetattr(t *testing.T) {
 func TestStaticFileOpen(t *testing.T) {
 	t.Parallel()
 	gen := newGen()
-	f := &StaticFile{Content: "data"}
+	f := NewStaticFile("data")
 	f.Init(gen.Next(proto.QTFILE), f)
 
 	fh, flags, err := f.Open(t.Context(), 0)
@@ -525,7 +582,7 @@ func TestStaticFileOpen(t *testing.T) {
 func TestStaticFileWriteReturnsENOSYS(t *testing.T) {
 	t.Parallel()
 	gen := newGen()
-	f := &StaticFile{Content: "readonly"}
+	f := NewStaticFile("readonly")
 	f.Init(gen.Next(proto.QTFILE), f)
 
 	// StaticFile does not implement NodeWriter, so Write comes from Inode.

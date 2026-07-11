@@ -23,7 +23,7 @@ func TestClient_Remove_File(t *testing.T) {
 	t.Parallel()
 	root := newTestRUDir(t)
 	gen := root.gen
-	file := &memfs.MemFile{Data: []byte("hello\n")}
+	file := memfs.NewFile([]byte("hello\n"))
 	file.Init(gen.Next(proto.QTFILE), file)
 	root.AddChild("rw.bin", file.EmbeddedInode())
 
@@ -129,7 +129,7 @@ func TestClient_Remove_NoFidLeak(t *testing.T) {
 	d.Init(gen.Next(proto.QTDIR), d)
 	// Pre-seed 50 files so we have things to remove.
 	for i := range 50 {
-		f := &memfs.MemFile{}
+		f := memfs.NewFile(nil)
 		f.Init(gen.Next(proto.QTFILE), f)
 		d.AddChild(intName(i), f.EmbeddedInode())
 	}

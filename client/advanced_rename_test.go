@@ -23,7 +23,7 @@ func TestClient_Rename_SameDir(t *testing.T) {
 	t.Parallel()
 	root := newTestRUDir(t)
 	gen := root.gen
-	a := &memfs.MemFile{Data: []byte("hello\n")}
+	a := memfs.NewFile([]byte("hello\n"))
 	a.Init(gen.Next(proto.QTFILE), a)
 	root.AddChild("a.txt", a.EmbeddedInode())
 
@@ -64,7 +64,7 @@ func TestClient_Rename_CrossDir(t *testing.T) {
 	dir2 := &testRUDir{gen: gen}
 	dir2.Init(gen.Next(proto.QTDIR), dir2)
 	root.AddChild("dir2", dir2.EmbeddedInode())
-	f := &memfs.MemFile{Data: []byte("moveme")}
+	f := memfs.NewFile([]byte("moveme"))
 	f.Init(gen.Next(proto.QTFILE), f)
 	dir1.AddChild("a.txt", f.EmbeddedInode())
 
@@ -97,7 +97,7 @@ func TestClient_Rename_WhileOpen(t *testing.T) {
 	root := newTestRUDir(t)
 	gen := root.gen
 	payload := []byte("hello world\n")
-	f := &memfs.MemFile{Data: append([]byte(nil), payload...)}
+	f := memfs.NewFile(append([]byte(nil), payload...))
 	f.Init(gen.Next(proto.QTFILE), f)
 	root.AddChild("a.txt", f.EmbeddedInode())
 

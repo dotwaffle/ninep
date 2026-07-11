@@ -436,7 +436,7 @@ func TestRaw_Trename_RoundTrip(t *testing.T) {
 	root := newRawRUDir(t)
 	// Pre-seed a file "a" under root so we can rename it in place.
 	gen := root.gen
-	file := &memfs.MemFile{}
+	file := memfs.NewFile(nil)
 	file.Init(gen.Next(proto.QTFILE), file)
 	root.AddChild("a", file.EmbeddedInode())
 
@@ -465,7 +465,7 @@ func TestRaw_Trenameat_RoundTrip(t *testing.T) {
 	root := newRawRUDir(t)
 	gen := root.gen
 	// Source file under root.
-	file := &memfs.MemFile{}
+	file := memfs.NewFile(nil)
 	file.Init(gen.Next(proto.QTFILE), file)
 	root.AddChild("a", file.EmbeddedInode())
 
@@ -489,7 +489,7 @@ func TestRaw_Tunlinkat_RoundTrip(t *testing.T) {
 	t.Parallel()
 	root := newRawRUDir(t)
 	gen := root.gen
-	file := &memfs.MemFile{}
+	file := memfs.NewFile(nil)
 	file.Init(gen.Next(proto.QTFILE), file)
 	root.AddChild("a", file.EmbeddedInode())
 
@@ -511,7 +511,7 @@ func TestRaw_Tlink_RoundTrip(t *testing.T) {
 	t.Parallel()
 	root := newRawRUDir(t)
 	gen := root.gen
-	file := &memfs.MemFile{}
+	file := memfs.NewFile(nil)
 	file.Init(gen.Next(proto.QTFILE), file)
 	root.AddChild("orig", file.EmbeddedInode())
 
@@ -610,7 +610,7 @@ func TestRaw_Tremove_RoundTrip(t *testing.T) {
 	t.Parallel()
 	root := newRawRUDir(t)
 	gen := root.gen
-	file := &memfs.MemFile{}
+	file := memfs.NewFile(nil)
 	file.Init(gen.Next(proto.QTFILE), file)
 	root.AddChild("gone", file.EmbeddedInode())
 
