@@ -11,16 +11,17 @@ import "golang.org/x/sys/unix"
 // Errnos 1..34 are POSIX-stable across Linux and FreeBSD and pass through
 // unchanged, with one trap: EDEADLK is 11 on FreeBSD but 35 on Linux (which
 // uses 11 for EAGAIN), so the table maps it explicitly ahead of the
-// pass-through. The freebsdToLinuxErrno table covers all such divergences. Unmapped FreeBSD-only errnos (EPROCLIM,
-// EBADRPC, ERPCMISMATCH, EPROGUNAVAIL, EPROGMISMATCH, EPROCUNAVAIL, EFTYPE,
-// EAUTH, ENEEDAUTH, EDOOFUS) fall through to EIO. ENOATTR maps to ENODATA
-// so an xattr "not found" surfaces as the Linux wire value the v9fs
-// client expects.
+// pass-through.
 //
-// Verified against
-// /home/dotwaffle/go/pkg/mod/golang.org/x/sys@v0.42.0/unix/zerrors_freebsd_amd64.go
-// (the keys are FreeBSD errno numbers; the values are Linux wire equivalents
-// declared in errno.go).
+// FreeBSD-only errnos with no Linux equivalent (EPROCLIM, EBADRPC,
+// ERPCMISMATCH, EPROGUNAVAIL, EPROGMISMATCH, EPROCUNAVAIL, EFTYPE, EAUTH,
+// ENEEDAUTH, EDOOFUS, ENOTCAPABLE, ECAPMODE, EINTEGRITY) fall through to
+// EIO. ENOATTR maps to ENODATA so an xattr "not found" surfaces as the
+// Linux wire value the v9fs client expects.
+//
+// Verified against golang.org/x/sys/unix zerrors_freebsd_amd64.go (the keys
+// are FreeBSD errno numbers; the values are Linux wire equivalents declared
+// in errno.go).
 func ErrnoFromUnix(e unix.Errno) Errno {
 	if e == 0 {
 		return 0
@@ -94,4 +95,8 @@ var freebsdToLinuxErrno = map[unix.Errno]Errno{
 	unix.EMULTIHOP: EMULTIHOP, // 90 -> 72
 	unix.ENOLINK:   ENOLINK,   // 91 -> 67
 	unix.EPROTO:    EPROTO,    // 92 -> 71
+	// ENOTCAPABLE (93), ECAPMODE (94), EINTEGRITY (97) are FreeBSD-only ->
+	// fall through to EIO.
+	unix.ENOTRECOVERABLE: ENOTRECOVERABLE, // 95 -> 131
+	unix.EOWNERDEAD:      EOWNERDEAD,      // 96 -> 130
 }

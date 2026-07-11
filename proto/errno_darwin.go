@@ -12,7 +12,9 @@ import "golang.org/x/sys/unix"
 // Errnos 1..34 are POSIX-stable across Linux and Darwin and pass through
 // unchanged, with one trap: EDEADLK is 11 on Darwin but 35 on Linux (which
 // uses 11 for EAGAIN), so the table maps it explicitly ahead of the
-// pass-through. The darwinToLinuxErrno table covers all such divergences. Darwin-only errnos with no Linux equivalent (EPROCLIM, EBADRPC,
+// pass-through.
+//
+// Darwin-only errnos with no Linux equivalent (EPROCLIM, EBADRPC,
 // ERPCMISMATCH, EPROGUNAVAIL, EPROGMISMATCH, EPROCUNAVAIL, EFTYPE, EAUTH,
 // ENEEDAUTH, EPWROFF, EDEVERR, EBADEXEC, EBADARCH, ESHLIBVERS, EBADMACHO,
 // ENOPOLICY, EQFULL) fall through to EIO.
@@ -87,16 +89,22 @@ var darwinToLinuxErrno = map[unix.Errno]Errno{
 	unix.EOVERFLOW: EOVERFLOW, // 0x54 84 -> 75
 	// EBADEXEC (0x55), EBADARCH (0x56), ESHLIBVERS (0x57), EBADMACHO (0x58)
 	// are Darwin-only -> fall through to EIO.
-	unix.ECANCELED:  ECANCELED, // 0x59 89 -> 125
-	unix.EIDRM:      EIDRM,     // 0x5a 90 -> 43
-	unix.ENOMSG:     ENOMSG,    // 0x5b 91 -> 42
-	unix.EILSEQ:     EILSEQ,    // 0x5c 92 -> 84
-	unix.ENOATTR:    ENODATA,   // 0x5d 93 -> 61 (xattr "attribute not found")
-	unix.EBADMSG:    EBADMSG,   // 0x5e 94 -> 74
-	unix.EMULTIHOP:  EMULTIHOP, // 0x5f 95 -> 72
-	unix.ENOLINK:    ENOLINK,   // 0x61 97 -> 67
-	unix.EPROTO:     EPROTO,    // 0x64 100 -> 71
-	unix.EOPNOTSUPP: ENOTSUP,   // 0x66 102 -> 95 (distinct from ENOTSUP on Darwin)
+	unix.ECANCELED:       ECANCELED,       // 0x59 89 -> 125
+	unix.EIDRM:           EIDRM,           // 0x5a 90 -> 43
+	unix.ENOMSG:          ENOMSG,          // 0x5b 91 -> 42
+	unix.EILSEQ:          EILSEQ,          // 0x5c 92 -> 84
+	unix.ENOATTR:         ENODATA,         // 0x5d 93 -> 61 (xattr "attribute not found")
+	unix.EBADMSG:         EBADMSG,         // 0x5e 94 -> 74
+	unix.EMULTIHOP:       EMULTIHOP,       // 0x5f 95 -> 72
+	unix.ENODATA:         ENODATA,         // 0x60 96 -> 61
+	unix.ENOLINK:         ENOLINK,         // 0x61 97 -> 67
+	unix.ENOSR:           ENOSR,           // 0x62 98 -> 63
+	unix.ENOSTR:          ENOSTR,          // 0x63 99 -> 60
+	unix.EPROTO:          EPROTO,          // 0x64 100 -> 71
+	unix.ETIME:           ETIME,           // 0x65 101 -> 62
+	unix.EOPNOTSUPP:      ENOTSUP,         // 0x66 102 -> 95 (distinct from ENOTSUP on Darwin)
+	unix.ENOTRECOVERABLE: ENOTRECOVERABLE, // 0x68 104 -> 131
+	unix.EOWNERDEAD:      EOWNERDEAD,      // 0x69 105 -> 130
 	// ENOPOLICY (0x67 103), EQFULL (0x6a 106), EPWROFF, and EDEVERR are
 	// Darwin-only -> fall through to EIO.
 }

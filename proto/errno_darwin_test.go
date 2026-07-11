@@ -47,6 +47,12 @@ func TestErrnoFromUnixDivergence(t *testing.T) {
 		{"EPROTO", unix.EPROTO, EPROTO},
 		{"EMSGSIZE", unix.EMSGSIZE, EMSGSIZE},
 		{"ENOATTR", unix.ENOATTR, ENODATA}, // xattr "not found" -> Linux ENODATA.
+		{"ENODATA", unix.ENODATA, ENODATA},
+		{"ENOSR", unix.ENOSR, ENOSR},
+		{"ENOSTR", unix.ENOSTR, ENOSTR},
+		{"ETIME", unix.ETIME, ETIME},
+		{"ENOTRECOVERABLE", unix.ENOTRECOVERABLE, ENOTRECOVERABLE},
+		{"EOWNERDEAD", unix.EOWNERDEAD, EOWNERDEAD},
 		// Darwin-only errno with no Linux equivalent falls through to EIO.
 		{"EFTYPE", unix.EFTYPE, EIO},
 		// POSIX-stable: pass-through (1..34).
