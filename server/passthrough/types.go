@@ -15,12 +15,17 @@ import (
 //
 // parentFd and name are stored for nodes that need parent-anchored *at calls
 // (Readlink, Link, Setattr Lchown/UtimesNanoAt) and for platforms that cannot
-// reopen a file from the held descriptor.
+// reopen a file from the held descriptor. parentFd is the node's OWN
+// duplicate of the parent directory's fd (see childNode), not the parent
+// node's fd number: the parent node can be clunked -- closing its fd -- while
+// this node lives on, and a borrowed number would then be stale or, worse,
+// silently reused for an unrelated file. Zero means "no parent anchor"
+// (root nodes).
 type Node struct {
 	server.Inode
 	fd       int
 	root     *Root
-	parentFd int    // parent directory fd, for *at calls
+	parentFd int    // owned dup of parent directory fd, for *at calls; 0 for root
 	name     string // entry name in parent, for *at calls
 
 	// dev is the device number this node's file lived on at Lookup/create
@@ -70,6 +75,21 @@ func WithDeviceNodes() Option {
 // using Pread/Pwrite for offset-based I/O without shared seek position.
 type fileHandle struct {
 	fd int
+}
+
+// childNode builds a child Node anchored to directory n, taking ownership
+// of fd. The parent anchor is a fresh duplicate of n's directory fd, so the
+// child's parent-anchored operations (Setattr chown/utimes, Readlink, the
+// FreeBSD reopen fallback) keep working after the parent node is clunked
+// and its own fd closed. The duplicate is released in Node.Close. On error
+// fd is closed and ownership returns to nobody.
+func (n *Node) childNode(fd int, name string, dev uint64) (*Node, error) {
+	pfd, err := unix.FcntlInt(uintptr(n.fd), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		_ = unix.Close(fd)
+		return nil, err
+	}
+	return &Node{fd: fd, root: n.root, parentFd: pfd, name: name, dev: dev}, nil
 }
 
 // xattrFd opens a short-lived real fd for xattr syscalls via openResolved.

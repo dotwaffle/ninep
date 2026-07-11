@@ -87,16 +87,21 @@ func (n *Node) lookupParent() (server.Node, error) {
 		_ = unix.Close(fd)
 		return nil, toProtoErr(err)
 	}
-	child := &Node{fd: fd, root: n.root, parentFd: n.fd, name: "..", dev: uint64(cst.Dev)}
+	var child *Node
 	if clampToRoot {
-		// The clamped child IS the export root. Clear the parent anchor so
-		// parent-anchored *at operations (Setattr chown/utimes, Readlink,
-		// FreeBSD reopen) treat it as a root node and act on the held fd or
-		// the root's host path, never resolving rootFd/".." up into the host
-		// parent outside the export. Clamping only the fd left these ops
-		// pointed at the host parent.
-		child.parentFd = 0
-		child.name = ""
+		// The clamped child IS the export root. Leave the parent anchor
+		// empty so parent-anchored *at operations (Setattr chown/utimes,
+		// Readlink, FreeBSD reopen) treat it as a root node and act on the
+		// held fd or the root's host path, never resolving rootFd/".." up
+		// into the host parent outside the export. Anchoring the clamped
+		// child would point these ops at the host parent.
+		child = &Node{fd: fd, root: n.root, dev: uint64(cst.Dev)}
+	} else {
+		var cerr error
+		child, cerr = n.childNode(fd, "..", uint64(cst.Dev))
+		if cerr != nil {
+			return nil, toProtoErr(cerr)
+		}
 	}
 	child.Init(statToQID(&cst), child)
 	child.EmbeddedInode().SetPrunable()
@@ -217,7 +222,12 @@ func (n *Node) Setattr(_ context.Context, attr proto.SetAttr) error {
 	return nil
 }
 
-// Close releases the OS file descriptor held by this node.
+// Close releases the OS file descriptors held by this node: its own fd and
+// the duplicated parent-directory anchor (see childNode).
 func (n *Node) Close(_ context.Context) error {
-	return toProtoErr(unix.Close(n.fd))
+	err := unix.Close(n.fd)
+	if n.parentFd > 0 {
+		_ = unix.Close(n.parentFd)
+	}
+	return toProtoErr(err)
 }

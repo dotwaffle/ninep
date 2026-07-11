@@ -31,6 +31,7 @@ func init() {
 		// Setattr cases
 		{Name: "setattr/truncate", Run: testSetattrTruncate},
 		{Name: "setattr/extend", Run: testSetattrExtend},
+		{Name: "setattr/after-parent-clunk", Run: testSetattrAfterParentClunk},
 
 		// Directory cases
 		{Name: "readdir/basic", Run: testReaddirBasic},
@@ -311,6 +312,39 @@ func testSetattrTruncate(t *testing.T, root server.Node) {
 	if !bytes.Equal(data, content[:4]) {
 		t.Errorf("read after truncate = %q, want %q", data, content[:4])
 	}
+}
+
+// testSetattrAfterParentClunk: a node must stay fully operable after every
+// fid referencing its parent directory is clunked. Filesystems that anchor
+// child operations to a parent directory handle (passthrough's *at
+// syscalls) must give the child its own anchor; borrowing the parent
+// node's descriptor fails with EBADF -- or hits a reused descriptor --
+// once the parent is released.
+func testSetattrAfterParentClunk(t *testing.T, root server.Node) {
+	tc := newTestConn(t, root)
+	attach(t, tc, 1, 0, "test", "")
+
+	// fid 1 -> sub, fid 2 -> sub/nested.txt through fid 1.
+	expectRwalk(t, walk(t, tc, 2, 0, 1, "sub"))
+	expectRwalk(t, walk(t, tc, 3, 1, 2, "nested.txt"))
+
+	// Drop every reference to the parent directory.
+	if _, ok := clunk(t, tc, 4, 1).(*proto.Rclunk); !ok {
+		t.Fatalf("expected Rclunk for parent fid")
+	}
+
+	// Attribute reads and parent-anchored attribute writes (utimes) must
+	// still succeed on the child. Whether the mtime value persists is a
+	// separate capability (memfs does not store times); the signal here is
+	// that neither operation fails with EBADF on a stale parent anchor.
+	rga := expectRgetattr(t, getattr(t, tc, 5, 2, proto.AttrAll))
+	if _, ok := setattr(t, tc, 6, 2, proto.SetAttr{
+		Valid:    proto.SetAttrMTime,
+		MTimeSec: rga.Attr.MTimeSec + 1,
+	}).(*p9l.Rsetattr); !ok {
+		t.Fatalf("expected Rsetattr on child after parent clunk")
+	}
+	expectRgetattr(t, getattr(t, tc, 7, 2, proto.AttrAll))
 }
 
 func testSetattrExtend(t *testing.T, root server.Node) {
