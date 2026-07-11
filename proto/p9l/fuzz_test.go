@@ -24,6 +24,22 @@ func FuzzCodecRoundTrip(f *testing.F) {
 		{5, &p9l.Tgetattr{Fid: 1, RequestMask: 0x17FF}},
 		{6, &p9l.Tlock{Fid: 1, LockType: 0, Flags: 0, Start: 0, Length: 100, ProcID: 1, ClientID: "h"}},
 		{7, &p9l.Tmkdir{DirFid: 1, Name: "dir", Mode: 0755, GID: 0}},
+		// Structurally interesting shapes: the largest fixed-field body, a
+		// multi-QID variable-length response, and both Payloader messages.
+		{8, &p9l.Rgetattr{Attr: proto.Attr{
+			Valid: 0x17FF,
+			QID:   proto.QID{Type: proto.QTDIR, Version: 2, Path: 99},
+			Mode:  0o40755, UID: 1000, GID: 1000, NLink: 3,
+			Size: 4096, BlkSize: 4096, Blocks: 8,
+			ATimeSec: 1700000000, MTimeSec: 1700000001, CTimeSec: 1700000002,
+		}}},
+		{9, &proto.Rwalk{QIDs: []proto.QID{
+			{Type: proto.QTDIR, Version: 1, Path: 1},
+			{Type: proto.QTDIR, Version: 1, Path: 2},
+			{Type: proto.QTFILE, Version: 1, Path: 3},
+		}}},
+		{10, &proto.Twrite{Fid: 2, Offset: 512, Data: []byte("payload")}},
+		{11, &p9l.Rreaddir{Data: []byte{1, 2, 3, 4, 5, 6, 7, 8}}},
 	}
 	for _, s := range seeds {
 		var buf bytes.Buffer

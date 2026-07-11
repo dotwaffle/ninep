@@ -38,6 +38,25 @@ func FuzzCodecRoundTrip(f *testing.F) {
 			NMuid:     0,
 		}}},
 		{6, &p9u.Topen{Fid: 10, Mode: 0}},
+		// Structurally interesting shapes: Twstat carries the nested
+		// size-prefixed stat (the trickiest decode in the dialect), Rwalk a
+		// multi-QID variable-length body, and Twrite the Payloader path.
+		{7, &p9u.Twstat{Fid: 3, Stat: p9u.Stat{
+			QID:    proto.QID{Type: proto.QTFILE, Version: 9, Path: 7},
+			Mode:   0644,
+			Atime:  1700000000,
+			Mtime:  1700000001,
+			Length: 512,
+			Name:   "renamed.txt",
+			UID:    "user", GID: "group", MUID: "user",
+			NUid: 1000, NGid: 1000, NMuid: 1000,
+		}}},
+		{8, &proto.Rwalk{QIDs: []proto.QID{
+			{Type: proto.QTDIR, Version: 1, Path: 1},
+			{Type: proto.QTDIR, Version: 1, Path: 2},
+			{Type: proto.QTFILE, Version: 1, Path: 3},
+		}}},
+		{9, &proto.Twrite{Fid: 2, Offset: 512, Data: []byte("payload")}},
 	}
 	for _, s := range seeds {
 		var buf bytes.Buffer
