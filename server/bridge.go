@@ -505,30 +505,31 @@ func (c *conn) handleLcreate(ctx context.Context, m *p9l.Tlcreate) proto.Message
 		return c.errorMsg(proto.EINVAL)
 	}
 
-	creator, ok := fs.currentNode().(NodeCreater)
+	parentNode := fs.currentNode()
+	creator, ok := parentNode.(NodeCreater)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
-
-	// Save parent node reference before updateAndOpen mutates fs.node.
-	parentNode := fs.currentNode()
 
 	child, handle, iounitHint, err := creator.Create(ctx, m.Name, m.Flags, m.Mode, m.GID)
 	if err != nil {
 		return c.errorMsg(errnoFromError(err))
 	}
 
-	// Per 9P spec: Tlcreate creates AND opens. The fid mutates to the new child.
-	// Atomically update node and transition to fidOpened state.
-	if !c.fids.updateAndOpen(m.Fid, child, handle) {
-		// Fid was clunked during Create; release the now-unreachable handle.
+	// Per 9P spec: Tlcreate creates AND opens. The fid mutates to the new
+	// child. The refcount transfer uses the node updateAndOpen displaced
+	// from inside its critical section: a node read before Create could be
+	// stale by swap time if a pipelined walk rebound the fid meanwhile.
+	prev, ok := c.fids.updateAndOpen(m.Fid, child, handle)
+	if !ok {
+		// Fid was clunked during Create; release the now-unreachable handle
+		// and close the orphaned child node nothing will ever reference.
 		releaseFileHandle(ctx, handle, c.logger)
+		closeOrphanNode(ctx, child, c.logger)
 		return c.errorMsg(proto.EBADF)
 	}
-	// The fid rebinds from parentNode to child: parentNode loses this
-	// reference, child gains one.
-	decRefNode(parentNode)
 	incRefNode(child)
+	decRefNode(prev)
 
 	registerChild(parentNode, child, m.Name)
 
@@ -558,26 +559,29 @@ func (c *conn) handleUCreate(ctx context.Context, m *p9u.Tcreate) proto.Message 
 		return c.errorMsg(proto.EINVAL)
 	}
 
-	creator, ok := fs.currentNode().(NodeCreater)
+	parentNode := fs.currentNode()
+	creator, ok := parentNode.(NodeCreater)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
 
-	parentNode := fs.currentNode()
 	child, handle, iounitHint, err := creator.Create(ctx, m.Name, flags, m.Perm, 0)
 	if err != nil {
 		return c.errorMsg(errnoFromError(err))
 	}
 
-	if !c.fids.updateAndOpen(m.Fid, child, handle) {
-		// Fid was clunked during Create; release the now-unreachable handle.
+	// See handleLcreate for why the refcount transfer uses the displaced
+	// node rather than parentNode.
+	prev, ok := c.fids.updateAndOpen(m.Fid, child, handle)
+	if !ok {
+		// Fid was clunked during Create; release the now-unreachable handle
+		// and close the orphaned child node nothing will ever reference.
 		releaseFileHandle(ctx, handle, c.logger)
+		closeOrphanNode(ctx, child, c.logger)
 		return c.errorMsg(proto.EBADF)
 	}
-	// The fid rebinds from parentNode to child: parentNode loses this
-	// reference, child gains one.
-	decRefNode(parentNode)
 	incRefNode(child)
+	decRefNode(prev)
 
 	registerChild(parentNode, child, m.Name)
 

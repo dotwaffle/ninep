@@ -251,22 +251,30 @@ func (ft *fidTable) getPath(fid proto.Fid) string {
 	return ""
 }
 
-// update replaces the node on an existing fid. Returns false if the fid is not
+// update replaces the node and path on an existing fid, returning the node
+// it displaced. Returns ok=false (and takes no action) if the fid is not
 // present. Safe for concurrent use.
 //
 // fs.mu is nested inside ft.mu, matching markOpened/updateAndOpen, so the
 // write is synchronized against fidState.currentNode's locked read.
-func (ft *fidTable) update(fid proto.Fid, node Node) bool {
+// Returning the displaced node from inside the critical section is what
+// lets the caller transfer node refcounts atomically: a read-then-swap
+// against two pipelined in-place walks on the same fid can observe the
+// same old node twice and double-decrement it, prematurely closing a node
+// another fid still aliases.
+func (ft *fidTable) update(fid proto.Fid, node Node, path string) (Node, bool) {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
 	fs, ok := ft.fids[fid]
 	if !ok {
-		return false
+		return nil, false
 	}
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
+	prev := fs.node
 	fs.node = node
-	return true
+	fs.path = path
+	return prev, true
 }
 
 // markOpened transitions a fid from fidAllocated to fidOpened. Returns false if
@@ -312,24 +320,28 @@ func (ft *fidTable) markOpenedWithHandle(fid proto.Fid, h FileHandle) bool {
 }
 
 // updateAndOpen atomically replaces the node, transitions the fid to fidOpened,
-// and stores the FileHandle. Returns false if the fid is not present or is not
-// in fidAllocated state. Safe for concurrent use. Lock ordering matches markOpened.
-func (ft *fidTable) updateAndOpen(fid proto.Fid, node Node, h FileHandle) bool {
+// and stores the FileHandle, returning the node it displaced. Returns ok=false
+// (and takes no action) if the fid is not present or is not in fidAllocated
+// state. Safe for concurrent use. Lock ordering matches markOpened; the
+// displaced node is returned for the same atomic refcount-transfer reason
+// as update.
+func (ft *fidTable) updateAndOpen(fid proto.Fid, node Node, h FileHandle) (Node, bool) {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
 	fs, ok := ft.fids[fid]
 	if !ok {
-		return false
+		return nil, false
 	}
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	if fs.state != fidAllocated {
-		return false
+		return nil, false
 	}
+	prev := fs.node
 	fs.node = node
 	fs.state = fidOpened
 	fs.handle = h
-	return true
+	return prev, true
 }
 
 // len returns the number of fids in the table. Safe for concurrent use.

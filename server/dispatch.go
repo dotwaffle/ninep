@@ -235,12 +235,16 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 		newPath := path.Clean(c.fids.getPath(tw.Fid) + "/" + strings.Join(tw.Names, "/"))
 		if tw.Fid == tw.NewFid {
 			// In-place walk rebinds tw.Fid from its prior node to current:
-			// the prior node loses this reference, current gains one.
-			oldNode := src.currentNode()
-			c.fids.update(tw.Fid, current)
-			c.fids.setPath(tw.Fid, newPath)
-			decRefNode(oldNode)
-			incRefNode(current)
+			// the prior node loses this reference, current gains one. The
+			// swap and the refcount transfer must use the node update
+			// displaced, not a node read earlier: two pipelined in-place
+			// walks on the same fid would otherwise both decrement the same
+			// prior node. Increment before decrement so a walk that resolves
+			// back to the same node cannot dip its count to zero in between.
+			if prev, ok := c.fids.update(tw.Fid, current, newPath); ok {
+				incRefNode(current)
+				decRefNode(prev)
+			}
 		} else {
 			fs := &fidState{node: current, path: newPath, state: fidAllocated}
 			if err := c.fids.add(tw.NewFid, fs, c.maxFids); err != nil {
@@ -431,6 +435,20 @@ func releaseFileHandle(ctx context.Context, handle FileHandle, logger *slog.Logg
 				logger.Debug("file handle release error", slog.Any("error", err))
 			}
 		}
+	}
+}
+
+// closeOrphanNode closes a node that was created but never bound to a fid
+// (the fid was clunked while Create was in flight). The node carries no
+// refcount, so decRefNode does not apply; without an explicit Close a
+// backing resource such as a passthrough fd would leak.
+func closeOrphanNode(ctx context.Context, n Node, logger *slog.Logger) {
+	closer, ok := n.(NodeCloser)
+	if !ok {
+		return
+	}
+	if err := closer.Close(ctx); err != nil && logger != nil {
+		logger.Debug("orphan node close error", slog.Any("error", err))
 	}
 }
 

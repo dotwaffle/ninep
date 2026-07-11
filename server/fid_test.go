@@ -142,8 +142,12 @@ func TestFidTable_Update(t *testing.T) {
 		t.Fatalf("add: %v", err)
 	}
 
-	if !ft.update(1, node2) {
-		t.Fatal("update fid 1: got false, want true")
+	prev, ok := ft.update(1, node2, "/n2")
+	if !ok {
+		t.Fatal("update fid 1: got ok=false, want true")
+	}
+	if prev != node1 {
+		t.Errorf("update displaced %v, want %v", prev, node1)
 	}
 
 	got := ft.get(1)
@@ -177,8 +181,8 @@ func TestFidState_ConcurrentUpdateAndRead(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range 1000 {
-			ft.update(1, node2)
-			ft.update(1, node1)
+			ft.update(1, node2, "/n2")
+			ft.update(1, node1, "/n1")
 		}
 	}()
 
@@ -334,13 +338,59 @@ func TestFidState_ClunkDefersCloseNodeGate(t *testing.T) {
 	}
 }
 
+// TestFidTable_UpdateRefTransferBalance drives two goroutines through the
+// in-place-walk refcount transfer protocol (inc the new node, dec the node
+// update displaced) and asserts the total live count stays balanced. The
+// pre-fix protocol read the old node before the swap, so two concurrent
+// transfers could dec the same displaced node twice and leak a count on
+// the other, which this test makes probable enough to catch.
+func TestFidTable_UpdateRefTransferBalance(t *testing.T) {
+	t.Parallel()
+
+	ft := newFidTable()
+	node1 := newTestNode(proto.QID{Path: 1})
+	node2 := newTestNode(proto.QID{Path: 2})
+	if err := ft.add(1, &fidState{node: node1, state: fidAllocated}, 0); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	incRefNode(node1) // The fid's own reference.
+
+	var wg sync.WaitGroup
+	for g, target := range []Node{node1, node2} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 1000 {
+				if prev, ok := ft.update(1, target, "/t"); ok {
+					incRefNode(target)
+					decRefNode(prev)
+				}
+			}
+		}()
+		_ = g
+	}
+	wg.Wait()
+
+	bound := ft.get(1).currentNode()
+	var other Node = node1
+	if bound == other {
+		other = node2
+	}
+	if got := bound.(InodeEmbedder).EmbeddedInode().refs.Load(); got != 1 {
+		t.Errorf("bound node refs = %d, want 1", got)
+	}
+	if got := other.(InodeEmbedder).EmbeddedInode().refs.Load(); got != 0 {
+		t.Errorf("displaced node refs = %d, want 0", got)
+	}
+}
+
 func TestFidTable_UpdateNonexistent(t *testing.T) {
 	t.Parallel()
 
 	ft := newFidTable()
 	node := newTestNode(proto.QID{Path: 1})
-	if ft.update(42, node) {
-		t.Error("update nonexistent fid: got true, want false")
+	if _, ok := ft.update(42, node, "/x"); ok {
+		t.Error("update nonexistent fid: got ok=true, want false")
 	}
 }
 
