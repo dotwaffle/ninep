@@ -172,8 +172,9 @@ const (
 
 // Named sentinel errors for common 9P error conditions. Use these with
 // errors.Is/As rather than comparing to the underlying Errno constants
-// directly -- they are the public-facing aliases.
-var (
+// directly -- they are the public-facing aliases. They are constants so
+// no importer can reassign them.
+const (
 	// ErrPermission is returned when an operation is not permitted.
 	// Alias for EPERM.
 	ErrPermission = EPERM
