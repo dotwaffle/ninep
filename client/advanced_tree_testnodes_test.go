@@ -19,7 +19,8 @@ import (
 )
 
 // testRUDir implements NodeSymlinker, NodeRenamer, NodeUnlinker, NodeLinker,
-// and NodeMknoder. It also supports Readdir so directory walks succeed.
+// NodeMknoder, NodeMkdirer, and NodeFsyncer. It also supports Readdir so
+// directory walks succeed.
 //
 // Mirrors rawTestRUDir (raw_advanced_test.go) but kept separate so each
 // Wave-2 plan's test file compiles without cross-plan coupling. "RU" =
@@ -31,6 +32,8 @@ type testRUDir struct {
 	mu          sync.Mutex
 	lastSymlink string
 	lastMknod   string
+	lastMkdir   string
+	fsyncCalls  int
 }
 
 func (d *testRUDir) Open(_ context.Context, _ uint32) (server.FileHandle, uint32, error) {
@@ -111,6 +114,23 @@ func (d *testRUDir) Mknod(_ context.Context, name string, _ proto.FileMode, majo
 	d.lastMknod = name
 	d.mu.Unlock()
 	return dev, nil
+}
+
+func (d *testRUDir) Mkdir(_ context.Context, name string, _ proto.FileMode, _ uint32) (server.Node, error) {
+	sub := &testRUDir{gen: d.gen}
+	sub.Init(d.gen.Next(proto.QTDIR), sub)
+	d.AddChild(name, sub.EmbeddedInode())
+	d.mu.Lock()
+	d.lastMkdir = name
+	d.mu.Unlock()
+	return sub, nil
+}
+
+func (d *testRUDir) Fsync(_ context.Context) error {
+	d.mu.Lock()
+	d.fsyncCalls++
+	d.mu.Unlock()
+	return nil
 }
 
 // newTestRUDir builds a testRUDir as the filesystem root. Callers then mutate

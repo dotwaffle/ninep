@@ -109,7 +109,7 @@ func TestClient_Create_NotSupportedOnL(t *testing.T) {
 //
 //   - .L-only ops exercised on a protocolU Conn: Symlink, Readlink,
 //     XattrGet/Set/List/Remove, Lock/Unlock/TryLock/GetLock, Statfs,
-//     Getattr, Setattr, Link, Mknod (15 rows).
+//     Getattr, Setattr, Link, Mknod, Mkdir, Fsync (17 rows).
 //   - .u-only op exercised on a protocolL Conn: Raw.Tstat (the sole
 //     public .u-only primitive; File.Stat dispatches internally).
 //
@@ -149,6 +149,8 @@ func TestClient_DialectGates_All(t *testing.T) {
 		{"File.Setattr", func() error { return fU.Setattr(ctx, proto.SetAttr{}) }},
 		{"Conn.Link", func() error { return cU.Link(ctx, "/a", "/b") }},
 		{"Conn.Mknod", func() error { _, err := cU.Mknod(ctx, "/", "fifo", 0o644, 0, 0, 0); return err }},
+		{"Conn.Mkdir", func() error { _, err := cU.Mkdir(ctx, "/", "dir", 0o755, 0); return err }},
+		{"File.Fsync", func() error { return fU.Fsync(ctx, false) }},
 	}
 	for _, tc := range lOnlyCases {
 		if err := tc.call(); !errors.Is(err, ErrNotSupported) {

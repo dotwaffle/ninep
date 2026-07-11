@@ -251,6 +251,37 @@ func (r *Raw) Tstatfs(ctx context.Context, fid proto.Fid) (proto.FSStat, error) 
 	return stat, nil
 }
 
+// Tfsync flushes fid's data (and, unless dataSync is true, its metadata)
+// to storage. fid must be in the opened state -- the server returns
+// EBADF for a fid that has never been Tlopen'd.
+//
+// Requires a 9P2000.L-negotiated Conn. High-level [File.Fsync] wraps
+// this primitive.
+func (r *Raw) Tfsync(ctx context.Context, fid proto.Fid, dataSync bool) error {
+	if err := r.c.requireDialect(protocolL, "Tfsync"); err != nil {
+		return err
+	}
+	var ds uint32
+	if dataSync {
+		ds = 1
+	}
+	req := &p9l.Tfsync{Fid: fid, DataSync: ds}
+	resp, err := r.c.roundTrip(ctx, req)
+	if err != nil {
+		return err
+	}
+	if err := toError(resp); err != nil {
+		return err
+	}
+	if _, ok := resp.(*p9l.Rfsync); !ok {
+		err := fmt.Errorf("client: expected Rfsync, got %v", resp.Type())
+		putCachedRMsg(resp)
+		return err
+	}
+	putCachedRMsg(resp)
+	return nil
+}
+
 // Tgetattr requests the subset of file attributes selected by mask from fid.
 // Callers typically pass [proto.AttrBasic] (0x7ff) for the common case;
 // callers who need only Size or Mode can narrow the mask to amortize server
@@ -448,6 +479,35 @@ func (r *Raw) Tmknod(ctx context.Context, dfid proto.Fid, name string, mode, maj
 	rr, ok := resp.(*p9l.Rmknod)
 	if !ok {
 		err := fmt.Errorf("client: expected Rmknod, got %v", resp.Type())
+		putCachedRMsg(resp)
+		return proto.QID{}, err
+	}
+	qid := rr.QID
+	putCachedRMsg(resp)
+	return qid, nil
+}
+
+// Tmkdir creates a directory named name in the directory referenced by
+// dfid. mode carries the POSIX permission bits; gid sets the owning
+// group. Returns the new directory's QID.
+//
+// Requires a 9P2000.L-negotiated Conn. Higher-level [Conn.Mkdir] wraps
+// this primitive.
+func (r *Raw) Tmkdir(ctx context.Context, dfid proto.Fid, name string, mode proto.FileMode, gid uint32) (proto.QID, error) {
+	if err := r.c.requireDialect(protocolL, "Tmkdir"); err != nil {
+		return proto.QID{}, err
+	}
+	req := &p9l.Tmkdir{DirFid: dfid, Name: name, Mode: mode, GID: gid}
+	resp, err := r.c.roundTrip(ctx, req)
+	if err != nil {
+		return proto.QID{}, err
+	}
+	if err := toError(resp); err != nil {
+		return proto.QID{}, err
+	}
+	rr, ok := resp.(*p9l.Rmkdir)
+	if !ok {
+		err := fmt.Errorf("client: expected Rmkdir, got %v", resp.Type())
 		putCachedRMsg(resp)
 		return proto.QID{}, err
 	}

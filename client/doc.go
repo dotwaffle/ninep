@@ -157,6 +157,9 @@
 //     Tunlinkat's AT_REMOVEDIR flag on .L). (.L-only)
 //   - [Conn.Link] -- create a hard link. (.L-only)
 //   - [Conn.Mknod] -- create a device / fifo / socket node. (.L-only)
+//   - [Conn.Mkdir] -- create a directory. (.L-only)
+//   - [File.Fsync] -- flush a File's data (and optionally metadata) to
+//     storage. (.L-only)
 //
 // ## Dialect Compatibility
 //

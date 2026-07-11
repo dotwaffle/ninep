@@ -336,8 +336,8 @@ func (c *Conn) newRMessage(t proto.MessageType) (proto.Message, error) {
 			return &p9l.Rreaddir{}, nil
 		}
 	// .L-only advanced ops: getattr/setattr/statfs, symlink/
-	// readlink, locks, xattr two-phase, link/mknod/rename/renameat/
-	// unlinkat. Dialect gating here is defense-in-depth - per-op
+	// readlink, locks, xattr two-phase, link/mknod/mkdir/fsync/
+	// rename/renameat/unlinkat. Dialect gating here is defense-in-depth - per-op
 	// requireDialect at the ops layer is the primary enforcement point.
 	// A misbehaving peer that emits a .L-only R-type on a .u Conn falls
 	// through to the default arm and triggers signalShutdown, the
@@ -387,6 +387,14 @@ func (c *Conn) newRMessage(t proto.MessageType) (proto.Message, error) {
 	case proto.TypeRmknod:
 		if c.dialect == protocolL {
 			return &p9l.Rmknod{}, nil
+		}
+	case proto.TypeRmkdir:
+		if c.dialect == protocolL {
+			return &p9l.Rmkdir{}, nil
+		}
+	case proto.TypeRfsync:
+		if c.dialect == protocolL {
+			return &p9l.Rfsync{}, nil
 		}
 	case proto.TypeRrename:
 		if c.dialect == protocolL {

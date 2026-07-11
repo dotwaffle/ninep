@@ -168,6 +168,17 @@ func (d *rawTestRUDir) Symlink(_ context.Context, name, target string, _ uint32)
 	return sym, nil
 }
 
+func (d *rawTestRUDir) Mkdir(_ context.Context, name string, _ proto.FileMode, _ uint32) (server.Node, error) {
+	sub := &rawTestRUDir{gen: d.gen}
+	sub.Init(d.gen.Next(proto.QTDIR), sub)
+	d.AddChild(name, sub.EmbeddedInode())
+	return sub, nil
+}
+
+func (d *rawTestRUDir) Fsync(_ context.Context) error {
+	return nil
+}
+
 // newRawRUDir wires a rawTestRUDir as the root with a QID generator.
 func newRawRUDir(tb testing.TB) *rawTestRUDir {
 	tb.Helper()
@@ -543,6 +554,49 @@ func TestRaw_Tmknod_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestRaw_Tmkdir_RoundTrip(t *testing.T) {
+	t.Parallel()
+	root := newRawRUDir(t)
+	cli, cleanup := newClientServerPair(t, root)
+	defer cleanup()
+
+	attachRoot(t, cli, 1)
+	ctx, cancel := rawAdvCtx(t)
+	defer cancel()
+	qid, err := cli.Raw().Tmkdir(ctx, 1, "sub", proto.FileMode(0o755), 0)
+	if err != nil {
+		t.Fatalf("Tmkdir: %v", err)
+	}
+	if qid.Type&proto.QTDIR == 0 {
+		t.Errorf("Tmkdir QID.Type = %#x, want QTDIR set", qid.Type)
+	}
+	if _, ok := root.Children()["sub"]; !ok {
+		t.Error("directory \"sub\" not present after Tmkdir")
+	}
+}
+
+func TestRaw_Tfsync_RoundTrip(t *testing.T) {
+	t.Parallel()
+	root := newRawRUDir(t)
+	cli, cleanup := newClientServerPair(t, root)
+	defer cleanup()
+
+	attachRoot(t, cli, 1)
+	walkFresh(t, cli, 1, 2)
+
+	ctx, cancel := rawAdvCtx(t)
+	defer cancel()
+	if _, _, err := cli.Raw().Lopen(ctx, 2, 0); err != nil {
+		t.Fatalf("Lopen: %v", err)
+	}
+	if err := cli.Raw().Tfsync(ctx, 2, false); err != nil {
+		t.Fatalf("Tfsync: %v", err)
+	}
+	if err := cli.Raw().Tfsync(ctx, 2, true); err != nil {
+		t.Fatalf("Tfsync(dataSync): %v", err)
+	}
+}
+
 // TestRaw_Tremove_RoundTrip exercises the wire-level Raw.Tremove path.
 //
 // ninep's server does not implement a Tremove handler (clients prefer
@@ -714,6 +768,28 @@ func TestRaw_Tmknod_NotSupportedOnU(t *testing.T) {
 	defer cancel()
 	if _, err := cli.Raw().Tmknod(ctx, 0, "x", 0, 0, 0, 0); !errors.Is(err, client.ErrNotSupported) {
 		t.Fatalf("Tmknod err = %v, want ErrNotSupported", err)
+	}
+}
+
+func TestRaw_Tmkdir_NotSupportedOnU(t *testing.T) {
+	t.Parallel()
+	cli, cleanup := newUMockClientPair(t)
+	defer cleanup()
+	ctx, cancel := rawAdvCtx(t)
+	defer cancel()
+	if _, err := cli.Raw().Tmkdir(ctx, 0, "x", 0, 0); !errors.Is(err, client.ErrNotSupported) {
+		t.Fatalf("Tmkdir err = %v, want ErrNotSupported", err)
+	}
+}
+
+func TestRaw_Tfsync_NotSupportedOnU(t *testing.T) {
+	t.Parallel()
+	cli, cleanup := newUMockClientPair(t)
+	defer cleanup()
+	ctx, cancel := rawAdvCtx(t)
+	defer cancel()
+	if err := cli.Raw().Tfsync(ctx, 0, false); !errors.Is(err, client.ErrNotSupported) {
+		t.Fatalf("Tfsync err = %v, want ErrNotSupported", err)
 	}
 }
 
