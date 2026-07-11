@@ -1,52 +1,51 @@
-// Package ninep is a high-performance, modern Go implementation of the 9P2000.L
-// (Linux-native) and 9P2000.u (legacy UNIX) network filesystem protocols. It provides
-// a capability-based API inspired by go-fuse/v2/fs, allowing filesystem developers
-// to embed a base Inode and implement only the interfaces they need.
+// Package ninep implements the 9P2000.L and 9P2000.u network filesystem
+// protocols in Go: a capability-based server, a wire-level client, and
+// the shared protocol types they build on.
 //
-// # Architecture & Core Tenets
+// The server API follows go-fuse/v2/fs: a filesystem node embeds
+// [server.Inode] and implements only the capability interfaces it
+// supports (e.g. [server.NodeReader], [server.NodeWriter],
+// [server.NodeOpener]); every unimplemented operation returns ENOSYS
+// through the Inode defaults, so there is no boilerplate for
+// operations a filesystem does not have.
 //
-//   - Capability-Based API: File server implementers only embed [server.Inode] and
-//     implement the specific capability interfaces (e.g., [server.NodeReader],
-//     [server.NodeWriter], [server.NodeOpener]) that their filesystem supports.
-//     All unsupported operations automatically return ENOSYS (not supported) errors,
-//     eliminating monolithic boilerplate.
-//   - Stdlib-First: Keep dependencies strictly minimal, adhering to standard Go
-//     idioms, while remaining lightweight and portable.
-//   - Modern Idioms: Built for Go 1.26+, utilizing standard features like generics,
-//     any instead of interface{}, modern structured logging ([log/slog]), and robust
-//     multi-error handling ([errors.Join], [errors.Is]).
-//   - High Performance & Zero-Allocation Hot Paths: Avoids Go reflection (`binary.Read`/`Write`)
-//     entirely on critical paths. It uses zero-copy buffer pools, `writev` for payloads,
-//     and direct byte-level manipulation using binary.LittleEndian.
-//   - Observability: Integrates deeply with OpenTelemetry ([go.opentelemetry.io/otel]) for
-//     traces and metrics, and utilizes slog structured logging with automated trace ID
-//     correlation in server dispatching.
+// # Design Notes
+//
+//   - Dependencies are kept to the standard library plus the
+//     OpenTelemetry API and golang.org/x/sys.
+//   - Wire encoding uses direct [encoding/binary.LittleEndian] byte
+//     manipulation, pooled buffers, and writev for payloads; the
+//     reflection-based binary.Read/Write API is not used. Hot paths
+//     avoid allocation where practical.
+//   - Observability is OpenTelemetry: optional per-operation traces and
+//     metrics, plus [log/slog] logging with trace-ID correlation in the
+//     server dispatch path. All of it is disabled (and costs nothing)
+//     unless configured.
 //
 // # Package Layout
 //
-// The module is split into several logical packages:
-//
-//   - [github.com/dotwaffle/ninep/server] - Contains the core capability-based 9P server
-//     implementation, connection manager, options, and dispatch middleware.
-//   - [github.com/dotwaffle/ninep/client] - A high-performance, concurrent, wire-level 9P
-//     client that multiplexes requests over any [net.Conn] with a standard, io.Reader/Writer-compliant
-//     File handle surface.
-//   - [github.com/dotwaffle/ninep/client/clienttest] - Server+client test pair helpers
-//     (mirrors net/http/httptest) for exercising a live client against a live server.
-//   - [github.com/dotwaffle/ninep/proto] - Shared wire-level types, constants, encoding/decoding
-//     frames, and portable errno mappings.
-//   - [github.com/dotwaffle/ninep/server/memfs] - A fully in-memory, thread-safe filesystem helper
-//     featuring a fluent builder API, designed for mock testing and virtual file systems.
-//   - [github.com/dotwaffle/ninep/server/passthrough] - A high-performance Linux/FreeBSD passthrough
-//     filesystem that safely exposes host directories via modern *at syscalls.
-//   - [github.com/dotwaffle/ninep/server/fstest] - A protocol-level test harness to comprehensively
-//     validate custom 9P filesystem implementations.
-//   - [github.com/dotwaffle/ninep/vsock] - An AF_VSOCK transport for serving or dialing 9P
+//   - [github.com/dotwaffle/ninep/server] - the capability-based 9P
+//     server: connection handling, options, dispatch middleware.
+//   - [github.com/dotwaffle/ninep/client] - a concurrent wire-level 9P
+//     client that multiplexes requests over any [net.Conn], with an
+//     io.Reader/Writer-compliant File handle surface.
+//   - [github.com/dotwaffle/ninep/client/clienttest] - server+client
+//     test pair helpers, in the spirit of net/http/httptest.
+//   - [github.com/dotwaffle/ninep/proto] - shared wire types, frame
+//     encoding/decoding, and errno mappings.
+//   - [github.com/dotwaffle/ninep/server/memfs] - in-memory filesystem
+//     nodes with a builder API, for tests and virtual filesystems.
+//   - [github.com/dotwaffle/ninep/server/passthrough] - a Linux/FreeBSD
+//     passthrough filesystem exposing a host directory via *at
+//     syscalls.
+//   - [github.com/dotwaffle/ninep/server/fstest] - a protocol-level
+//     test harness for validating filesystem implementations.
+//   - [github.com/dotwaffle/ninep/vsock] - AF_VSOCK Listen/Dial for 9P
 //     over virtio-vsock guest/host connections.
 //
 // # Example: Hello World File Server
 //
-// Below is a complete, minimal 9P2000.L server serving a static in-memory file:
+// A complete, minimal 9P2000.L server serving a static in-memory file:
 //
 //	package main
 //
@@ -64,7 +63,7 @@
 //		server.Inode
 //	}
 //
-//	// Getattr implements the server.NodeGetattrer interface to define file metadata.
+//	// Getattr implements server.NodeGetattrer.
 //	func (f *HelloFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {
 //		return proto.Attr{
 //			Valid: proto.AttrMode | proto.AttrSize,
@@ -73,7 +72,7 @@
 //		}, nil
 //	}
 //
-//	// Read implements the server.NodeReader interface to serve file data.
+//	// Read implements server.NodeReader.
 //	func (f *HelloFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
 //		data := []byte("hello world")
 //		if offset >= uint64(len(data)) {
@@ -84,11 +83,9 @@
 //	}
 //
 //	func main() {
-//		// Initialize the root node with QID metadata
 //		root := &HelloFile{}
 //		root.Init(proto.QID{Type: proto.QTFILE, Path: 1}, root)
 //
-//		// Instantiate and serve the 9P server
 //		srv := server.New(root)
 //		ln, err := net.Listen("tcp", ":5640")
 //		if err != nil {
@@ -97,9 +94,9 @@
 //		log.Fatal(srv.Serve(context.Background(), ln))
 //	}
 //
-// # Protocol Specifications & Resources
+// # Protocol Specifications
 //
 //   - Linux kernel 9P driver documentation: https://docs.kernel.org/filesystems/9p.html
 //   - Plan 9 manual pages (Section 5): https://man.cat-v.org/plan_9
-//   - The original 9P2000.L protocol extension details: https://wiki.qemu.org/Documentation/9p2000.L
+//   - 9P2000.L protocol extension: https://wiki.qemu.org/Documentation/9p2000.L
 package ninep
