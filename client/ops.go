@@ -12,6 +12,7 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9u"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 // exchange is the dispatch skeleton shared by [Conn.roundTrip] and
@@ -147,25 +148,31 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 		return nil, ErrClosed
 	}
 
-	opName := msg.Type().String()
-	ctx, span := c.startSpan(ctx, opName, msg)
-	defer span.End()
+	// Instrumentation setup is gated so an uninstrumented Conn skips the
+	// op-name lookup and both clock reads entirely.
+	var span trace.Span = noop.Span{}
+	if c.tracer != nil {
+		ctx, span = c.startSpan(ctx, msg.Type().String(), msg)
+		defer span.End()
+	}
 
+	var start time.Time
 	if c.meterEnabled {
 		c.inst.activeReqs.Add(ctx, 1)
 		defer c.inst.activeReqs.Add(ctx, -1)
+		start = time.Now()
 	}
 
-	start := time.Now()
 	resp, _, err := c.exchange(ctx, span, msg, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	elapsed := time.Since(start).Seconds()
-	c.recordResponse(ctx, msg.Type(), elapsed, resp)
-	if isErrorResponse(resp) {
-		span.SetStatus(codes.Error, opName)
+	if c.meterEnabled {
+		c.recordResponse(ctx, msg.Type(), time.Since(start).Seconds(), resp)
+	}
+	if c.tracer != nil && isErrorResponse(resp) {
+		span.SetStatus(codes.Error, msg.Type().String())
 	}
 	return resp, nil
 }
@@ -335,29 +342,33 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 		return 0, ErrClosed
 	}
 
-	opName := "Tread"
 	req := &proto.Tread{Fid: fid, Offset: offset, Count: count}
-	ctx, span := c.startSpan(ctx, opName, req)
-	defer span.End()
+	var span trace.Span = noop.Span{}
+	if c.tracer != nil {
+		ctx, span = c.startSpan(ctx, "Tread", req)
+		defer span.End()
+	}
 
+	var start time.Time
 	if c.meterEnabled {
 		c.inst.activeReqs.Add(ctx, 1)
 		defer c.inst.activeReqs.Add(ctx, -1)
+		start = time.Now()
 	}
 
-	start := time.Now()
 	resp, n, err := c.exchange(ctx, span, req, dst)
 	if err != nil {
 		return 0, err
 	}
 
-	elapsed := time.Since(start).Seconds()
 	// resp is one of: rreadSentinelOK (zero-copy fast path success) or
 	// an error R-message (Rlerror/Rerror). Defensive type-check at the
 	// end catches a misbehaving server returning Rread (cached path)
 	// or some other unexpected R-type -- never panic, always return err.
 	if resp == rreadSentinelOK {
-		c.recordZCResponse(ctx, proto.TypeTread, elapsed, n)
+		if c.meterEnabled {
+			c.recordZCResponse(ctx, proto.TypeTread, time.Since(start).Seconds(), n)
+		}
 		return n, nil
 	}
 	if err := toError(resp); err != nil {
