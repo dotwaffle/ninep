@@ -119,14 +119,11 @@ func TestReadString_PooledAllocs(t *testing.T) {
 		}
 		_, _ = ReadString(r)
 	})
-	// Target: 2 allocs per call.
-	//   1. string(*scratch) -- unavoidable (strings are immutable in Go).
-	//   2. ReadUint16 escapes its 2-byte stack buffer to the heap because
-	//      io.Reader is an interface (escape analysis forces heap). Out of
-	//      scope for this plan; requires refactoring decode helpers to take
-	//      *bytes.Reader or equivalent concrete type.
-	// Pre-pool baseline was 3 (length-buf escape + make + string).
-	if allocs > 2 {
-		t.Errorf("ReadString allocs/op: got %v, want <= 2", allocs)
+	// Exactly 1 alloc per call: the string(*scratch) conversion, which is
+	// unavoidable (strings are immutable in Go). ReadUint16 no longer
+	// contributes -- its *bytes.Reader fast path reads bytes directly and
+	// never materializes a temp buffer through the io.Reader interface.
+	if allocs != 1 {
+		t.Errorf("ReadString allocs/op: got %v, want exactly 1", allocs)
 	}
 }
