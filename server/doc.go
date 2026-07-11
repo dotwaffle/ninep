@@ -61,7 +61,8 @@
 //   - [WithMaxInflight] -- concurrent request limit per connection (default 64)
 //   - [WithLogger] -- structured logger with automatic trace ID correlation
 //   - [WithRequestLogging] -- per-request Debug logging via the trace-correlated logger
-//   - [WithIdleTimeout] -- per-connection idle timeout
+//   - [WithIdleTimeout] -- per-connection idle timeout (set for untrusted peers)
+//   - [WithDrainTimeout] -- inflight drain bound during cleanup and re-negotiation
 //   - [WithAnames] -- vhost-style root dispatch by attach name
 //   - [WithAttacher] -- full-control attach handling
 //   - [WithTracer] -- OpenTelemetry TracerProvider

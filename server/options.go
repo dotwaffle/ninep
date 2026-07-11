@@ -127,6 +127,14 @@ func WithDrainTimeout(d time.Duration) Option {
 // resets read and write deadlines on the underlying net.Conn before each I/O
 // operation. A connection that sees no activity for the duration is closed.
 // Default: 0 (no timeout -- caller manages via net.Conn wrapping if needed).
+//
+// Set this whenever peers are untrusted. Responses are written inline under
+// a per-connection write mutex, so a client that stops reading (a full
+// socket buffer, deliberate or not) wedges the writing handler and, as
+// other handlers finish and queue on the mutex, eventually every dispatcher
+// on that connection. With no write deadline the wedge holds fids, buffers,
+// and worker slots forever; with an idle timeout the stalled write errors
+// out and the connection is torn down.
 func WithIdleTimeout(d time.Duration) Option {
 	return func(s *Server) { s.idleTimeout = d }
 }
