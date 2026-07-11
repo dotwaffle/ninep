@@ -48,72 +48,61 @@ func (r *pooledRreaddir) Type() proto.MessageType       { return r.Rreaddir.Type
 func (r *pooledRreaddir) EncodeTo(w io.Writer) error    { return r.Rreaddir.EncodeTo(w) }
 func (r *pooledRreaddir) DecodeFrom(rd io.Reader) error { return r.Rreaddir.DecodeFrom(rd) }
 
-// handleLopen dispatches to NodeOpener, transitions fid to opened state, and
-// stores the returned FileHandle.
+// handleLopen dispatches to NodeOpener via the shared openFid core.
 func (c *conn) handleLopen(ctx context.Context, m *p9l.Tlopen) proto.Message {
-	fs := c.fids.get(m.Fid)
-	if fs == nil {
-		return c.errorMsg(proto.EBADF)
+	qid, iounit, errResp := c.openFid(ctx, m.Fid, m.Flags)
+	if errResp != nil {
+		return errResp
 	}
-	if fs.currentState() != fidAllocated {
-		return c.errorMsg(proto.EBADF)
-	}
-
-	opener, ok := fs.currentNode().(NodeOpener)
-	if !ok {
-		return c.errorMsg(proto.ENOSYS)
-	}
-
-	handle, iounitHint, err := opener.Open(ctx, m.Flags)
-	if err != nil {
-		return c.errorMsg(errnoFromError(err))
-	}
-
-	qid := nodeQID(fs.currentNode())
-
-	if !c.fids.markOpenedWithHandle(m.Fid, handle) {
-		// Raced with a concurrent clunk: the fid is gone and the handle is
-		// unreachable, so release it rather than leaking the open fd.
-		releaseFileHandle(ctx, handle, c.logger)
-		return c.errorMsg(proto.EBADF)
-	}
-
-	return &p9l.Rlopen{QID: qid, IOUnit: c.clampIOUnit(iounitHint)}
+	return &p9l.Rlopen{QID: qid, IOUnit: iounit}
 }
 
-// handleUOpen dispatches 9P2000.u Topen to NodeOpener.
+// handleUOpen dispatches 9P2000.u Topen through openFid after translating
+// the .u mode byte to Linux open flags.
 func (c *conn) handleUOpen(ctx context.Context, m *p9u.Topen) proto.Message {
 	flags, ok := openFlagsFromUMode(m.Mode)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
+	qid, iounit, errResp := c.openFid(ctx, m.Fid, flags)
+	if errResp != nil {
+		return errResp
+	}
+	return &p9u.Ropen{QID: qid, IOUnit: iounit}
+}
 
-	fs := c.fids.get(m.Fid)
+// openFid runs the open choreography shared by Tlopen and Topen: fid and
+// state checks, NodeOpener dispatch, and the opened-state transition with
+// clunk-race handling. It returns the QID and clamped iounit for the
+// response, or a non-nil error response message.
+func (c *conn) openFid(ctx context.Context, fid proto.Fid, flags uint32) (proto.QID, uint32, proto.Message) {
+	fs := c.fids.get(fid)
 	if fs == nil {
-		return c.errorMsg(proto.EBADF)
+		return proto.QID{}, 0, c.errorMsg(proto.EBADF)
 	}
 	if fs.currentState() != fidAllocated {
-		return c.errorMsg(proto.EBADF)
+		return proto.QID{}, 0, c.errorMsg(proto.EBADF)
 	}
 
 	opener, ok := fs.currentNode().(NodeOpener)
 	if !ok {
-		return c.errorMsg(proto.ENOSYS)
+		return proto.QID{}, 0, c.errorMsg(proto.ENOSYS)
 	}
 
 	handle, iounitHint, err := opener.Open(ctx, flags)
 	if err != nil {
-		return c.errorMsg(errnoFromError(err))
+		return proto.QID{}, 0, c.errorMsg(errnoFromError(err))
 	}
 
 	qid := nodeQID(fs.currentNode())
-	if !c.fids.markOpenedWithHandle(m.Fid, handle) {
-		// Raced with a concurrent clunk: release the now-unreachable handle.
+	if !c.fids.markOpenedWithHandle(fid, handle) {
+		// Raced with a concurrent clunk: the fid is gone and the handle is
+		// unreachable, so release it rather than leaking the open fd.
 		releaseFileHandle(ctx, handle, c.logger)
-		return c.errorMsg(proto.EBADF)
+		return proto.QID{}, 0, c.errorMsg(proto.EBADF)
 	}
 
-	return &p9u.Ropen{QID: qid, IOUnit: c.clampIOUnit(iounitHint)}
+	return qid, c.clampIOUnit(iounitHint), nil
 }
 
 // clampIOUnit returns the per-fid IOUnit to advertise to the client.
@@ -127,6 +116,27 @@ func (c *conn) clampIOUnit(hint uint32) uint32 {
 		return maxIOUnit
 	}
 	return hint
+}
+
+// fillPooled borrows a pooled buffer of count bytes and fills it via read.
+// On success it returns the filled prefix and the pool pointer for the
+// response wrapper to release after writev. On a read error or an
+// out-of-range count from the implementation it returns the buffer to the
+// pool and hands back a non-nil error response instead. The read closure
+// does not escape, so the call adds no allocation to the hot path.
+func (c *conn) fillPooled(count uint32, read func(buf []byte) (int, error)) ([]byte, *[]byte, proto.Message) {
+	bufPtr := bufpool.GetMsgBuf(int(count))
+	buf := (*bufPtr)[:count]
+	n, err := read(buf)
+	if err != nil {
+		bufpool.PutMsgBuf(bufPtr)
+		return nil, nil, c.errorMsg(errnoFromError(err))
+	}
+	if !validReadCount(n, len(buf)) {
+		bufpool.PutMsgBuf(bufPtr)
+		return nil, nil, c.errorMsg(proto.EIO)
+	}
+	return buf[:n], bufPtr, nil
 }
 
 // handleRead dispatches to FileReader (handle-first) then NodeReader (fallback).
@@ -177,43 +187,32 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 		m.Count = maxData
 	}
 
-	// Borrow buffer from pool; wrapper Release() returns it after encode.
-	bufPtr := bufpool.GetMsgBuf(int(m.Count))
-	buf := (*bufPtr)[:m.Count]
-
 	// FileHandle dispatch first (per API-04).
 	if fs.handle != nil {
 		if reader, ok := fs.handle.(FileReader); ok {
-			n, err := reader.Read(ctx, buf, m.Offset)
-			if err != nil {
-				bufpool.PutMsgBuf(bufPtr)
-				return c.errorMsg(errnoFromError(err))
+			data, bufPtr, errResp := c.fillPooled(m.Count, func(buf []byte) (int, error) {
+				return reader.Read(ctx, buf, m.Offset)
+			})
+			if errResp != nil {
+				return errResp
 			}
-			if !validReadCount(n, len(buf)) {
-				bufpool.PutMsgBuf(bufPtr)
-				return c.errorMsg(proto.EIO)
-			}
-			return &pooledRread{Rread: proto.Rread{Data: buf[:n]}, bufPtr: bufPtr}
+			return &pooledRread{Rread: proto.Rread{Data: data}, bufPtr: bufPtr}
 		}
 	}
 
 	// Node fallback.
 	reader, ok := fs.currentNode().(NodeReader)
 	if !ok {
-		bufpool.PutMsgBuf(bufPtr)
 		return c.errorMsg(proto.ENOSYS)
 	}
 
-	n, err := reader.Read(ctx, buf, m.Offset)
-	if err != nil {
-		bufpool.PutMsgBuf(bufPtr)
-		return c.errorMsg(errnoFromError(err))
+	data, bufPtr, errResp := c.fillPooled(m.Count, func(buf []byte) (int, error) {
+		return reader.Read(ctx, buf, m.Offset)
+	})
+	if errResp != nil {
+		return errResp
 	}
-	if !validReadCount(n, len(buf)) {
-		bufpool.PutMsgBuf(bufPtr)
-		return c.errorMsg(proto.EIO)
-	}
-	return &pooledRread{Rread: proto.Rread{Data: buf[:n]}, bufPtr: bufPtr}
+	return &pooledRread{Rread: proto.Rread{Data: data}, bufPtr: bufPtr}
 }
 
 // handleWrite dispatches to FileWriter (handle-first) then NodeWriter (fallback).
@@ -388,18 +387,13 @@ func (c *conn) handleReaddir(ctx context.Context, m *p9l.Treaddir) proto.Message
 	// simple readdir path does its own buffer management.
 	if fs.handle != nil {
 		if raw, ok := fs.handle.(FileRawReaddirer); ok {
-			bufPtr := bufpool.GetMsgBuf(int(m.Count))
-			buf := (*bufPtr)[:m.Count]
-			n, err := raw.RawReaddir(ctx, buf, m.Offset)
-			if err != nil {
-				bufpool.PutMsgBuf(bufPtr)
-				return c.errorMsg(errnoFromError(err))
+			data, bufPtr, errResp := c.fillPooled(m.Count, func(buf []byte) (int, error) {
+				return raw.RawReaddir(ctx, buf, m.Offset)
+			})
+			if errResp != nil {
+				return errResp
 			}
-			if !validReadCount(n, len(buf)) {
-				bufpool.PutMsgBuf(bufPtr)
-				return c.errorMsg(proto.EIO)
-			}
-			return &pooledRreaddir{Rreaddir: p9l.Rreaddir{Data: buf[:n]}, bufPtr: bufPtr}
+			return &pooledRreaddir{Rreaddir: p9l.Rreaddir{Data: data}, bufPtr: bufPtr}
 		}
 		if rd, ok := fs.handle.(FileReaddirer); ok {
 			return c.readdirSimple(ctx, fs, m, rd)
@@ -408,18 +402,13 @@ func (c *conn) handleReaddir(ctx context.Context, m *p9l.Treaddir) proto.Message
 
 	// Node dispatch chain (fallback).
 	if raw, ok := fs.currentNode().(NodeRawReaddirer); ok {
-		bufPtr := bufpool.GetMsgBuf(int(m.Count))
-		buf := (*bufPtr)[:m.Count]
-		n, err := raw.RawReaddir(ctx, buf, m.Offset)
-		if err != nil {
-			bufpool.PutMsgBuf(bufPtr)
-			return c.errorMsg(errnoFromError(err))
+		data, bufPtr, errResp := c.fillPooled(m.Count, func(buf []byte) (int, error) {
+			return raw.RawReaddir(ctx, buf, m.Offset)
+		})
+		if errResp != nil {
+			return errResp
 		}
-		if !validReadCount(n, len(buf)) {
-			bufpool.PutMsgBuf(bufPtr)
-			return c.errorMsg(proto.EIO)
-		}
-		return &pooledRreaddir{Rreaddir: p9l.Rreaddir{Data: buf[:n]}, bufPtr: bufPtr}
+		return &pooledRreaddir{Rreaddir: p9l.Rreaddir{Data: data}, bufPtr: bufPtr}
 	}
 	if rd, ok := fs.currentNode().(NodeReaddirer); ok {
 		return c.readdirSimple(ctx, fs, m, rd)
@@ -995,34 +984,20 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 	if fs == nil {
 		return c.errorMsg(proto.EBADF)
 	}
+	node := fs.currentNode()
 
 	// RawXattrer takes precedence over simple interfaces.
-	if raw, ok := fs.currentNode().(RawXattrer); ok {
+	if raw, ok := node.(RawXattrer); ok {
 		data, err := raw.HandleXattrwalk(ctx, m.Name)
 		if err != nil {
 			return c.errorMsg(errnoFromError(err))
 		}
-		xfs := &fidState{
-			node:      fs.currentNode(),
-			state:     fidXattrRead,
-			xattrNode: fs.currentNode(),
-			xattrName: m.Name,
-			xattrData: data,
-		}
-		if err := c.fids.add(m.NewFid, xfs, c.maxFids); err != nil {
-			if errors.Is(err, ErrFidLimitExceeded) {
-				return c.errorMsg(proto.EMFILE)
-			}
-			return c.errorMsg(proto.EBADF)
-		}
-		c.otelInst.recordFidChange(1)
-		incRefNode(xfs.node)
-		return &p9l.Rxattrwalk{Size: uint64(len(data))}
+		return c.addXattrReadFid(m.NewFid, node, m.Name, data)
 	}
 
 	if m.Name == "" {
 		// List mode: return null-separated list of xattr names.
-		lister, ok := fs.currentNode().(NodeXattrLister)
+		lister, ok := node.(NodeXattrLister)
 		if !ok {
 			return c.errorMsg(proto.ENOSYS)
 		}
@@ -1043,25 +1018,11 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 			buf[curr] = 0
 			curr++
 		}
-		xfs := &fidState{
-			node:      fs.currentNode(),
-			state:     fidXattrRead,
-			xattrNode: fs.currentNode(),
-			xattrData: buf,
-		}
-		if err := c.fids.add(m.NewFid, xfs, c.maxFids); err != nil {
-			if errors.Is(err, ErrFidLimitExceeded) {
-				return c.errorMsg(proto.EMFILE)
-			}
-			return c.errorMsg(proto.EBADF)
-		}
-		c.otelInst.recordFidChange(1)
-		incRefNode(xfs.node)
-		return &p9l.Rxattrwalk{Size: uint64(len(buf))}
+		return c.addXattrReadFid(m.NewFid, node, "", buf)
 	}
 
 	// Single xattr get.
-	getter, ok := fs.currentNode().(NodeXattrGetter)
+	getter, ok := node.(NodeXattrGetter)
 	if !ok {
 		return c.errorMsg(proto.ENOSYS)
 	}
@@ -1069,21 +1030,28 @@ func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Mes
 	if err != nil {
 		return c.errorMsg(errnoFromError(err))
 	}
+	return c.addXattrReadFid(m.NewFid, node, m.Name, data)
+}
+
+// addXattrReadFid binds newFid to a fidXattrRead state holding the cached
+// xattr payload, with the fid-limit mapping, fid-count metric, and node
+// refcount bookkeeping every Txattrwalk outcome shares.
+func (c *conn) addXattrReadFid(newFid proto.Fid, node Node, name string, data []byte) proto.Message {
 	xfs := &fidState{
-		node:      fs.currentNode(),
+		node:      node,
 		state:     fidXattrRead,
-		xattrNode: fs.currentNode(),
-		xattrName: m.Name,
+		xattrNode: node,
+		xattrName: name,
 		xattrData: data,
 	}
-	if err := c.fids.add(m.NewFid, xfs, c.maxFids); err != nil {
+	if err := c.fids.add(newFid, xfs, c.maxFids); err != nil {
 		if errors.Is(err, ErrFidLimitExceeded) {
 			return c.errorMsg(proto.EMFILE)
 		}
 		return c.errorMsg(proto.EBADF)
 	}
 	c.otelInst.recordFidChange(1)
-	incRefNode(xfs.node)
+	incRefNode(node)
 	return &p9l.Rxattrwalk{Size: uint64(len(data))}
 }
 
