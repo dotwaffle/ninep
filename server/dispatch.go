@@ -195,6 +195,13 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 	// second in-place Twalk on tw.Fid pipelined concurrently with this one
 	// can rewrite src.node while this request is still resolving.
 	current := src.currentNode()
+	// walkStart is the fid-bound node the walk began from; it must never be
+	// closed here. Every other node this loop steps through came from a
+	// Lookup in this request and, unless it ends up bound to a fid below,
+	// nothing else will ever release it -- for a passthrough-style
+	// filesystem that opens an OS fd per Lookup, stepping through it
+	// without closing leaks one fd per intermediate component.
+	walkStart := current
 	qids := make([]proto.QID, 0, len(tw.Names))
 
 	for i, name := range tw.Names {
@@ -226,6 +233,11 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 		}
 
 		qids = append(qids, child.QID())
+		// The node just stepped past is now an unreferenced intermediate
+		// (Lookup(".") may hand the same node back, so guard on identity).
+		if current != walkStart && current != child {
+			closeUnboundNode(ctx, current, c.logger)
+		}
 		current = child
 	}
 
@@ -245,10 +257,17 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 			if prev, ok := c.fids.update(tw.Fid, current, newPath); ok {
 				incRefNode(current)
 				decRefNode(prev)
+			} else if current != walkStart {
+				// Fid vanished under a concurrent clunk; nothing holds the
+				// resolved node now.
+				closeUnboundNode(ctx, current, c.logger)
 			}
 		} else {
 			fs := &fidState{node: current, path: newPath, state: fidAllocated}
 			if err := c.fids.add(tw.NewFid, fs, c.maxFids); err != nil {
+				if current != walkStart {
+					closeUnboundNode(ctx, current, c.logger)
+				}
 				if errors.Is(err, ErrFidLimitExceeded) {
 					return c.errorMsg(proto.EMFILE)
 				}
@@ -257,6 +276,10 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 			c.otelInst.recordFidChange(1)
 			incRefNode(current)
 		}
+	} else if current != walkStart {
+		// Partial walk: newfid is not bound, so the deepest resolved node
+		// is unreferenced too.
+		closeUnboundNode(ctx, current, c.logger)
 	}
 
 	return &proto.Rwalk{QIDs: qids}
@@ -465,6 +488,21 @@ func closeOrphanNode(ctx context.Context, n Node, logger *slog.Logger) {
 	if err := closer.Close(ctx); err != nil && logger != nil {
 		logger.Debug("orphan node close error", slog.Any("error", err))
 	}
+}
+
+// closeUnboundNode closes a node produced by a walk Lookup that ended up
+// bound to no fid: an intermediate path component, or a resolved node whose
+// bind lost a race. Nodes with live fid references are left alone -- a
+// Lookup that returns shared instances (the memfs model) can hand back a
+// node another fid is still using, and closing it would tear the resource
+// out from under that fid. Per-Lookup instances (the passthrough model)
+// always have zero references here, so their OS fds are released instead
+// of leaking one per walked component.
+func closeUnboundNode(ctx context.Context, n Node, logger *slog.Logger) {
+	if ie, ok := n.(InodeEmbedder); ok && ie.EmbeddedInode().refs.Load() != 0 {
+		return
+	}
+	closeOrphanNode(ctx, n, logger)
 }
 
 // errnoFromError converts a Go error to a proto.Errno. If the error wraps or
