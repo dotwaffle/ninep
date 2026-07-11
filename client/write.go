@@ -1,9 +1,13 @@
 package client
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net"
+	"time"
 
 	"github.com/dotwaffle/ninep/internal/bufpool"
 	"github.com/dotwaffle/ninep/internal/wire"
@@ -76,7 +80,37 @@ func (c *Conn) writeT(tag proto.Tag, msg proto.Message) (uint32, error) {
 	}
 	bufs := net.Buffers(c.encBufsArr[:nBufs])
 
+	// Coarse write deadline: a wedged-but-TCP-alive peer whose receive
+	// window is exhausted would otherwise block this write forever WHILE
+	// HOLDING writeMu, freezing every other caller on the Conn -- they
+	// could not even send a Tflush. flushGrace (the same bound used for
+	// the post-cancel Rflush wait) is generous enough that a healthy but
+	// slow peer never trips it. Best-effort: transports that reject
+	// deadlines just proceed unbounded. Guarded on flushGrace > 0 so
+	// hand-built zero-value Conns in tests do not fail instantly.
+	if c.flushGrace > 0 {
+		_ = c.nc.SetWriteDeadline(time.Now().Add(c.flushGrace))
+	}
+
 	if err := wire.WriteFramesLocked(c.nc, &bufs); err != nil {
+		// A failed write may have emitted a partial frame; the byte
+		// stream has lost message framing and cannot carry another
+		// request. Tear the connection down so subsequent callers see
+		// ErrClosed instead of feeding garbage to the server. Log the
+		// underlying cause here because the shutdown path surfaces only
+		// ErrClosed to callers.
+		level := slog.LevelDebug
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			// A tripped write deadline means the peer stopped draining
+			// its receive buffer: the wedged-peer case, worth surfacing.
+			level = slog.LevelWarn
+		}
+		c.logger.Log(context.Background(), level, "client: write failed; shutting down conn",
+			slog.String("type", msg.Type().String()),
+			slog.Any("error", err),
+		)
+		c.signalShutdown()
 		return 0, fmt.Errorf("client: write %s: %w", msg.Type(), err)
 	}
 	return size, nil
