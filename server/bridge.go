@@ -226,6 +226,13 @@ func (c *conn) handleWrite(ctx context.Context, m *proto.Twrite) proto.Message {
 	// Xattr fid routing: accumulate into xattr write buffer.
 	fs.mu.Lock()
 	if fs.state == fidXattrWrite {
+		// A concurrent Tclunk has already snapshotted and committed the
+		// buffer; appending now would acknowledge data that was never
+		// written. handleClunk sets closing under fs.mu for exactly this.
+		if fs.closing {
+			fs.mu.Unlock()
+			return c.errorMsg(proto.EBADF)
+		}
 		// If RawXattrer is in use, delegate to the XattrWriter.
 		if fs.xattrWriter != nil {
 			fs.mu.Unlock()
