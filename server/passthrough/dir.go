@@ -345,7 +345,7 @@ func (n *Node) Rename(_ context.Context, oldName string, newDir server.Node, new
 		}
 		newDirFd = d.fd
 	case *Root:
-		if err := d.Node.requireMutable(); err != nil {
+		if err := d.requireMutable(); err != nil {
 			return err
 		}
 		newDirFd = d.fd

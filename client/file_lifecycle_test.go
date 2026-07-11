@@ -191,7 +191,7 @@ func TestFileReadAtRunsConcurrentlyOnOneFile(t *testing.T) {
 	defer func() { _ = f.Close() }()
 
 	errCh := make(chan error, 2)
-	for off := int64(0); off < 2; off++ {
+	for off := range int64(2) {
 		go func() {
 			buf := make([]byte, 1)
 			_, err := f.ReadAt(buf, off)
