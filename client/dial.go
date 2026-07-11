@@ -80,6 +80,9 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (_ *Conn, retErr err
 	for _, opt := range opts {
 		opt(cfg)
 	}
+	if cfg.err != nil {
+		return nil, fmt.Errorf("client.Dial: invalid configuration: %w", cfg.err)
+	}
 
 	// Honour a pre-cancelled ctx before touching the wire.
 	if err := ctx.Err(); err != nil {

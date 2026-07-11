@@ -39,18 +39,16 @@
 // promoting small-message allocations into the large-buffer footprint.
 // See msgBucketSizes for the chosen size classes and their rationale.
 //
-// # Why a 1 MiB cap
+// # Pooling boundaries
 //
-// PoolMaxBufSize matches the WithMaxMsize default (1 MiB) and the Linux
-// kernel's silent 9P msize cap. Buffers above this are released to the GC
-// on Put rather than retained, so pool memory stays proportional to
-// steady-state traffic instead of growing to the largest message ever
-// seen.
+// Encode buffers start at 1 KiB and are retained only while they remain in
+// that class. Message buffers use buckets through 1 MiB, matching the default
+// msize and the Linux kernel's silent cap. Larger legal messages use fresh
+// allocations that are released after the operation.
 //
 // The cap is a pooling boundary, not a hard limit on message size. A
-// server configured with a larger WithMaxMsize (for example a
-// ninep-to-ninep deployment that raises msize for throughput) still
-// works, but GetMsgBuf serves any buffer above the top bucket from a
+// server configured with a larger WithMaxMsize still works up to the protocol
+// allocation ceiling, but GetMsgBuf serves any buffer above the top bucket from a
 // fresh allocation that PutMsgBuf drops to the GC rather than pooling.
 // That trades buffer reuse for GC pressure on the oversized path. The
 // Linux kernel client never negotiates above 1 MiB, so it never takes
@@ -69,32 +67,7 @@ package bufpool
 import (
 	"bytes"
 	"sync"
-	"sync/atomic"
 )
-
-// Metrics holds counters for pool activity.
-type Metrics struct {
-	// MsgBufMisses is the count of GetMsgBuf calls whose size exceeded the
-	// largest message bucket (PoolMaxBufSize) and required a fresh,
-	// un-pooled allocation.
-	MsgBufMisses uint64
-	// StringBufMisses is the count of GetStringBuf calls that exceeded the
-	// largest bucket (4 KiB) and required a fresh allocation.
-	StringBufMisses uint64
-}
-
-var (
-	msgBufMisses    atomic.Uint64
-	stringBufMisses atomic.Uint64
-)
-
-// ReadMetrics returns a snapshot of the current pool metrics.
-func ReadMetrics() Metrics {
-	return Metrics{
-		MsgBufMisses:    msgBufMisses.Load(),
-		StringBufMisses: stringBufMisses.Load(),
-	}
-}
 
 // PoolMaxBufSize is the upper bound on pooled buffer capacity. Buffers
 // that grow above this cap are released to the GC on PutBuf rather than
@@ -106,11 +79,11 @@ func ReadMetrics() Metrics {
 // pool memory proportional to steady-state traffic, not worst-case.
 const PoolMaxBufSize = 1024 * 1024
 
+const initialEncodeBufSize = 1 << 10
+
 var bufPool = sync.Pool{
 	New: func() any {
-		// Pre-grow to PoolMaxBufSize so first-use does not trigger the
-		// grow-and-copy path inside bytes.Buffer.
-		return bytes.NewBuffer(make([]byte, 0, PoolMaxBufSize))
+		return bytes.NewBuffer(make([]byte, 0, initialEncodeBufSize))
 	},
 }
 
@@ -122,11 +95,11 @@ func GetBuf() *bytes.Buffer {
 	return b
 }
 
-// PutBuf returns b to the pool iff its capacity is within PoolMaxBufSize.
-// Oversized buffers are dropped and will be GC'd, preventing the pool
-// from retaining memory proportional to the largest-ever message.
+// PutBuf returns b to the pool only while it remains in the small encode
+// class. Buffers that grew while encoding are dropped so concurrent control
+// responses cannot inherit large retained capacities from earlier traffic.
 func PutBuf(b *bytes.Buffer) {
-	if b.Cap() > PoolMaxBufSize {
+	if b.Cap() > initialEncodeBufSize {
 		return
 	}
 	bufPool.Put(b)
@@ -170,11 +143,10 @@ func msgBucketFor(n int) int {
 // GetMsgBuf returns a pointer to a []byte with capacity >= n, drawn from
 // the smallest bucket that fits. If n exceeds the largest bucket
 // (PoolMaxBufSize, 1 MiB), a fresh buffer of size n is allocated and left
-// un-pooled: PutMsgBuf drops it to the GC and MsgBufMisses counts it.
+// un-pooled: PutMsgBuf drops it to the GC.
 func GetMsgBuf(n int) *[]byte {
 	idx := msgBucketFor(n)
 	if idx < 0 {
-		msgBufMisses.Add(1)
 		b := make([]byte, n)
 		return &b
 	}
@@ -229,7 +201,6 @@ func stringBucketFor(n int) int {
 func GetStringBuf(n int) *[]byte {
 	idx := stringBucketFor(n)
 	if idx < 0 {
-		stringBufMisses.Add(1)
 		b := make([]byte, 0, n)
 		return &b
 	}
@@ -239,7 +210,6 @@ func GetStringBuf(n int) *[]byte {
 		// bucket's size class was somehow returned to the pool. Return
 		// it to its real bucket (if it matches another size class) so
 		// the pool is not silently drained, then allocate fresh.
-		stringBufMisses.Add(1)
 		PutStringBuf(b)
 		nb := make([]byte, 0, n)
 		return &nb

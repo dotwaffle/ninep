@@ -45,7 +45,8 @@
 //
 // # Example: Hello World File Server
 //
-// A complete, minimal 9P2000.L server serving a static in-memory file:
+// A complete, minimal 9P2000.L server serving a static in-memory file. The
+// protocol has no authentication, so this example binds loopback.
 //
 //	package main
 //
@@ -54,40 +55,19 @@
 //		"log"
 //		"net"
 //
-//		"github.com/dotwaffle/ninep/proto"
 //		"github.com/dotwaffle/ninep/server"
+//		"github.com/dotwaffle/ninep/server/memfs"
 //	)
 //
-//	// HelloFile serves a static "hello world" file.
-//	type HelloFile struct {
-//		server.Inode
-//	}
-//
-//	// Getattr implements server.NodeGetattrer.
-//	func (f *HelloFile) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) {
-//		return proto.Attr{
-//			Valid: proto.AttrMode | proto.AttrSize,
-//			Mode:  0o444, // read-only file
-//			Size:  11,
-//		}, nil
-//	}
-//
-//	// Read implements server.NodeReader.
-//	func (f *HelloFile) Read(_ context.Context, buf []byte, offset uint64) (int, error) {
-//		data := []byte("hello world")
-//		if offset >= uint64(len(data)) {
-//			return 0, nil
-//		}
-//		end := min(offset+uint64(len(buf)), uint64(len(data)))
-//		return copy(buf, data[offset:end]), nil
-//	}
-//
 //	func main() {
-//		root := &HelloFile{}
-//		root.Init(proto.QID{Type: proto.QTFILE, Path: 1}, root)
+//		root := memfs.NewDir(new(server.QIDGenerator)).
+//			AddStaticFile("hello.txt", "hello world")
 //
-//		srv := server.New(root)
-//		ln, err := net.Listen("tcp", ":5640")
+//		srv, err := server.New(root)
+//		if err != nil {
+//			log.Fatal(err)
+//		}
+//		ln, err := net.Listen("tcp", "127.0.0.1:5640")
 //		if err != nil {
 //			log.Fatal(err)
 //		}

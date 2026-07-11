@@ -6,43 +6,73 @@ import (
 	"github.com/dotwaffle/ninep/proto"
 )
 
-// TestWithLogger_NilIsIgnored asserts a nil logger does not panic at
-// construction and leaves the default logger in place.
-func TestWithLogger_NilIsIgnored(t *testing.T) {
+func TestNew_RejectsNilLogger(t *testing.T) {
 	t.Parallel()
 	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
-
-	var srv *Server
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				t.Fatalf("New with WithLogger(nil) panicked: %v", r)
-			}
-		}()
-		srv = New(root, WithLogger(nil))
-	}()
-	if srv.logger == nil {
-		t.Fatal("WithLogger(nil) left the server with no logger")
+	if _, err := New(root, WithLogger(nil)); err == nil {
+		t.Fatal("New with WithLogger(nil) succeeded, want error")
 	}
 }
 
-// TestWithMaxMsize_ClampsToMinimum asserts an msize below the protocol minimum
-// is clamped up so the server can still negotiate connections.
-func TestWithMaxMsize_ClampsToMinimum(t *testing.T) {
+func TestNew_RejectsInvalidMsize(t *testing.T) {
 	t.Parallel()
 	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
 
-	tests := []struct {
-		in, want uint32
-	}{
-		{0, minMsize},
-		{100, minMsize},
-		{minMsize, minMsize},
-		{65536, 65536},
+	for _, msize := range []uint32{
+		0,
+		minMsize - 1,
+		proto.MaxMessageSize + 1,
+		^uint32(0),
+	} {
+		if _, err := New(root, WithMaxMsize(msize)); err == nil {
+			t.Errorf("New with msize %d succeeded, want error", msize)
+		}
 	}
-	for _, tt := range tests {
-		if got := New(root, WithMaxMsize(tt.in)).maxMsize; got != tt.want {
-			t.Errorf("WithMaxMsize(%d): maxMsize = %d, want %d", tt.in, got, tt.want)
+
+	for _, msize := range []uint32{minMsize, 65536, proto.MaxMessageSize} {
+		srv, err := New(root, WithMaxMsize(msize))
+		if err != nil {
+			t.Errorf("New with msize %d: %v", msize, err)
+			continue
+		}
+		if srv.maxMsize != msize {
+			t.Errorf("New with msize %d stored %d", msize, srv.maxMsize)
+		}
+	}
+}
+
+func TestNew_DefaultResourceBounds(t *testing.T) {
+	t.Parallel()
+	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
+	srv, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if srv.maxConnections != defaultMaxConnections || srv.maxFids != defaultMaxFids || srv.idleTimeout != defaultIdleTimeout {
+		t.Fatalf("default bounds = connections:%d fids:%d idle:%s", srv.maxConnections, srv.maxFids, srv.idleTimeout)
+	}
+
+	trusted, err := New(root, WithTrustedNetwork())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trusted.maxConnections != 0 || trusted.maxFids != 0 || trusted.idleTimeout != 0 {
+		t.Fatalf("trusted bounds = connections:%d fids:%d idle:%s", trusted.maxConnections, trusted.maxFids, trusted.idleTimeout)
+	}
+}
+
+func TestNew_RejectsNilDependencies(t *testing.T) {
+	t.Parallel()
+	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
+	for name, opt := range map[string]Option{
+		"tracer":     WithTracer(nil),
+		"meter":      WithMeter(nil),
+		"middleware": WithMiddleware(nil),
+		"attacher":   WithAttacher(nil),
+		"aname root": WithAnames(map[string]Node{"data": nil}),
+	} {
+		if _, err := New(root, opt); err == nil {
+			t.Errorf("New accepted nil %s", name)
 		}
 	}
 }

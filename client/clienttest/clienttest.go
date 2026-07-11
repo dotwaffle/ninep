@@ -343,7 +343,7 @@ func finalizePair(tb testing.TB, cfg *config, root server.Node, cliNC, srvNC net
 	}
 	serverOpts = append(serverOpts, cfg.serverOpts...)
 
-	srv := server.New(root, serverOpts...)
+	srv := server.MustNew(root, serverOpts...)
 
 	serveTimeout := cfg.serveTimeout
 	if serveTimeout == 0 {

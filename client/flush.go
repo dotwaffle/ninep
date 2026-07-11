@@ -17,7 +17,7 @@ const defaultFlushGrace = 30 * time.Second
 // flushTagBit marks the reserved upper half of the tag space used for
 // Tflush frames. Request tags come from the allocator range
 // [1..maxMaxInflight]; each request's Tflush uses the mirror tag
-// oldTag|flushTagBit. WithMaxInflight's clamp to 32766 keeps the mirror
+// oldTag|flushTagBit. WithMaxInflight's upper bound of 32766 keeps the mirror
 // range below NoTag (compile-time checked in options.go).
 const flushTagBit = 0x8000
 

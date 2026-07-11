@@ -35,7 +35,7 @@ func newClientServerPairLopenReject(tb testing.TB, root server.Node) (*client.Co
 			return next(ctx, tag, msg)
 		}
 	}
-	srv := server.New(root,
+	srv := server.MustNew(root,
 		server.WithMaxMsize(65536),
 		server.WithLogger(discardLogger()),
 		server.WithMiddleware(rejectLopen),

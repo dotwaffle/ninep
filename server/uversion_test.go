@@ -31,7 +31,7 @@ func readResponseU(t *testing.T, r io.Reader) (proto.Tag, proto.Message) {
 func newUConnPair(t *testing.T, root Node) (*connPair, *proto.Rattach) {
 	t.Helper()
 
-	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
+	srv := MustNew(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 	client, serverConn := net.Pipe()
 
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)

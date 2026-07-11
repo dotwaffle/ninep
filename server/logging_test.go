@@ -342,7 +342,7 @@ func TestWithRequestLogging(t *testing.T) {
 	tp, _ := NewTestTracerProvider(t)
 
 	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
-	s := New(root,
+	s := MustNew(root,
 		WithLogger(slog.New(sink)),
 		WithTracer(tp),
 		WithRequestLogging(),

@@ -489,7 +489,7 @@ func dialMockL(t *testing.T) (*Conn, net.Conn) {
 // writeRreadFrame hand-constructs and writes an Rread frame on srv with
 // the given tag and payload. Bypasses p9l.Encode so tests can deliberately
 // craft malformed frames (e.g. count > len(payload), count > caller dst)
-// to exercise the zero-copy Pitfall 1 guard paths.
+// to exercise zero-copy destination-bound checks.
 //
 // frameOverride lets tests specify a count value DIFFERENT from
 // len(payload) -- for the short-dst hazard where the server lies about
@@ -551,8 +551,8 @@ func TestReadAt_ZeroCopy_HappyPath(t *testing.T) {
 	}
 }
 
-// TestReadAt_ZeroCopy_ShortDst exercises Pitfall 1 (24-RESEARCH.md):
-// the server returns Rread.count > len(caller's dst). The read loop's
+// TestReadAt_ZeroCopy_ShortDst covers a server returning Rread.count larger
+// than the caller's destination. The read loop's
 // zero-copy branch MUST detect the oversize and signalShutdown rather
 // than silently truncating into dst (or worse, writing past dst's end
 // and corrupting adjacent memory).
@@ -589,7 +589,7 @@ func TestReadAt_ZeroCopy_ShortDst(t *testing.T) {
 		t.Fatal("Conn did not shut down within 2s after oversized Rread")
 	}
 
-	// dst MUST NOT have been touched (Pitfall 1: never silently truncate).
+	// dst must not be touched when the response is too large.
 	for i, b := range dst {
 		if b != 0xAA {
 			t.Errorf("dst[%d] = %#x, want 0xAA (untouched); read loop wrote into dst before shutting down", i, b)
@@ -648,7 +648,7 @@ func TestReadAt_ZeroCopy_PipeFallback(t *testing.T) {
 	}
 }
 
-// TestReadAt_ZeroCopy_CancelRace verifies Pitfall 2: ctx cancel during
+// TestReadAt_ZeroCopy_CancelRace verifies context cancellation during
 // a ReadAt does not corrupt dst, regardless of whether Rread or Rflush
 // wins the first-frame race. Under Pattern B the entire response body
 // is received before the caller's select runs, so dst is either
@@ -740,9 +740,8 @@ func TestReadAt_ZeroCopy_CancelRace(t *testing.T) {
 	}
 }
 
-// TestReadAt_ZeroCopy_CloseMidCopy_Race exercises WR-01: the data race
-// where Conn.Close -> signalShutdown -> cancelAll closes entry.ch while
-// the read loop's Rread fast path is mid-copy into entry.dst. The fix
+// TestReadAt_ZeroCopy_CloseMidCopy_Race covers Conn.Close racing a response
+// copy while signalShutdown closes entry.ch. The synchronization
 // holds the inflight RLock across the lookup + copy + n + send so that
 // cancelAll's Lock either runs before lookup (entry already gone, copy
 // never happens) or after the send (caller wakes from a delivered
@@ -757,7 +756,7 @@ func TestReadAt_ZeroCopy_CancelRace(t *testing.T) {
 //     loop never started the copy because the entry was gone) OR the
 //     full payload (the read loop's RLock-spanned copy completed atomically).
 //
-// Without the WR-01 fix, partial writes are observable when the caller
+// Without the inflight read lock, partial writes are observable when the caller
 // returns from <-entry.ch on the !ok arm (cancelAll closed it) before
 // the read loop's copy finishes. The dst sentinel-vs-content check
 // catches partial writes; the -race detector catches the unsynchronized
@@ -848,7 +847,7 @@ func TestReadAt_ZeroCopy_CloseMidCopy_Race(t *testing.T) {
 		// Acceptance: dst is either all-sentinel (cancelAll won the
 		// race; copy never happened) OR full payload (read loop's
 		// RLock-spanned copy completed). Partial writes are a
-		// WR-01-regression signal.
+		// regression signal.
 		allSentinel := true
 		for _, b := range dst {
 			if b != sentinelByte {
@@ -858,7 +857,7 @@ func TestReadAt_ZeroCopy_CloseMidCopy_Race(t *testing.T) {
 		}
 		allPayload := bytes.Equal(dst, payload)
 		if !allSentinel && !allPayload {
-			t.Errorf("iter %d: PARTIAL DST WRITE (WR-01 regression): dst=%q, want all-sentinel or all-payload", i, dst)
+			t.Errorf("iter %d: partial destination write: dst=%q, want all-sentinel or all-payload", i, dst)
 		}
 	}
 }
@@ -924,7 +923,7 @@ func buildZCTestRoot(tb testing.TB) server.Node {
 // the -v output stays focused on test signal.
 func newZCTestServer(tb testing.TB, root server.Node) *server.Server {
 	tb.Helper()
-	return server.New(root,
+	return server.MustNew(root,
 		server.WithMaxMsize(65536),
 		server.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 	)

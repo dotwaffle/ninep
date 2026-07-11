@@ -300,16 +300,10 @@ func (c *conn) signalRecvShutdown() {
 // negotiateVersion reads the first Tversion from the client and negotiates
 // protocol version and msize. On success, c.protocol and c.msize are set.
 func (c *conn) negotiateVersion(ctx context.Context) error {
-	// Bound the whole handshake (reading Tversion and writing Rversion) with a
-	// deadline even when no idle timeout is configured, so a peer that opens a
-	// connection and then stalls cannot pin a goroutine, fd, and buffer
-	// forever. Established connections keep their idleTimeout-governed
-	// behavior; the deadline is cleared below on success when no idle timeout
-	// applies. writeRaw re-arms its own write deadline when idleTimeout > 0.
-	handshakeTimeout := c.server.idleTimeout
-	if handshakeTimeout <= 0 {
-		handshakeTimeout = c.server.handshakeTimeout
-	}
+	// The initial negotiation has its own deadline. It must not inherit a
+	// longer established-connection idle timeout, because an unauthenticated
+	// peer has not completed enough protocol work to receive that allowance.
+	handshakeTimeout := c.server.handshakeTimeout
 	if handshakeTimeout > 0 {
 		if err := c.nc.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
 			return fmt.Errorf("set handshake deadline: %w", err)
@@ -415,7 +409,7 @@ func (c *conn) writeRaw(tag proto.Tag, msg proto.Message) error {
 
 	// Body buffer is borrowed from the shared pool and returned via defer.
 	// Passing the pooled *bytes.Buffer into msg.EncodeTo triggers the
-	// proto.Write* zero-alloc fast path (plan 08-02). PutBuf runs AFTER
+	// proto.Write* zero-allocation fast path. PutBuf runs after
 	// c.nc.Write returns; net.Conn.Write copies its input synchronously,
 	// so the buffer is no longer referenced when it returns to the pool.
 	body := bufpool.GetBuf()

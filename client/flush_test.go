@@ -50,7 +50,11 @@ import (
 // only exercises the roundTrip ctx.Done path, which is
 // dialect-neutral.
 type flushMockServer struct {
-	nc net.Conn
+	nc         net.Conn
+	treadSeen  chan struct{}
+	tflushSeen chan struct{}
+	treadOnce  sync.Once
+	tflushOnce sync.Once
 
 	// rreadGate blocks the server's Tread response until closed.
 	rreadGate chan struct{}
@@ -84,6 +88,8 @@ func newFlushMockServer(tb testing.TB, srvNC net.Conn) *flushMockServer {
 		nc:         srvNC,
 		rreadGate:  make(chan struct{}),
 		rflushGate: make(chan struct{}),
+		treadSeen:  make(chan struct{}),
+		tflushSeen: make(chan struct{}),
 	}
 	tb.Cleanup(func() {
 		// Defensive: release both gates so the handler goroutines exit
@@ -152,12 +158,14 @@ func (s *flushMockServer) serve() {
 		case *proto.Tclunk:
 			s.respond(tag, &proto.Rclunk{})
 		case *proto.Tread:
+			s.treadOnce.Do(func() { close(s.treadSeen) })
 			// Parked Tread: launch a goroutine that blocks on the gate,
 			// then sends Rread. Done in a goroutine so the server main
 			// loop can process the subsequent Tflush concurrently.
 			go s.handleRead(tag)
 		case *proto.Tflush:
 			s.tflushCount.Add(1)
+			s.tflushOnce.Do(func() { close(s.tflushSeen) })
 			go s.handleFlush(tag)
 		default:
 			// Anything else: send a minimal Rlerror so the client isn't
@@ -316,19 +324,15 @@ func TestFlushAndWait_Ordering_RFirst(t *testing.T) {
 		resCh <- result{data: data, err: err}
 	}()
 
-	// Give the Tread a moment to hit the server's gate (net.Pipe is
-	// synchronous, but the client-side goroutine scheduling still needs
-	// a beat to get the frame out and the server to dispatch it).
-	time.Sleep(20 * time.Millisecond)
+	<-srv.treadSeen
 
 	// Cancel the read. flushAndWait will now send Tflush.
 	readCancel()
 
-	// Give the Tflush time to hit the server AND let the server's
-	// Tflush handler park on rflushGate. Then release the Rread. The
+	// Wait for the Tflush handler to park on rflushGate. Then release the Rread. The
 	// Rread should arrive at the client BEFORE we release rflushGate,
 	// so the origCh arm of flushAndWait's inner select wins.
-	time.Sleep(20 * time.Millisecond)
+	<-srv.tflushSeen
 	srv.releaseRread()
 
 	// The client's Read call should return now. Don't release the
@@ -354,11 +358,6 @@ func TestFlushAndWait_Ordering_RFirst(t *testing.T) {
 	if errors.Is(res.err, client.ErrFlushed) {
 		t.Errorf("errors.Is(err, ErrFlushed) = true on R-first path; want false. err = %v", res.err)
 	}
-
-	// Drain window: let the late Rflush be delivered+dropped.
-	// inflight.deliver will find the flushTag unregistered and send to
-	// putCachedRMsg. Give the read loop a scheduling beat.
-	time.Sleep(50 * time.Millisecond)
 
 	if got := client.InflightLen(cli); got != 0 {
 		t.Errorf("InflightLen after flush = %d; want 0", got)
@@ -401,7 +400,7 @@ func TestFlushAndWait_Ordering_RflushFirst(t *testing.T) {
 
 	// Wait for Tread to hit the wire, then cancel. The server's Tflush
 	// handler will fire Rflush immediately while Rread is still parked.
-	time.Sleep(20 * time.Millisecond)
+	<-srv.treadSeen
 	readCancel()
 
 	var res result
@@ -426,8 +425,6 @@ func TestFlushAndWait_Ordering_RflushFirst(t *testing.T) {
 		t.Errorf("errors.Is(err, ErrFlushed) = false on Rflush-first path; want true. err = %v", res.err)
 	}
 
-	time.Sleep(50 * time.Millisecond)
-
 	if got := client.InflightLen(cli); got != 0 {
 		t.Errorf("InflightLen after flush = %d; want 0", got)
 	}
@@ -441,7 +438,7 @@ func TestFlushAndWait_Ordering_RflushFirst(t *testing.T) {
 // is parked waiting for a response, and the caller sees ErrClosed.
 func TestFlushAndWait_CloseDuringFlush(t *testing.T) {
 	t.Parallel()
-	cli, _, _ := newFlushTestPair(t)
+	cli, srv, _ := newFlushTestPair(t)
 	// Do NOT register the default cleanup - this test drives Close
 	// explicitly and a second Close would be a no-op but obscures
 	// intent.
@@ -462,11 +459,10 @@ func TestFlushAndWait_CloseDuringFlush(t *testing.T) {
 	// Let Tread reach the server, then cancel. flushAndWait will send
 	// Tflush and park on its inner select. Neither gate is released,
 	// so only closeCh can unblock it.
-	time.Sleep(20 * time.Millisecond)
+	<-srv.treadSeen
 	readCancel()
 
-	// Give flushAndWait a beat to send Tflush and park. Then Close.
-	time.Sleep(20 * time.Millisecond)
+	<-srv.tflushSeen
 	go func() {
 		_ = cli.Close()
 	}()
@@ -508,14 +504,11 @@ func TestFlushAndWait_TagReuse(t *testing.T) {
 		_, _ = cli.Raw().Tread(readCtx, fid, 0, 4096)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	<-srv.treadSeen
 	readCancel()
 	<-done
 
 	srv.releaseRread() // drain server goroutine cleanly
-
-	// Allow any late drops to finish.
-	time.Sleep(50 * time.Millisecond)
 
 	// Now issue a fresh Walk/Clunk cycle. Must succeed - if the tag
 	// allocator leaked, FreeTagCount would be < 64 and a pathological
@@ -556,7 +549,7 @@ func TestFlushAndWait_DoubleFlush_SingleFrame(t *testing.T) {
 		_, _ = cli.Raw().Tread(readCtx, fid, 0, 4096)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	<-srv.treadSeen
 	// Cancel THREE times. A well-behaved flushAndWait sends exactly one
 	// Tflush - the repeated cancels are ctx-idempotent and have no
 	// visible effect on the wire.
@@ -566,7 +559,6 @@ func TestFlushAndWait_DoubleFlush_SingleFrame(t *testing.T) {
 
 	<-done
 	srv.releaseRread()
-	time.Sleep(50 * time.Millisecond)
 
 	if got := srv.tflushCount.Load(); got != 1 {
 		t.Errorf("tflushCount = %d after one Tread cancel; want exactly 1", got)

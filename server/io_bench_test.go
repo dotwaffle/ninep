@@ -76,7 +76,7 @@ func newConnPairMsizeTransport(tb testing.TB, transport string, root Node, msize
 	}
 
 	opts = append([]Option{WithMaxMsize(msize), WithLogger(discardLogger())}, opts...)
-	srv := New(root, opts...)
+	srv := MustNew(root, opts...)
 
 	var client, server net.Conn
 	switch transport {
@@ -108,17 +108,6 @@ func newConnPairMsizeTransport(tb testing.TB, transport string, root Node, msize
 	}
 
 	return &connPair{client: client, done: done, cancel: cancel}
-}
-
-// newConnPairMsize preserves the pipe-only signature for any future callers
-// that don't need transport parameterization. Currently every in-tree caller
-// uses newConnPairMsizeTransport directly, but the wrapper is retained for API
-// parity with newConnPair (walk_test.go) so new pipe-only benchmarks can land
-// without re-introducing the helper.
-//
-//nolint:unused // kept for API parity with newConnPair; see godoc above
-func newConnPairMsize(tb testing.TB, root Node, msize uint32, opts ...Option) *connPair {
-	return newConnPairMsizeTransport(tb, "pipe", root, msize, opts...)
 }
 
 // benchWalkOpen walks from fid to name, allocating newFid, then opens newFid.

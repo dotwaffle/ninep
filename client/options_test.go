@@ -31,7 +31,7 @@ func TestWithMsize(t *testing.T) {
 		in   uint32
 		want uint32
 	}{
-		{"zero-passes-through", 0, 0},
+		{"minimum", minMsize, minMsize},
 		{"default", 1 << 20, 1 << 20},
 		{"small", 8192, 8192},
 		{"large", 4 << 20, 4 << 20},
@@ -53,25 +53,30 @@ func TestWithMaxInflight(t *testing.T) {
 	tests := []struct {
 		name string
 		in   int
-		want int
 	}{
-		{"zero-clamps-to-1", 0, 1},
-		{"negative-clamps-to-1", -5, 1},
-		{"one-accepted", 1, 1},
-		{"default", 64, 64},
-		{"upper-boundary", 32766, 32766},
-		{"above-upper-clamps", 32767, 32766},
-		{"way-above-clamps", 1 << 20, 32766},
+		{"one-accepted", 1},
+		{"default", 64},
+		{"upper-boundary", 32766},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			c := newConfig()
 			WithMaxInflight(tt.in)(c)
-			if c.maxInflight != tt.want {
-				t.Fatalf("maxInflight = %d, want %d", c.maxInflight, tt.want)
+			if c.err != nil {
+				t.Fatalf("WithMaxInflight(%d): %v", tt.in, c.err)
+			}
+			if c.maxInflight != tt.in {
+				t.Fatalf("maxInflight = %d, want %d", c.maxInflight, tt.in)
 			}
 		})
+	}
+	for _, invalid := range []int{0, -5, 32767, 1 << 20} {
+		c := newConfig()
+		WithMaxInflight(invalid)(c)
+		if c.err == nil {
+			t.Errorf("WithMaxInflight(%d) accepted invalid value", invalid)
+		}
 	}
 }
 
@@ -101,14 +106,12 @@ func TestWithLogger(t *testing.T) {
 	}
 }
 
-func TestWithLogger_NilIsNoOp(t *testing.T) {
+func TestWithLogger_NilIsInvalid(t *testing.T) {
 	t.Parallel()
 	c := newConfig()
-	orig := c.logger
-	// Must not panic and must preserve the existing (default) logger.
 	WithLogger(nil)(c)
-	if c.logger != orig {
-		t.Fatalf("WithLogger(nil) changed the logger; expected no-op")
+	if c.err == nil {
+		t.Fatal("WithLogger(nil) did not record a configuration error")
 	}
 }
 
@@ -146,17 +149,29 @@ func TestWithRequestTimeout_Zero_Resets(t *testing.T) {
 	}
 }
 
-// TestWithRequestTimeout_Negative verifies negative durations are coerced to
-// 0 (infinite). Rationale: callers MAY accidentally pass a subtraction
-// overflow or a "duration until deadline" that has already passed; treating
-// those as "no timeout" matches Linux v9fs parity and is safer than a
-// pathological sub-millisecond timeout.
+// TestWithRequestTimeout_Negative verifies negative durations are invalid.
 func TestWithRequestTimeout_Negative(t *testing.T) {
 	t.Parallel()
 	c := newConfig()
 	WithRequestTimeout(-1 * time.Second)(c)
-	if c.requestTimeout != 0 {
-		t.Fatalf("requestTimeout after negative input = %v, want 0 (coerced)", c.requestTimeout)
+	if c.err == nil {
+		t.Fatal("negative request timeout did not record a configuration error")
+	}
+}
+
+func TestInvalidOptionalProvidersAndSchedule(t *testing.T) {
+	t.Parallel()
+	for name, opt := range map[string]Option{
+		"empty lock schedule": WithLockPollSchedule(nil),
+		"negative lock delay": WithLockPollSchedule([]time.Duration{-time.Millisecond}),
+		"nil tracer":          WithTracer(nil),
+		"nil meter":           WithMeter(nil),
+	} {
+		c := newConfig()
+		opt(c)
+		if c.err == nil {
+			t.Errorf("%s did not record a configuration error", name)
+		}
 	}
 }
 

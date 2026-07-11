@@ -278,6 +278,17 @@ func TestDial_MsizeTooSmall(t *testing.T) {
 	_ = cliNC.Close()
 }
 
+func TestDial_MsizeTooLarge(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() { _ = clientConn.Close() })
+	t.Cleanup(func() { _ = serverConn.Close() })
+
+	_, err := client.Dial(t.Context(), clientConn, client.WithMsize(^uint32(0)))
+	if !errors.Is(err, client.ErrMsizeTooLarge) {
+		t.Fatalf("Dial err = %v, want wraps ErrMsizeTooLarge", err)
+	}
+}
+
 // TestDial_TversionUsesNoTag captures the first Tversion write on the pipe
 // and asserts the tag field equals proto.NoTag (0xFFFF).
 func TestDial_TversionUsesNoTag(t *testing.T) {

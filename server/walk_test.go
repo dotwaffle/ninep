@@ -82,7 +82,7 @@ func newConnPairTransport(tb testing.TB, transport string, root Node, opts ...Op
 	}
 
 	opts = append([]Option{WithMaxMsize(65536), WithLogger(discardLogger())}, opts...)
-	srv := New(root, opts...)
+	srv := MustNew(root, opts...)
 
 	var client, server net.Conn
 	switch transport {

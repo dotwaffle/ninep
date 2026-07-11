@@ -79,7 +79,7 @@ func newTestConn(t *testing.T, root server.Node) *testConn {
 	t.Helper()
 
 	discardLog := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := server.New(root, server.WithMaxMsize(65536), server.WithLogger(discardLog))
+	srv := server.MustNew(root, server.WithMaxMsize(65536), server.WithLogger(discardLog))
 
 	client, srvConn := net.Pipe()
 

@@ -37,7 +37,7 @@ func exampleHarness(build func(root *memfs.MemDir)) (*client.Conn, func()) {
 	if build != nil {
 		build(root)
 	}
-	srv := server.New(root, server.WithMaxMsize(65536))
+	srv := server.MustNew(root, server.WithMaxMsize(65536))
 	srvCtx, srvCancel := context.WithCancel(context.Background())
 	srvDone := make(chan struct{})
 	go func() {

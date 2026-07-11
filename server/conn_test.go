@@ -149,7 +149,7 @@ func TestVersionNegotiation(t *testing.T) {
 			t.Parallel()
 
 			root := newRootNode(rootQID)
-			srv := New(root, WithMaxMsize(tt.serverMsize))
+			srv := MustNew(root, WithMaxMsize(tt.serverMsize))
 
 			client, server := net.Pipe()
 			defer func() { _ = client.Close() }()
@@ -208,7 +208,7 @@ func TestProtocolAutoDetect(t *testing.T) {
 	t.Parallel()
 
 	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
-	srv := New(root, WithMaxMsize(65536))
+	srv := MustNew(root, WithMaxMsize(65536))
 
 	// Connection 1: 9P2000.L
 	c1client, c1server := net.Pipe()
@@ -293,7 +293,7 @@ func TestNegotiateVersion_DrainsOversizedTversionBody(t *testing.T) {
 
 	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
 	root := newDirNode(rootQID)
-	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
+	srv := MustNew(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
 	client, server := net.Pipe()
 	defer func() { _ = client.Close() }()
@@ -350,7 +350,7 @@ func TestNegotiateVersion_RejectsOversizedVersionFrame(t *testing.T) {
 
 	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
 	root := newDirNode(rootQID)
-	srv := New(root, WithLogger(discardLogger())) // default maxMsize 1 MiB
+	srv := MustNew(root, WithLogger(discardLogger())) // default maxMsize 1 MiB
 
 	client, server := net.Pipe()
 	defer func() { _ = client.Close() }()
@@ -384,16 +384,16 @@ func TestNegotiateVersion_RejectsOversizedVersionFrame(t *testing.T) {
 	}
 }
 
-// TestNegotiateVersion_HandshakeDeadlineClosesStalledPeer asserts that even
-// with no idle timeout configured, a peer that connects and never sends
-// Tversion is closed by the always-on handshake deadline rather than pinning
-// the serve goroutine forever.
+// TestNegotiateVersion_HandshakeDeadlineClosesStalledPeer asserts that a peer
+// that never sends Tversion is governed by the handshake deadline even when
+// the established-connection idle timeout is longer.
 func TestNegotiateVersion_HandshakeDeadlineClosesStalledPeer(t *testing.T) {
 	t.Parallel()
 
 	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
-	srv := New(root, WithLogger(discardLogger()))
-	srv.handshakeTimeout = 50 * time.Millisecond // idleTimeout stays 0
+	srv := MustNew(root, WithLogger(discardLogger()))
+	srv.handshakeTimeout = 50 * time.Millisecond
+	srv.idleTimeout = time.Minute
 
 	client, server := net.Pipe()
 	defer func() { _ = client.Close() }()
@@ -430,7 +430,7 @@ func TestSendResponse_WriteErrorTearsDownConn(t *testing.T) {
 	t.Parallel()
 
 	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
-	srv := New(root, WithLogger(discardLogger()))
+	srv := MustNew(root, WithLogger(discardLogger()))
 
 	client, serverRaw := net.Pipe()
 	server := &failingWriteConn{Conn: serverRaw}
@@ -557,7 +557,7 @@ func TestServe_RetriesTransientAcceptErrors(t *testing.T) {
 	t.Parallel()
 
 	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
-	srv := New(root, WithLogger(discardLogger()))
+	srv := MustNew(root, WithLogger(discardLogger()))
 
 	// A pre-closed pipe peer makes the accepted conn's first read return
 	// immediately, so its serve goroutine exits and wg.Wait does not block.
@@ -601,7 +601,7 @@ func TestServeConn(t *testing.T) {
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
-	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
+	srv := MustNew(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
 	client, server := net.Pipe()
 	defer func() { _ = client.Close() }()
@@ -662,7 +662,7 @@ func TestServeReturnsOnContextCancel(t *testing.T) {
 	t.Parallel()
 
 	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
-	srv := New(root, WithMaxMsize(65536))
+	srv := MustNew(root, WithMaxMsize(65536))
 	ln := newBlockingListener()
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -687,7 +687,7 @@ func TestServeListener(t *testing.T) {
 	t.Parallel()
 
 	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
-	srv := New(root, WithMaxMsize(65536))
+	srv := MustNew(root, WithMaxMsize(65536))
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -735,7 +735,7 @@ func TestIdleTimeout(t *testing.T) {
 	t.Parallel()
 
 	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
-	srv := New(root,
+	srv := MustNew(root,
 		WithMaxMsize(65536),
 		WithIdleTimeout(50*time.Millisecond),
 	)
@@ -774,7 +774,7 @@ func TestIdleTimeout_ResetOnActivity(t *testing.T) {
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
-	srv := New(root,
+	srv := MustNew(root,
 		WithMaxMsize(65536),
 		WithIdleTimeout(100*time.Millisecond),
 	)

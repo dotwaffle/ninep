@@ -61,6 +61,10 @@ var (
 	// the minimum required to carry a useful payload.
 	ErrMsizeTooSmall = errors.New("client: msize too small")
 
+	// ErrMsizeTooLarge is returned before negotiation when the configured
+	// proposal exceeds the protocol allocation ceiling.
+	ErrMsizeTooLarge = errors.New("client: msize too large")
+
 	// ErrFidExhausted is returned when the per-Conn fid counter has run
 	// past proto.NoFid (2^32 - 2 allocations). Unreachable under any
 	// practical workload; documented for completeness. Callers that

@@ -19,7 +19,7 @@ func TestDial_WithVersion_Enforcement(t *testing.T) {
 	// Setup a server that only speaks .u
 	gen := new(server.QIDGenerator)
 	root := memfs.NewDir(gen)
-	srv := server.New(root)
+	srv := server.MustNew(root)
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

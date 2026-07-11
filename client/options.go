@@ -1,6 +1,8 @@
 package client
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -16,6 +18,7 @@ type Option func(*config)
 // config holds the resolved Conn configuration. It is unexported: callers
 // mutate it only through Option values.
 type config struct {
+	err              error
 	msize            uint32
 	version          proto.Version
 	maxInflight      int
@@ -24,10 +27,8 @@ type config struct {
 	// requestTimeout is the default ctx timeout applied by File.Read,
 	// File.Write, File.ReadAt, File.WriteAt (the non-ctx io.* methods).
 	// Zero (the default) means infinite wait - matches the Linux v9fs
-	// kernel client for trans=tcp mounts. Values < 0 are coerced to 0
-	// by WithRequestTimeout. Mutates behaviour only of the non-ctx
-	// io.* methods; the *Ctx variants honor the caller-supplied ctx
-	// verbatim.
+	// kernel client for trans=tcp mounts. Negative values are invalid. The
+	// *Ctx variants honor the caller-supplied ctx verbatim.
 	requestTimeout time.Duration
 	tracerProvider trace.TracerProvider
 	meterProvider  metric.MeterProvider
@@ -87,11 +88,18 @@ func WithVersion(v proto.Version) Option {
 // (see package documentation). The server's Rversion msize caps the proposal;
 // the negotiated msize is min(client proposal, server cap).
 //
-// No clamping is performed on the input -- callers that proposed 0 or a value
-// below the negotiated minimum (256 bytes) will surface [ErrMsizeTooSmall] at
-// Dial time, not here.
+// Dial rejects values above [proto.MaxMessageSize] before touching the
+// connection. Values below the negotiated minimum surface [ErrMsizeTooSmall].
 func WithMsize(n uint32) Option {
-	return func(c *config) { c.msize = n }
+	return func(c *config) {
+		c.msize = n
+		switch {
+		case n < minMsize:
+			c.setError(ErrMsizeTooSmall)
+		case n > proto.MaxMessageSize:
+			c.setError(ErrMsizeTooLarge)
+		}
+	}
 }
 
 // WithMaxInflight sets the maximum number of concurrent outstanding requests
@@ -99,29 +107,25 @@ func WithMsize(n uint32) Option {
 // so back-pressure kicks in at this value -- once saturated, new requests
 // block until an in-flight tag is released.
 //
-// Values less than 1 are clamped to 1. Values greater than 32766 are clamped
-// to 32766: the upper half of the tag space is reserved for the Tflush
-// mirror tags that cancellation sends (see flushTagFor), and NoTag (0xFFFF)
-// is reserved for Tversion. Default: 64.
+// Dial rejects values outside 1..32766. The upper half of the tag space is
+// reserved for the Tflush mirror tags that cancellation sends (see
+// flushTagFor), and NoTag (0xFFFF) is reserved for Tversion. Default: 64.
 func WithMaxInflight(n int) Option {
 	return func(c *config) {
-		if n < 1 {
-			n = 1
-		}
-		if n > maxMaxInflight {
-			n = maxMaxInflight
-		}
 		c.maxInflight = n
+		if n < 1 || n > maxMaxInflight {
+			c.setError(fmt.Errorf("client: max inflight %d outside [1, %d]", n, maxMaxInflight))
+		}
 	}
 }
 
 // WithLogger sets the structured logger used by the Conn for diagnostic
-// output. A nil logger is ignored - the existing logger (by default
-// [slog.Default]) is preserved.
+// output. Dial rejects a nil logger.
 func WithLogger(logger *slog.Logger) Option {
 	return func(c *config) {
-		if logger != nil {
-			c.logger = logger
+		c.logger = logger
+		if logger == nil {
+			c.setError(errors.New("client: logger must not be nil"))
 		}
 	}
 }
@@ -131,8 +135,7 @@ func WithLogger(logger *slog.Logger) Option {
 // LockStatusGrace. Values are the sleep durations for iterations 0..N;
 // iterations past N use the last entry as a cap.
 //
-// Passing an empty slice is a programming error and silently falls back
-// to the default schedule ([DefaultLockBackoff]).
+// Dial rejects an empty slice or negative duration.
 //
 // Primarily used by tests to bound timing with a sub-millisecond cadence
 // (deterministic timing for contention tests without a minute-long wall
@@ -141,7 +144,14 @@ func WithLogger(logger *slog.Logger) Option {
 func WithLockPollSchedule(schedule []time.Duration) Option {
 	return func(c *config) {
 		if len(schedule) == 0 {
+			c.setError(errors.New("client: lock poll schedule must not be empty"))
 			return
+		}
+		for _, delay := range schedule {
+			if delay < 0 {
+				c.setError(errors.New("client: lock poll schedule must not contain negative durations"))
+				return
+			}
 		}
 		// Defensive copy: callers mutating their slice after Dial
 		// should not affect the resolved Conn config.
@@ -162,31 +172,44 @@ func WithLockPollSchedule(schedule []time.Duration) Option {
 // [File.WriteCtx], [File.ReadAtCtx], [File.WriteAtCtx] with a
 // caller-supplied ctx instead of this option.
 //
-// Values <= 0 (zero or negative) are treated as "no timeout"; this keeps
-// the surface Linux-v9fs-parallel and prevents accidental pathological
-// short timeouts from callers passing a time.Duration literal with a
-// zero-value or a subtraction overflow.
+// Zero disables the timeout. Dial rejects negative values.
 //
 // Per-op precedence: if a caller passes a ctx WITH a deadline to a *Ctx
 // variant (e.g. [File.ReadCtx]), that ctx is used verbatim -
 // WithRequestTimeout is ignored on the *Ctx methods.
 func WithRequestTimeout(d time.Duration) Option {
 	return func(c *config) {
-		if d < 0 {
-			d = 0
-		}
 		c.requestTimeout = d
+		if d < 0 {
+			c.setError(errors.New("client: request timeout must not be negative"))
+		}
 	}
 }
 
 // WithTracer sets the TracerProvider used by the Conn for instrumentation.
-// If nil, tracing is disabled.
+// Dial rejects nil; omit the option to disable tracing.
 func WithTracer(tp trace.TracerProvider) Option {
-	return func(c *config) { c.tracerProvider = tp }
+	return func(c *config) {
+		c.tracerProvider = tp
+		if tp == nil {
+			c.setError(errors.New("client: tracer provider must not be nil"))
+		}
+	}
 }
 
 // WithMeter sets the MeterProvider used by the Conn for instrumentation.
-// If nil, metrics are disabled.
+// Dial rejects nil; omit the option to disable metrics.
 func WithMeter(mp metric.MeterProvider) Option {
-	return func(c *config) { c.meterProvider = mp }
+	return func(c *config) {
+		c.meterProvider = mp
+		if mp == nil {
+			c.setError(errors.New("client: meter provider must not be nil"))
+		}
+	}
+}
+
+func (c *config) setError(err error) {
+	if c.err == nil {
+		c.err = err
+	}
 }

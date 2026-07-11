@@ -26,7 +26,7 @@ func newClientServerPairMsize(tb testing.TB, root server.Node, msize uint32, cli
 
 	cliNC, srvNC := net.Pipe()
 
-	srv := server.New(root,
+	srv := server.MustNew(root,
 		server.WithMaxMsize(msize),
 		server.WithLogger(discardLogger()),
 	)

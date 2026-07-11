@@ -32,7 +32,7 @@ func TestClientOTel_TracingRespectsParentSampling(t *testing.T) {
 
 	gen := new(server.QIDGenerator)
 	root := memfs.NewDir(gen).AddFile("hello.txt", []byte("hello"))
-	srv := server.New(root)
+	srv := server.MustNew(root)
 	cliNC, srvNC := net.Pipe()
 	defer func() { _ = cliNC.Close() }()
 	defer func() { _ = srvNC.Close() }()
@@ -79,7 +79,7 @@ func TestClientOTel_Tracing(t *testing.T) {
 	gen := new(server.QIDGenerator)
 	root := memfs.NewDir(gen).
 		AddFile("hello.txt", []byte("hello"))
-	srv := server.New(root)
+	srv := server.MustNew(root)
 	cliNC, srvNC := net.Pipe()
 	defer func() { _ = cliNC.Close() }()
 	defer func() { _ = srvNC.Close() }()
@@ -145,7 +145,7 @@ func TestClientOTel_Metrics(t *testing.T) {
 	gen := new(server.QIDGenerator)
 	root := memfs.NewDir(gen).
 		AddFile("hello.txt", []byte("hello"))
-	srv := server.New(root)
+	srv := server.MustNew(root)
 	cliNC, srvNC := net.Pipe()
 	defer func() { _ = cliNC.Close() }()
 	defer func() { _ = srvNC.Close() }()
@@ -195,7 +195,7 @@ func TestClientOTel_ErrorSpan(t *testing.T) {
 	// Setup server
 	gen := new(server.QIDGenerator)
 	root := memfs.NewDir(gen)
-	srv := server.New(root)
+	srv := server.MustNew(root)
 	cliNC, srvNC := net.Pipe()
 	defer func() { _ = cliNC.Close() }()
 	defer func() { _ = srvNC.Close() }()
@@ -254,7 +254,7 @@ func TestClientOTel_UntracedDoesNotTouchAmbientSpan(t *testing.T) {
 
 	gen := new(server.QIDGenerator)
 	root := memfs.NewDir(gen)
-	srv := server.New(root)
+	srv := server.MustNew(root)
 	cliNC, srvNC := net.Pipe()
 	defer func() { _ = cliNC.Close() }()
 	defer func() { _ = srvNC.Close() }()

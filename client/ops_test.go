@@ -265,8 +265,6 @@ func TestRoundTrip_CtxCancelDuringWait(t *testing.T) {
 
 	origTag := srvDrainOne(t, srvNC) // drain the original Tclunk
 	_ = origTag
-	// Give the goroutine a moment to block on respCh before cancelling.
-	time.Sleep(20 * time.Millisecond)
 	cancel()
 
 	// Drain the Tflush that flushAndWait emits and deliver an Rflush
@@ -313,8 +311,6 @@ func TestRoundTrip_ConnClosedDuringWait(t *testing.T) {
 	}()
 
 	_ = srvDrainOne(t, srvNC)
-	time.Sleep(20 * time.Millisecond)
-
 	// Simulate signalShutdown without the full Conn lifecycle (closeCh + cancelAll).
 	close(c.closeCh)
 	c.inflight.cancelAll()
@@ -354,9 +350,6 @@ func TestRoundTrip_TagLeakOnWriteError(t *testing.T) {
 
 	// Close the server side of the pipe so writeT's Write returns an error.
 	_ = srvNC.Close()
-	// Give the closure a moment to propagate.
-	time.Sleep(10 * time.Millisecond)
-
 	_, err := c.roundTrip(context.Background(), &proto.Tclunk{Fid: 1})
 	if err == nil {
 		t.Fatal("roundTrip returned nil err, want write error")

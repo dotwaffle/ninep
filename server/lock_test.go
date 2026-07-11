@@ -116,7 +116,7 @@ func twoConnPair(tb testing.TB, root Node, opts ...Option) (*connPair, *connPair
 	tb.Helper()
 
 	defaultOpts := []Option{WithMaxMsize(65536), WithLogger(discardLogger())}
-	srv := New(root, append(defaultOpts, opts...)...)
+	srv := MustNew(root, append(defaultOpts, opts...)...)
 
 	mkPair := func() *connPair {
 		ctx, cancel := context.WithCancel(tb.Context())

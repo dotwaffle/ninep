@@ -160,9 +160,8 @@ func TestPayloaderUsesWritev(t *testing.T) {
 // forcing sendResponseInline to emit a 3-iovec writev (hdr, fixedBody,
 // payload) under the shipped Payloader path (server/conn.go).
 //
-// The helper reuses benchAttachFid0 / benchWalkOpen / newBenchTree which
-// were promoted to testing.TB by plan 14-01 specifically to support this
-// helper from a *testing.T context (no bench-specific duplication needed).
+// The helper reuses shared benchmark fixtures through testing.TB so the
+// syscall regression and benchmarks exercise the same setup.
 func runWritevStraceHelper(t *testing.T) {
 	t.Helper()
 

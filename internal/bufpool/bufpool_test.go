@@ -19,12 +19,12 @@ func TestGetBuf_ReturnsReset(t *testing.T) {
 	}
 }
 
-func TestGetBuf_PreGrown(t *testing.T) {
+func TestGetBuf_StartsSmall(t *testing.T) {
 	t.Parallel()
 	b := GetBuf()
 	defer PutBuf(b)
-	if b.Cap() < PoolMaxBufSize {
-		t.Errorf("GetBuf buffer not pre-grown: cap=%d want >= %d", b.Cap(), PoolMaxBufSize)
+	if b.Cap() != 1<<10 {
+		t.Errorf("GetBuf buffer capacity = %d, want %d", b.Cap(), 1<<10)
 	}
 }
 
@@ -54,9 +54,8 @@ func TestPutBuf_DropsOversized(t *testing.T) {
 func TestPutBuf_RetainsInRange(t *testing.T) {
 	t.Parallel()
 	// In-range buffer must be accepted by PutBuf and the next GetBuf
-	// must return a zero-length buffer with cap preserved. Pool is
-	// non-deterministic so we cannot assert pointer identity; we assert
-	// the observable contract: len==0 and cap >= PoolMaxBufSize.
+	// must return a zero-length buffer. Pool is non-deterministic, so pointer
+	// identity and the exact retained capacity are not part of the contract.
 	b := GetBuf()
 	b.WriteString("some data")
 	PutBuf(b)
@@ -66,8 +65,8 @@ func TestPutBuf_RetainsInRange(t *testing.T) {
 	if b2.Len() != 0 {
 		t.Errorf("GetBuf after PutBuf returned non-empty buffer: len=%d", b2.Len())
 	}
-	if b2.Cap() < PoolMaxBufSize {
-		t.Errorf("cap not preserved across Put/Get: cap=%d want >= %d", b2.Cap(), PoolMaxBufSize)
+	if b2.Cap() > PoolMaxBufSize {
+		t.Errorf("cap after Put/Get = %d, want <= %d", b2.Cap(), PoolMaxBufSize)
 	}
 }
 
@@ -100,8 +99,7 @@ func TestGetMsgBuf_ReturnsCorrectSize(t *testing.T) {
 func TestGetMsgBuf_BucketSizing(t *testing.T) {
 	t.Parallel()
 	// GetMsgBuf(n) must return a buffer whose cap is the smallest bucket
-	// size >= n, NOT the max pool size. Verifies the bucketing fix for
-	// the seq_read_4k variance (Target G in the Q debug report).
+	// size >= n, rather than promoting every request to the largest class.
 	cases := []struct {
 		n       int
 		wantCap int
@@ -213,24 +211,6 @@ func TestGetStringBuf_BucketSizing(t *testing.T) {
 	}
 }
 
-func TestReadMetrics(t *testing.T) {
-	// Reset counters isn't possible (package vars), so we check for increment.
-	m1 := ReadMetrics()
-
-	// Trigger msg miss.
-	_ = GetMsgBuf(PoolMaxBufSize * 2)
-	// Trigger string miss.
-	_ = GetStringBuf(8192)
-
-	m2 := ReadMetrics()
-	if m2.MsgBufMisses <= m1.MsgBufMisses {
-		t.Errorf("MsgBufMisses did not increment: %d -> %d", m1.MsgBufMisses, m2.MsgBufMisses)
-	}
-	if m2.StringBufMisses <= m1.StringBufMisses {
-		t.Errorf("StringBufMisses did not increment: %d -> %d", m1.StringBufMisses, m2.StringBufMisses)
-	}
-}
-
 func TestStringBufCycle_ZeroAllocs(t *testing.T) {
 	// Warm the pool.
 	for range 100 {
@@ -248,17 +228,10 @@ func TestStringBufCycle_ZeroAllocs(t *testing.T) {
 	}
 }
 
-// BenchmarkGetMsgBuf_SmallUnderGC reproduces the handoff Target G workload
-// faithfully: mixed 11/23/4096-byte Get/Put cycles with runtime.GC() every
-// 1000 iterations. The mix models Tclunk/Twrite-header/4K-payload traffic
-// that exposes pool drain-feedback loops on a monolithic pool; size-class
-// bucketing (shipped v1.1.18, commit 0c2c8ca) eliminates the feedback.
+// BenchmarkGetMsgBuf_SmallUnderGC mixes 11/23/4096-byte Get/Put cycles with
+// runtime.GC every 1000 iterations. The mix models control headers and 4 KiB
+// payload traffic that can drain a monolithic buffer pool.
 // Acceptance: 0 allocs/op at steady state.
-//
-// Pattern anchor: analogous to TestMsgBufCycle_ZeroAllocs (bufpool_test.go:147-162)
-// but uses b.Loop() instead of AllocsPerRun because the acceptance bar is
-// per-benchstat steady-state allocs/op, not a hard AllocsPerRun assertion.
-// per-benchstat steady-state.
 func BenchmarkGetMsgBuf_SmallUnderGC(b *testing.B) {
 	sizes := []int{11, 23, 4096}
 	// Warm every bucket used by the mix -- first-use path hits sync.Pool.New

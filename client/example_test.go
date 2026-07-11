@@ -19,7 +19,10 @@ func Example() {
 	root := memfs.NewDir(gen).
 		AddFile("hello.txt", []byte("hello, 9p!"))
 
-	srv := server.New(root)
+	srv, err := server.New(root)
+	if err != nil {
+		log.Fatal(err)
+	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		log.Fatal(err)

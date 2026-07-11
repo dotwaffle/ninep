@@ -52,7 +52,7 @@ func TestFileClose_TimedOutClunkLeaksFidNumber(t *testing.T) {
 	root.AddChild("wedged", wedged.EmbeddedInode())
 
 	cliNC, srvNC := net.Pipe()
-	srv := server.New(root,
+	srv := server.MustNew(root,
 		server.WithMaxMsize(65536),
 		server.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 	)

@@ -2,8 +2,11 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
+	"github.com/dotwaffle/ninep/internal/protometa"
 	"github.com/dotwaffle/ninep/proto"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -23,7 +26,12 @@ const instrumentationName = "github.com/dotwaffle/ninep/server"
 // otel.SetTracerProvider; pass otel.GetTracerProvider() explicitly to route
 // spans to the globally installed SDK.
 func WithTracer(tp trace.TracerProvider) Option {
-	return func(s *Server) { s.tracerProvider = tp }
+	return func(s *Server) {
+		s.tracerProvider = tp
+		if tp == nil {
+			s.setConfigError(errors.New("server: tracer provider must not be nil"))
+		}
+	}
 }
 
 // WithMeter sets the OpenTelemetry MeterProvider for the server. When set,
@@ -34,7 +42,23 @@ func WithTracer(tp trace.TracerProvider) Option {
 // otel.GetMeterProvider() explicitly to route metrics to the globally
 // installed SDK.
 func WithMeter(mp metric.MeterProvider) Option {
-	return func(s *Server) { s.meterProvider = mp }
+	return func(s *Server) {
+		s.meterProvider = mp
+		if mp == nil {
+			s.setConfigError(errors.New("server: meter provider must not be nil"))
+		}
+	}
+}
+
+// TracePathFilter decides whether and how a resolved fid path is attached to
+// a span. Returning false omits the attribute. Implementations should keep
+// output cardinality bounded and avoid exposing tenant or secret names.
+type TracePathFilter func(path string) (value string, include bool)
+
+// WithTracePathFilter enables the otherwise-disabled ninep.path span
+// attribute. The callback may pass through, redact, hash, or drop each path.
+func WithTracePathFilter(filter TracePathFilter) Option {
+	return func(s *Server) { s.tracePathFilter = filter }
 }
 
 // otelInstruments holds all OTel metric instruments for a connection. Created
@@ -42,6 +66,7 @@ func WithMeter(mp metric.MeterProvider) Option {
 // per-request.
 type otelInstruments struct {
 	duration   metric.Float64Histogram
+	requests   metric.Int64Counter
 	reqSize    metric.Int64Counter
 	respSize   metric.Int64Counter
 	activeReqs metric.Int64UpDownCounter
@@ -54,41 +79,63 @@ type otelInstruments struct {
 // registry under a mutex, so doing it per connection would both contend
 // and re-allocate the ~30-entry attribute map on every accept.
 type otelCore struct {
-	tracer      trace.Tracer
-	inst        otelInstruments
-	opNameAttrs map[proto.MessageType]metric.MeasurementOption
+	tracer       trace.Tracer
+	inst         otelInstruments
+	opNameAttrs  map[proto.MessageType]metric.MeasurementOption
+	outcomeAttrs map[proto.MessageType][2]metric.MeasurementOption
 }
 
 // newOTelCore builds the shared OTel state from the configured providers.
 // Called once from server.New when either probe reported a live provider.
-func newOTelCore(tp trace.TracerProvider, mp metric.MeterProvider) *otelCore {
+func newOTelCore(tp trace.TracerProvider, mp metric.MeterProvider) (*otelCore, error) {
 	meter := mp.Meter(instrumentationName)
+	duration, err := meter.Float64Histogram("ninep.server.duration",
+		metric.WithUnit("s"),
+		metric.WithDescription("Duration of 9P server operations"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create duration histogram: %w", err)
+	}
+	requests, err := meter.Int64Counter("ninep.server.requests",
+		metric.WithDescription("Number of completed 9P requests by outcome"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create requests counter: %w", err)
+	}
+	reqSize, err := meter.Int64Counter("ninep.server.request.size",
+		metric.WithUnit("By"),
+		metric.WithDescription("Size of 9P request messages"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create request size counter: %w", err)
+	}
+	respSize, err := meter.Int64Counter("ninep.server.response.size",
+		metric.WithUnit("By"),
+		metric.WithDescription("Size of 9P response messages"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create response size counter: %w", err)
+	}
+	activeReqs, err := meter.Int64UpDownCounter("ninep.server.active_requests",
+		metric.WithDescription("Number of active 9P requests"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create active requests counter: %w", err)
+	}
 	return &otelCore{
 		tracer: tp.Tracer(instrumentationName),
 		inst: otelInstruments{
-			duration: must(meter.Float64Histogram("ninep.server.duration",
-				metric.WithUnit("s"),
-				metric.WithDescription("Duration of 9P server operations"),
-			)),
-			reqSize: must(meter.Int64Counter("ninep.server.request.size",
-				metric.WithUnit("By"),
-				metric.WithDescription("Size of 9P request messages"),
-			)),
-			respSize: must(meter.Int64Counter("ninep.server.response.size",
-				metric.WithUnit("By"),
-				metric.WithDescription("Size of 9P response messages"),
-			)),
-			activeReqs: must(meter.Int64UpDownCounter("ninep.server.active_requests",
-				metric.WithDescription("Number of active 9P requests"),
-			)),
+			duration: duration, requests: requests, reqSize: reqSize,
+			respSize: respSize, activeReqs: activeReqs,
 		},
 		// Per-message-type cache of metric.MeasurementOption holding the
 		// rpc.method attribute, so the hot path's duration.Record call
 		// avoids the allocation metric.WithAttributes would otherwise
 		// impose every request. The set of T-message types is closed and
 		// known at compile time.
-		opNameAttrs: buildOpNameAttrs(),
-	}
+		opNameAttrs:  buildOpNameAttrs(),
+		outcomeAttrs: buildOutcomeAttrs(),
+	}, nil
 }
 
 // middleware returns the per-connection OTel middleware. Only the conn
@@ -98,6 +145,7 @@ func (o *otelCore) middleware(c *conn) Middleware {
 	tracer := o.tracer
 	inst := o.inst
 	opNameAttrs := o.opNameAttrs
+	outcomeAttrs := o.outcomeAttrs
 
 	return func(next Handler) Handler {
 		return func(ctx context.Context, tag proto.Tag, msg proto.Message) proto.Message {
@@ -124,10 +172,14 @@ func (o *otelCore) middleware(c *conn) Middleware {
 
 			// Guard expensive attribute computation behind IsRecording.
 			if span.IsRecording() {
-				if fid, ok := fidFromMessage(msg); ok {
+				if fid, ok := protometa.Fid(msg); ok {
 					span.SetAttributes(attribute.Int64("ninep.fid", int64(fid)))
-					if p := c.fids.getPath(fid); p != "" {
-						span.SetAttributes(attribute.String("ninep.path", p))
+					if filter := c.server.tracePathFilter; filter != nil {
+						if p := c.fids.getPath(fid); p != "" {
+							if value, include := filter(p); include {
+								span.SetAttributes(attribute.String("ninep.path", value))
+							}
+						}
 					}
 				}
 				span.SetAttributes(attribute.String("ninep.protocol", c.protocol.String()))
@@ -148,6 +200,22 @@ func (o *otelCore) middleware(c *conn) Middleware {
 			start := time.Now()
 			resp := next(ctx, tag, msg)
 			elapsed := time.Since(start).Seconds()
+			failed := resp == nil || isErrorResponse(resp)
+			if inst.requests.Enabled(ctx) {
+				outcomeIndex := 0
+				if failed {
+					outcomeIndex = 1
+				}
+				if opts, ok := outcomeAttrs[msg.Type()]; ok {
+					inst.requests.Add(ctx, 1, opts[outcomeIndex])
+				} else {
+					outcome := [2]string{"ok", "error"}[outcomeIndex]
+					inst.requests.Add(ctx, 1, metric.WithAttributes(
+						attribute.String("rpc.method", opName),
+						attribute.String("outcome", outcome),
+					))
+				}
+			}
 
 			// Record duration with cached rpc.method attribute. Gated so
 			// noop histograms skip the Record call entirely.
@@ -172,7 +240,7 @@ func (o *otelCore) middleware(c *conn) Middleware {
 				}
 
 				// Set span status to Error for error responses.
-				if isErrorResponse(resp) {
+				if failed {
 					span.SetStatus(codes.Error, opName)
 				}
 			}
@@ -274,6 +342,23 @@ func buildOpNameAttrs() map[proto.MessageType]metric.MeasurementOption {
 	return m
 }
 
+func buildOutcomeAttrs() map[proto.MessageType][2]metric.MeasurementOption {
+	m := make(map[proto.MessageType][2]metric.MeasurementOption, len(requestMessageTypes))
+	for _, messageType := range requestMessageTypes {
+		m[messageType] = [2]metric.MeasurementOption{
+			metric.WithAttributes(
+				attribute.String("rpc.method", messageType.String()),
+				attribute.String("outcome", "ok"),
+			),
+			metric.WithAttributes(
+				attribute.String("rpc.method", messageType.String()),
+				attribute.String("outcome", "error"),
+			),
+		}
+	}
+	return m
+}
+
 // Abnormal-event reason attribute values recorded on the
 // ninep.server.abnormal_events counter.
 const (
@@ -300,22 +385,24 @@ type connOTelInstruments struct {
 
 // newConnOTelInstruments creates connection-level metric instruments from the
 // given MeterProvider. Returns nil if mp is nil.
-func newConnOTelInstruments(mp metric.MeterProvider) *connOTelInstruments {
+func newConnOTelInstruments(mp metric.MeterProvider) (*connOTelInstruments, error) {
 	if mp == nil {
-		return nil
+		return nil, nil
 	}
 	meter := mp.Meter(instrumentationName)
-	return &connOTelInstruments{
-		connGauge: must(meter.Int64UpDownCounter("ninep.server.connections",
-			metric.WithDescription("Number of active 9P connections"),
-		)),
-		fidGauge: must(meter.Int64UpDownCounter("ninep.server.fid.count",
-			metric.WithDescription("Number of active fids"),
-		)),
-		abnormalEvents: must(meter.Int64Counter("ninep.server.abnormal_events",
-			metric.WithDescription("Abnormal server events (handler panics, drain timeouts, forced closes), by reason"),
-		)),
+	connGauge, err := meter.Int64UpDownCounter("ninep.server.connections", metric.WithDescription("Number of active 9P connections"))
+	if err != nil {
+		return nil, fmt.Errorf("create connections gauge: %w", err)
 	}
+	fidGauge, err := meter.Int64UpDownCounter("ninep.server.fid.count", metric.WithDescription("Number of active fids"))
+	if err != nil {
+		return nil, fmt.Errorf("create fid gauge: %w", err)
+	}
+	abnormalEvents, err := meter.Int64Counter("ninep.server.abnormal_events", metric.WithDescription("Abnormal server events (handler panics, drain timeouts, forced closes), by reason"))
+	if err != nil {
+		return nil, fmt.Errorf("create abnormal events counter: %w", err)
+	}
+	return &connOTelInstruments{connGauge: connGauge, fidGauge: fidGauge, abnormalEvents: abnormalEvents}, nil
 }
 
 // recordConnChange records a connection count change (+1 or -1).
@@ -356,16 +443,18 @@ type serverOTelInstruments struct {
 // newServerOTelInstruments creates server-level metric instruments from the
 // given MeterProvider. Returns nil if mp is nil (zero-cost when no
 // MeterProvider is configured).
-func newServerOTelInstruments(mp metric.MeterProvider) *serverOTelInstruments {
+func newServerOTelInstruments(mp metric.MeterProvider) (*serverOTelInstruments, error) {
 	if mp == nil {
-		return nil
+		return nil, nil
 	}
 	meter := mp.Meter(instrumentationName)
-	return &serverOTelInstruments{
-		connectionsRejected: must(meter.Int64Counter("ninep.server.connections_rejected",
-			metric.WithDescription("Number of connections rejected due to WithMaxConnections limit"),
-		)),
+	connectionsRejected, err := meter.Int64Counter("ninep.server.connections_rejected",
+		metric.WithDescription("Number of connections rejected due to WithMaxConnections limit"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create connections rejected counter: %w", err)
 	}
+	return &serverOTelInstruments{connectionsRejected: connectionsRejected}, nil
 }
 
 // recordConnectionRejected increments the rejected-connection counter. Safe
@@ -375,14 +464,4 @@ func (o *serverOTelInstruments) recordConnectionRejected() {
 		return
 	}
 	o.connectionsRejected.Add(context.Background(), 1)
-}
-
-// must is a generic helper that panics on instrument creation error. OTel
-// instrument creation only fails on invalid names, which are compile-time
-// constants in this package.
-func must[T any](v T, err error) T {
-	if err != nil {
-		panic("otel instrument creation: " + err.Error())
-	}
-	return v
 }

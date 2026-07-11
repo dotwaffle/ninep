@@ -102,7 +102,7 @@ func TestRecvMuWorkerLifecycle(t *testing.T) {
 		client, server := net.Pipe()
 		defer func() { _ = server.Close() }()
 
-		srv := New(root,
+		srv := MustNew(root,
 			WithMaxMsize(65536),
 			WithMaxInflight(2),
 			WithLogger(discardLogger()),
@@ -224,7 +224,7 @@ func TestRecvMuWorkerLifecycle(t *testing.T) {
 
 		client, server := net.Pipe()
 
-		srv := New(root,
+		srv := MustNew(root,
 			WithMaxMsize(65536),
 			WithMaxInflight(8),
 			WithLogger(discardLogger()),
@@ -288,7 +288,7 @@ func TestRecvMuWorkerLifecycle(t *testing.T) {
 		client, server := net.Pipe()
 		defer func() { _ = server.Close() }()
 
-		srv := New(root,
+		srv := MustNew(root,
 			WithMaxMsize(65536),
 			WithMaxInflight(4),
 			WithLogger(discardLogger()),
@@ -400,7 +400,7 @@ func TestRecvMuWorkerLifecycle(t *testing.T) {
 		client, server := net.Pipe()
 		defer func() { _ = server.Close() }()
 
-		srv := New(root,
+		srv := MustNew(root,
 			WithMaxMsize(65536),
 			WithMaxInflight(4),
 			WithLogger(discardLogger()),
@@ -584,7 +584,7 @@ func TestHandleRequest_TversionHoldsRecvMuAcrossMutation(t *testing.T) {
 
 	root := newRecvmuBlockingNode(proto.QID{Type: proto.QTDIR, Path: 1})
 
-	srv := New(root, WithMaxMsize(65536), WithMaxInflight(8), WithLogger(discardLogger()))
+	srv := MustNew(root, WithMaxMsize(65536), WithMaxInflight(8), WithLogger(discardLogger()))
 
 	client, server := net.Pipe()
 	defer func() { _ = client.Close(); _ = server.Close() }()

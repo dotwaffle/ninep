@@ -123,7 +123,7 @@ func TestError_Is_SyscallBridge(t *testing.T) {
 // sharing of errors.New values across sentinels (e.g. two identical strings).
 func TestError_SentinelsAreFourDistinctValues(t *testing.T) {
 	t.Parallel()
-	sentinels := []error{ErrClosed, ErrNotSupported, ErrVersionMismatch, ErrMsizeTooSmall}
+	sentinels := []error{ErrClosed, ErrNotSupported, ErrVersionMismatch, ErrMsizeTooSmall, ErrMsizeTooLarge}
 	for i := range sentinels {
 		for j := range sentinels {
 			if i == j {

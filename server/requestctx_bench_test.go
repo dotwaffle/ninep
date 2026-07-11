@@ -59,7 +59,7 @@ func BenchmarkRequestContext(b *testing.B) {
 		// also drains sync.Pool's per-P local array, so the next Pool.Get
 		// hits sync.Pool.pinSlow which allocates the per-P array anew.
 		// That is infrastructure overhead, not requestCtx overhead -- it
-		// adds ~1 alloc/op on top of the fresh *requestCtx from New().
+		// adds ~1 alloc/op on top of the fresh *requestCtx from sync.Pool.New.
 		// The load-bearing alloc gate for the miss path is
 		// TestRequestCtxAllocs (AllocsPerRun after two forced GCs),
 		// which isolates the requestCtx allocation from pinSlow noise.

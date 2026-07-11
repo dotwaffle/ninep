@@ -41,11 +41,12 @@
 // Create a server with [New], passing the root [Node] and any [Option] values.
 // Call [Server.Serve] with a context and [net.Listener] to accept connections:
 //
-//	srv := server.New(root,
+//	srv, err := server.New(root,
 //	    server.WithMaxMsize(1 << 20),
 //	    server.WithLogger(slog.Default()),
 //	)
-//	ln, _ := net.Listen("tcp", ":5640")
+//	if err != nil { log.Fatal(err) }
+//	ln, _ := net.Listen("tcp", "127.0.0.1:5640")
 //	srv.Serve(ctx, ln)
 //
 // Each accepted connection runs in its own goroutine, which lazy-spawns
@@ -59,11 +60,12 @@
 // Configure the server with:
 //   - [WithMaxMsize] -- maximum negotiated message size (default 1MiB)
 //   - [WithMaxInflight] -- concurrent request limit per connection (default 64)
-//   - [WithMaxConnections] -- concurrent connection cap (default unlimited)
-//   - [WithMaxFids] -- per-connection fid cap (default unlimited)
+//   - [WithMaxConnections] -- concurrent connection cap (default 1024)
+//   - [WithMaxFids] -- per-connection fid cap (default 4096)
 //   - [WithLogger] -- structured logger with automatic trace ID correlation
 //   - [WithRequestLogging] -- per-request Debug logging via the trace-correlated logger
-//   - [WithIdleTimeout] -- per-connection idle timeout (set for untrusted peers)
+//   - [WithIdleTimeout] -- per-connection idle timeout (default 2m)
+//   - [WithTrustedNetwork] -- disable default connection, fid, and I/O bounds
 //   - [WithDrainTimeout] -- inflight drain bound during cleanup and re-negotiation
 //   - [WithAnames] -- vhost-style root dispatch by attach name
 //   - [WithAttacher] -- full-control attach handling
@@ -95,7 +97,9 @@
 //
 // # Example
 //
-// A minimal read-only file server:
+// A minimal read-only file server. The protocol does not authenticate peers,
+// so the listener binds loopback; use an authenticated transport for remote
+// access.
 //
 //	package main
 //
@@ -130,11 +134,18 @@
 //	}
 //
 //	func main() {
-//	    root := &HelloFile{}
-//	    root.Init(proto.QID{Type: proto.QTFILE, Path: 1}, root)
+//	    gen := new(server.QIDGenerator)
+//	    root := new(server.Inode)
+//	    root.Init(gen.Next(proto.QTDIR), root)
+//	    hello := new(HelloFile)
+//	    hello.Init(gen.Next(proto.QTFILE), hello)
+//	    root.AddChild("hello.txt", hello.EmbeddedInode())
 //
-//	    srv := server.New(root)
-//	    ln, err := net.Listen("tcp", ":5640")
+//	    srv, err := server.New(root)
+//	    if err != nil {
+//	        log.Fatal(err)
+//	    }
+//	    ln, err := net.Listen("tcp", "127.0.0.1:5640")
 //	    if err != nil {
 //	        log.Fatal(err)
 //	    }

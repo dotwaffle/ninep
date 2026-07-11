@@ -24,7 +24,7 @@ func TestTversion_Stress(t *testing.T) {
 
 	root := &Inode{}
 	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
-	srv := New(root)
+	srv := MustNew(root)
 
 	const numConns = 100
 	const iters = 10
@@ -76,7 +76,7 @@ func TestTversion_Stress(t *testing.T) {
 func TestTversion_RateLimitStress(t *testing.T) {
 	root := &Inode{}
 	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
-	srv := New(root)
+	srv := MustNew(root)
 
 	c1, c2 := net.Pipe()
 	defer func() { _ = c1.Close() }()
@@ -126,7 +126,7 @@ func TestTversion_DrainTimeout(t *testing.T) {
 	slowNode := &slowReadNode{started: started}
 	slowNode.Init(proto.QID{Type: proto.QTFILE, Path: 2}, slowNode)
 
-	srv := New(slowNode)
+	srv := MustNew(slowNode)
 
 	c1, c2 := net.Pipe()
 	defer func() { _ = c1.Close() }()

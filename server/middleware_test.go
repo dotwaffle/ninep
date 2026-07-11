@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dotwaffle/ninep/internal/protometa"
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
 	"github.com/dotwaffle/ninep/proto/p9u"
@@ -290,7 +291,7 @@ func TestFidFromMessage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			fid, ok := fidFromMessage(tt.msg)
+			fid, ok := protometa.Fid(tt.msg)
 			if ok != tt.wantOK {
 				t.Fatalf("fidFromMessage(%T): ok=%v, want %v", tt.msg, ok, tt.wantOK)
 			}

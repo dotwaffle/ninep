@@ -18,7 +18,7 @@ func TestHandleReVersion_FatalErrors(t *testing.T) {
 		defer func() { _ = client.Close() }()
 		defer func() { _ = server.Close() }()
 
-		srv := New(nil, WithLogger(discardLogger()))
+		srv := MustNew(newRootNode(proto.QID{Type: proto.QTDIR, Path: 1}), WithLogger(discardLogger()))
 		c := newConn(srv, server)
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
@@ -64,7 +64,7 @@ func TestHandleReVersion_FatalErrors(t *testing.T) {
 		defer func() { _ = client.Close() }()
 		defer func() { _ = server.Close() }()
 
-		srv := New(nil, WithLogger(discardLogger()))
+		srv := MustNew(newRootNode(proto.QID{Type: proto.QTDIR, Path: 1}), WithLogger(discardLogger()))
 		c := newConn(srv, server)
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()

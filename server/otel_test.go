@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -19,6 +21,34 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
+
+type failingMeterProvider struct {
+	metric.MeterProvider
+}
+
+func newFailingMeterProvider() failingMeterProvider {
+	return failingMeterProvider{MeterProvider: metricnoop.NewMeterProvider()}
+}
+
+func (p failingMeterProvider) Meter(name string, opts ...metric.MeterOption) metric.Meter {
+	return failingMeter{Meter: p.MeterProvider.Meter(name, opts...)}
+}
+
+type failingMeter struct {
+	metric.Meter
+}
+
+func (f failingMeter) Int64Counter(string, ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	return nil, errors.New("instrument rejected")
+}
+
+func TestNewReturnsInstrumentCreationError(t *testing.T) {
+	t.Parallel()
+	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
+	if _, err := New(root, WithMeter(newFailingMeterProvider())); err == nil {
+		t.Fatal("New succeeded when the meter rejected an instrument")
+	}
+}
 
 // otelConnPair creates a net.Pipe pair with cleanup registered on t.
 func otelConnPair(t *testing.T) (client, server net.Conn) {
@@ -38,7 +68,7 @@ func TestOTelMiddlewareSpanCreation(t *testing.T) {
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
 
-	srv := New(root,
+	srv := MustNew(root,
 		WithMaxMsize(65536),
 		WithTracer(tp),
 	)
@@ -67,7 +97,7 @@ func TestOTelMiddlewareSpanCreation(t *testing.T) {
 // a connection, and returns the client conn plus the test span exporter and
 // metric reader for assertion. The caller should negotiate version and send
 // messages via the returned client.
-func setupOTelTest(t *testing.T) (client net.Conn, spanExporter *tracetest.InMemoryExporter, metricReader *sdkmetric.ManualReader) {
+func setupOTelTest(t *testing.T, opts ...Option) (client net.Conn, spanExporter *tracetest.InMemoryExporter, metricReader *sdkmetric.ManualReader) {
 	t.Helper()
 
 	tp, spanExporter := NewTestTracerProvider(t)
@@ -76,12 +106,14 @@ func setupOTelTest(t *testing.T) (client net.Conn, spanExporter *tracetest.InMem
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
 
-	srv := New(root,
+	serverOpts := []Option{
 		WithMaxMsize(65536),
 		WithLogger(discardLogger()),
 		WithTracer(tp),
 		WithMeter(mp),
-	)
+	}
+	serverOpts = append(serverOpts, opts...)
+	srv := MustNew(root, serverOpts...)
 
 	clientConn, serverConn := otelConnPair(t)
 
@@ -141,7 +173,6 @@ func TestOTelMiddlewareSpanAttributes(t *testing.T) {
 	_, _ = readResponse(t, client)
 
 	_ = client.Close()
-	time.Sleep(100 * time.Millisecond)
 
 	spans := spanExporter.GetSpans()
 
@@ -180,7 +211,9 @@ func TestOTelMiddlewareSpanAttributes(t *testing.T) {
 func TestOTelMiddlewareFidAndPathAttributes(t *testing.T) {
 	t.Parallel()
 
-	client, spanExporter, _ := setupOTelTest(t)
+	client, spanExporter, _ := setupOTelTest(t, WithTracePathFilter(func(path string) (string, bool) {
+		return path, true
+	}))
 
 	// Negotiate and attach.
 	sendTversion(t, client, 65536, "9P2000.L")
@@ -199,7 +232,6 @@ func TestOTelMiddlewareFidAndPathAttributes(t *testing.T) {
 	_, _ = readResponse(t, client)
 
 	_ = client.Close()
-	time.Sleep(100 * time.Millisecond)
 
 	spans := spanExporter.GetSpans()
 
@@ -246,6 +278,57 @@ func TestOTelMiddlewareFidAndPathAttributes(t *testing.T) {
 	}
 }
 
+func TestOTelMiddlewareOmitsPathByDefault(t *testing.T) {
+	t.Parallel()
+	client, spanExporter, _ := setupOTelTest(t)
+	sendTversion(t, client, 65536, "9P2000.L")
+	_ = readRversion(t, client)
+	sendMessage(t, client, 1, &proto.Tattach{Fid: 42, Afid: proto.NoFid})
+	_, _ = readResponse(t, client)
+	sendMessage(t, client, 2, &proto.Tclunk{Fid: 42})
+	_, _ = readResponse(t, client)
+	_ = client.Close()
+
+	for _, span := range spanExporter.GetSpans() {
+		for _, attr := range span.Attributes {
+			if attr.Key == "ninep.path" {
+				t.Fatalf("span %q exposed ninep.path without opt-in", span.Name)
+			}
+		}
+	}
+}
+
+func TestOTelMiddlewareRequestOutcomeMetric(t *testing.T) {
+	t.Parallel()
+	client, _, metricReader := setupOTelTest(t)
+	sendTversion(t, client, 65536, "9P2000.L")
+	_ = readRversion(t, client)
+	sendMessage(t, client, 1, &proto.Tattach{Fid: 1, Afid: proto.NoFid})
+	_, _ = readResponse(t, client)
+	sendMessage(t, client, 2, &proto.Tclunk{Fid: 999})
+	_, _ = readResponse(t, client)
+
+	metric := findMetric(collectMetrics(t, metricReader), "ninep.server.requests")
+	if metric == nil {
+		t.Fatal("ninep.server.requests metric not found")
+	}
+	sum, ok := metric.Data.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("requests metric data = %T, want metricdata.Sum[int64]", metric.Data)
+	}
+	outcomes := map[string]int64{}
+	for _, point := range sum.DataPoints {
+		for _, attr := range point.Attributes.ToSlice() {
+			if attr.Key == "outcome" {
+				outcomes[attr.Value.AsString()] += point.Value
+			}
+		}
+	}
+	if outcomes["ok"] == 0 || outcomes["error"] == 0 {
+		t.Fatalf("request outcomes = %v, want both ok and error", outcomes)
+	}
+}
+
 func TestOTelMiddlewareErrorSpanStatus(t *testing.T) {
 	t.Parallel()
 
@@ -262,7 +345,6 @@ func TestOTelMiddlewareErrorSpanStatus(t *testing.T) {
 	}
 
 	_ = client.Close()
-	time.Sleep(100 * time.Millisecond)
 
 	spans := spanExporter.GetSpans()
 
@@ -304,7 +386,6 @@ func TestOTelMiddlewareNonErrorSpanStatus(t *testing.T) {
 	}
 
 	_ = client.Close()
-	time.Sleep(100 * time.Millisecond)
 
 	spans := spanExporter.GetSpans()
 
@@ -341,7 +422,6 @@ func TestOTelMiddlewareDurationMetric(t *testing.T) {
 	_, _ = readResponse(t, client)
 
 	_ = client.Close()
-	time.Sleep(100 * time.Millisecond)
 
 	rm := collectMetrics(t, metricReader)
 	m := findMetric(rm, "ninep.server.duration")
@@ -382,7 +462,6 @@ func TestOTelMiddlewareActiveRequestsGauge(t *testing.T) {
 	_, _ = readResponse(t, client)
 
 	_ = client.Close()
-	time.Sleep(100 * time.Millisecond)
 
 	rm := collectMetrics(t, metricReader)
 	m := findMetric(rm, "ninep.server.active_requests")
@@ -413,7 +492,7 @@ func TestOTelMiddlewareConnectionGauge(t *testing.T) {
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
 
-	srv := New(root,
+	srv := MustNew(root,
 		WithMaxMsize(65536),
 		WithLogger(discardLogger()),
 		WithTracer(tp),
@@ -555,7 +634,7 @@ func TestOTelMiddlewareFidCountGauge_Xattrwalk(t *testing.T) {
 	root := &getterOnlyFile{value: []byte("v")}
 	root.Init(proto.QID{Type: proto.QTDIR, Path: 1}, root)
 
-	srv := New(root,
+	srv := MustNew(root,
 		WithMaxMsize(65536),
 		WithLogger(discardLogger()),
 		WithTracer(tp),
@@ -612,7 +691,7 @@ func TestOTelMiddlewareNoProviderNoOverhead(t *testing.T) {
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
 
-	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
+	srv := MustNew(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
 	// The middlewares slice should be empty (no OTel middleware auto-added).
 	if len(srv.middlewares) != 0 {
@@ -637,7 +716,6 @@ func TestOTelMiddlewareRequestResponseSize(t *testing.T) {
 	_, _ = readResponse(t, client)
 
 	_ = client.Close()
-	time.Sleep(100 * time.Millisecond)
 
 	rm := collectMetrics(t, metricReader)
 
@@ -679,7 +757,7 @@ func TestWithTracerAndWithMeterOptions(t *testing.T) {
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
 
-	srv := New(root,
+	srv := MustNew(root,
 		WithTracer(tp),
 		WithMeter(mp),
 	)
@@ -760,7 +838,7 @@ func TestServerNoopDetection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := newDirNode(rootQID)
-			srv := New(root, append([]Option{WithLogger(discardLogger())}, tc.opts...)...)
+			srv := MustNew(root, append([]Option{WithLogger(discardLogger())}, tc.opts...)...)
 			if srv.tracerRecording != tc.wantRecording {
 				t.Errorf("tracerRecording = %v, want %v", srv.tracerRecording, tc.wantRecording)
 			}
@@ -780,7 +858,7 @@ func TestOTelNoopShortCircuit(t *testing.T) {
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 	root := newDirNode(rootQID)
 
-	srv := New(root,
+	srv := MustNew(root,
 		WithLogger(discardLogger()),
 		WithTracer(tracenoop.NewTracerProvider()),
 		WithMeter(metricnoop.NewMeterProvider()),
@@ -845,7 +923,7 @@ func TestOTelPartialNoopInstalls(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := newDirNode(rootQID)
-			srv := New(root, append([]Option{WithLogger(discardLogger())}, tc.opts...)...)
+			srv := MustNew(root, append([]Option{WithLogger(discardLogger())}, tc.opts...)...)
 
 			client, server := net.Pipe()
 			t.Cleanup(func() {

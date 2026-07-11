@@ -114,7 +114,7 @@ func TestNinepOverVsock(t *testing.T) {
 	gen := &server.QIDGenerator{}
 	root := memfs.NewDir(gen)
 	root.AddStaticFile("hello.txt", content)
-	srv := server.New(root, server.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	srv := server.MustNew(root, server.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

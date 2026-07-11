@@ -292,7 +292,6 @@ func TestFile_Read_TimeoutTriggersTflush(t *testing.T) {
 	}
 	// Drain the late Rread so the server goroutine exits cleanly.
 	srv.releaseRread()
-	time.Sleep(50 * time.Millisecond)
 
 	if got := srv.tflushCount.Load(); got != 1 {
 		t.Errorf("tflushCount = %d; want exactly 1 (timeout triggered exactly one Tflush)", got)
@@ -330,7 +329,6 @@ func TestFile_ReadCtx_ExplicitTimeout(t *testing.T) {
 	}
 
 	srv.releaseRread()
-	time.Sleep(50 * time.Millisecond)
 
 	if got := srv.tflushCount.Load(); got != 1 {
 		t.Errorf("tflushCount = %d; want 1", got)
@@ -405,8 +403,7 @@ func TestFile_ReadCtx_Cancel_TriggersFlush(t *testing.T) {
 		resCh <- res{n: n, err: err}
 	}()
 
-	// Let the Tread reach the server before cancelling.
-	time.Sleep(20 * time.Millisecond)
+	<-srv.treadSeen
 	opCancel()
 
 	var r res
@@ -428,7 +425,6 @@ func TestFile_ReadCtx_Cancel_TriggersFlush(t *testing.T) {
 
 	// Drain server.
 	srv.releaseRread()
-	time.Sleep(50 * time.Millisecond)
 
 	if got := srv.tflushCount.Load(); got != 1 {
 		t.Errorf("tflushCount = %d; want 1", got)

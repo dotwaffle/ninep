@@ -131,7 +131,7 @@ func BenchmarkHandleRead_NoOTel(b *testing.B) {
 // with WithTracer(otel.GetTracerProvider()) +
 // WithMeter(otel.GetMeterProvider()) against an uninitialized OTel
 // SDK, matching the typical consumer wiring. With the probe-based
-// short-circuit in place, both probes return false at server.New(),
+// short-circuit in place, both probes return false during server construction,
 // the middleware is NOT installed at newConn, and per-request cost
 // drops to the BenchmarkHandleRead_NoOTel baseline.
 //

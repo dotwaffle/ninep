@@ -131,7 +131,7 @@ func TestDisconnectCleanup_ClunksAllFids(t *testing.T) {
 	client, server := net.Pipe()
 	defer func() { _ = server.Close() }()
 
-	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
+	srv := MustNew(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -229,7 +229,7 @@ func TestDisconnectCleanup_DrainDeadline(t *testing.T) {
 	client, server := net.Pipe()
 	defer func() { _ = server.Close() }()
 
-	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
+	srv := MustNew(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
@@ -300,7 +300,7 @@ func TestDisconnectCleanup_WithDrainTimeout(t *testing.T) {
 	client, server := net.Pipe()
 	defer func() { _ = server.Close() }()
 
-	srv := New(root,
+	srv := MustNew(root,
 		WithMaxMsize(65536),
 		WithLogger(discardLogger()),
 		WithDrainTimeout(200*time.Millisecond),
@@ -360,7 +360,7 @@ func TestServerSurvivesDisconnect(t *testing.T) {
 	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
 	root := newDirNode(rootQID)
 
-	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
+	srv := MustNew(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -431,7 +431,7 @@ func TestRapidConnectDisconnect(t *testing.T) {
 	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
 	root := newDirNode(rootQID)
 
-	srv := New(root, WithMaxMsize(65536), WithLogger(discardLogger()))
+	srv := MustNew(root, WithMaxMsize(65536), WithLogger(discardLogger()))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()

@@ -21,7 +21,7 @@ import (
 func TestMaxConnections_RejectsExcess(t *testing.T) {
 	t.Parallel()
 	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
-	srv := New(root, WithMaxConnections(1), WithLogger(discardLogger()))
+	srv := MustNew(root, WithMaxConnections(1), WithLogger(discardLogger()))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
@@ -75,7 +75,7 @@ func TestMaxConnections_RejectsExcess(t *testing.T) {
 func TestMaxConnections_ZeroUnlimited(t *testing.T) {
 	t.Parallel()
 	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
-	srv := New(root, WithLogger(discardLogger()))
+	srv := MustNew(root, WithLogger(discardLogger()))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
@@ -103,7 +103,7 @@ func TestMaxConnections_ZeroUnlimited(t *testing.T) {
 func TestMaxConnections_NoCounterLeak(t *testing.T) {
 	t.Parallel()
 	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
-	srv := New(root, WithMaxConnections(2), WithLogger(discardLogger()))
+	srv := MustNew(root, WithMaxConnections(2), WithLogger(discardLogger()))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	t.Cleanup(cancel)
@@ -133,7 +133,7 @@ func TestMaxConnections_ConcurrentAccept(t *testing.T) {
 	t.Parallel()
 	const N = 8
 	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
-	srv := New(root, WithMaxConnections(N), WithLogger(discardLogger()))
+	srv := MustNew(root, WithMaxConnections(N), WithLogger(discardLogger()))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
@@ -397,7 +397,7 @@ func TestLimits_CombinedConfig(t *testing.T) {
 	root := newRootNode(proto.QID{Type: proto.QTDIR, Path: 1})
 
 	// Server: accept 2 connections, each with 3 fids.
-	srv := New(root, WithMaxConnections(2), WithMaxFids(3), WithLogger(discardLogger()))
+	srv := MustNew(root, WithMaxConnections(2), WithMaxFids(3), WithLogger(discardLogger()))
 
 	testCtx, testCancel := context.WithTimeout(t.Context(), 10*time.Second)
 	t.Cleanup(testCancel)

@@ -13,7 +13,7 @@ import (
 //   - Seeded at construction with tags [1..maxInflight]. Tag 0 is
 //     excluded by convention (matches server/bench_test.go and Linux
 //     v9fs client). NoTag (0xFFFF) is reserved for Tversion and
-//     likewise excluded - the WithMaxInflight clamp to 65534 ensures
+//     likewise excluded - WithMaxInflight validation ensures
 //     the seed loop can never reach it.
 //   - Natural back-pressure: when saturated, acquire blocks until a
 //     tag is released. No separate semaphore.
@@ -25,7 +25,7 @@ type tagAllocator struct {
 }
 
 // newTagAllocator seeds the free-list with tags [1..n]. The caller is
-// responsible for clamping n to [1..maxMaxInflight] via WithMaxInflight
+// responsible for validating n in [1..maxMaxInflight] via WithMaxInflight
 // before construction.
 func newTagAllocator(n int) *tagAllocator {
 	ta := &tagAllocator{free: make(chan proto.Tag, n)}
