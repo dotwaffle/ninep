@@ -6,7 +6,9 @@
 
 To build a filesystem, you define a struct that embeds `server.Inode`. By embedding `Inode`, your node automatically returns `ENOSYS` for any operation you don't explicitly implement.
 
-Here is a complete server that serves a single read-only file:
+Here is a complete server that serves a single read-only file. The protocol
+does not implement authentication, so the example binds loopback. Use an
+authenticated transport or a trusted network for remote access.
 
 ```go
 package main
@@ -16,43 +18,20 @@ import (
 	"log"
 	"net"
 
-	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/server"
+	"github.com/dotwaffle/ninep/server/memfs"
 )
 
-// HelloFile implements a read-only file.
-type HelloFile struct {
-	server.Inode
-}
-
-// Read implements the NodeReader interface.
-func (h *HelloFile) Read(ctx context.Context, buf []byte, offset uint64) (int, error) {
-	content := "Hello, 9P world!\n"
-	if offset >= uint64(len(content)) {
-		return 0, nil
-	}
-	n := copy(buf, content[offset:])
-	return n, nil
-}
-
 func main() {
-	// 1. Create a unique QID for our root node.
 	gen := &server.QIDGenerator{}
-	rootQID := gen.Next(proto.QTDIR)
+	root := memfs.NewDir(gen).
+		AddStaticFile("hello.txt", "Hello, 9P world!\n")
 
-	// 2. Create the root directory node.
-	root := &server.Inode{}
-	root.Init(rootQID, root)
-
-	// 3. Create our "hello.txt" file node and add it to the root.
-	helloQID := gen.Next(proto.QTFILE)
-	hello := &HelloFile{}
-	hello.Init(helloQID, hello)
-	root.AddChild("hello.txt", &hello.Inode)
-
-	// 4. Start the server on TCP port 5640.
-	s := server.New(root)
-	l, err := net.Listen("tcp", "0.0.0.0:5640")
+	s, err := server.New(root)
+	if err != nil {
+		log.Fatal(err)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:5640")
 	if err != nil {
 		log.Fatal(err)
 	}

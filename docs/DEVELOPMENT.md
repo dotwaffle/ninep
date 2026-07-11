@@ -46,11 +46,12 @@ Run a single test:
 go test -race -run TestMiddlewareChainOrdering ./server/
 ```
 
-The `proto/p9l` and `proto/p9u` packages include fuzz tests, and `client/` adds `FuzzClientLock` and `FuzzClientXattr`. CI runs each of the four targets for 60 seconds as a separate matrix leg; run locally with:
+The protocol packages include codec and dirent fuzz tests, and `client/` adds `FuzzClientLock` and `FuzzClientXattr`. CI runs each of the five targets for 60 seconds as a separate matrix leg; run locally with:
 
 ```bash
 go test -fuzz=FuzzCodecRoundTrip -fuzztime=60s ./proto/p9l/
 go test -fuzz=FuzzCodecRoundTrip -fuzztime=60s ./proto/p9u/
+go test -fuzz=FuzzDirentRoundTrip -fuzztime=60s ./proto/
 go test -fuzz=FuzzClientLock -fuzztime=60s ./client/
 go test -fuzz=FuzzClientXattr -fuzztime=60s ./client/
 ```
@@ -101,14 +102,14 @@ ninep/
     logging.go          NewTraceHandler (slog + OTel correlation), NewLoggingMiddleware
     doc.go              Package-level godoc
     bench_test.go       Round-trip + contention benchmarks; connPair test helper
-    io_bench_test.go    Read/write/readdir benchmarks; newConnPairMsize, benchWalkOpen, treadOffsetPos
+    io_bench_test.go    Read/write/readdir benchmarks and transport fixtures
     writev_bench_test.go  net.Buffers / writev A/B harness; unixPair, pipePair
     msgalloc_bench_test.go  Per-request message-struct alloc comparison
     recvmu_alloc_test.go    Alloc assertions for the handleRequest/decode path
     memfs/              In-memory file/directory helpers
       memfs.go            MemFile, MemDir, StaticFile types
       builder.go          Fluent builder API (NewDir, AddFile, WithDir, etc.)
-    passthrough/        Host OS passthrough filesystem (Linux only)
+    passthrough/        Host OS passthrough filesystem (Linux and FreeBSD)
       passthrough.go      Root and Node types, NewRoot constructor
       dir.go              Directory operations via *at syscalls
       handle.go           Per-open file handle
@@ -188,7 +189,7 @@ Key points:
 The server uses the `Option` pattern defined in `server/options.go`:
 
 ```go
-srv := server.New(root,
+srv, err := server.New(root,
     server.WithMaxMsize(1 << 20),        // 1MB max message size
     server.WithMaxInflight(128),         // 128 concurrent requests (== handleRequest goroutine cap)
     server.WithMaxFids(100_000),         // per-conn fid cap
@@ -394,9 +395,10 @@ All bridge handlers follow this pattern:
 
 If the response carries a pooled buffer (see `pooledRread` / `pooledRreaddir` in `bridge.go`), the wrapper's `Release` method is invoked by `sendResponseInline` after the writev completes.
 
-### Step 6: Update fidFromMessage (middleware support)
+### Step 6: Update protocol metadata
 
-In `server/middleware.go`, add a case to `fidFromMessage()` so middleware can extract the fid:
+In `internal/protometa/fid.go`, add a case so client and server observability
+extract the same primary fid:
 
 ```go
 case *p9l.Tfsync:
@@ -448,7 +450,7 @@ Note: `isErrorResponse` is unexported in the `server` package. Middleware define
 Pass middleware via `WithMiddleware()`. The first middleware added is outermost (first to execute, last to see the response):
 
 ```go
-srv := server.New(root,
+srv, err := server.New(root,
     server.WithMiddleware(
         mwA,  // outermost: executes first
         mwB,  // inner: executes second
@@ -525,7 +527,7 @@ All helpers live under `server/` with `_test.go` suffixes. Reuse them in new ben
 | Helper | File | Purpose |
 |--------|------|---------|
 | `newConnPair(tb, root, opts...)` | `walk_test.go` | In-memory `net.Pipe` pair with `ServeConn` running; auto-negotiates `Tversion` at msize 65536 |
-| `newConnPairMsize(tb, root, msize, opts...)` | `io_bench_test.go` | Same as above but with a caller-chosen msize; required for benchmarks that negotiate > 64 KiB |
+| `newConnPairMsizeTransport(tb, transport, root, msize, opts...)` | `io_bench_test.go` | Test pair with a caller-chosen transport and msize |
 | `mustEncode(tb, tag, msg)` | `bench_test.go` | Pre-encode a wire frame once, outside the hot loop |
 | `drainResponse(c)` | `bench_test.go` | Consume one size-prefixed frame from the wire and discard the body |
 | `benchAttachFid0(b, cp)` | `bench_test.go` | Wire fid 0 to root before the measurement loop starts |
@@ -598,7 +600,7 @@ golangci-lint run ./...
 | `DeviceNode()` | `server/helpers.go` | Create a device node with major/minor numbers |
 | `StaticStatFS()` | `server/helpers.go` | Create a node returning fixed filesystem statistics |
 | `bufpool.GetMsgBuf(n)` / `PutMsgBuf(b)` | `internal/bufpool/bufpool.go` | Bucketed pooled `[]byte` (1K/4K/64K/1M); caller must slice to requested length and must not grow beyond `cap` |
-| `bufpool.GetBuf()` / `PutBuf(b)` | `internal/bufpool/bufpool.go` | Pooled `*bytes.Buffer` pre-grown to 1 MiB; PutBuf drops oversized buffers |
+| `bufpool.GetBuf()` / `PutBuf(b)` | `internal/bufpool/bufpool.go` | Pooled 1 KiB encode buffers; grown buffers are not retained |
 
 ## Sub-Package Reference
 
@@ -620,7 +622,7 @@ Types: `MemFile` (read-write), `MemDir` (read-write directory), `StaticFile` (re
 
 ### server/passthrough
 
-Reference passthrough filesystem that delegates to the host OS using `*at` syscalls (`openat`, `fstatat`, `readlinkat`, etc.). Linux only. Requires `golang.org/x/sys/unix`.
+Reference passthrough filesystem that delegates to the host OS using descriptor-anchored syscalls. Supported on Linux and FreeBSD 14 or later. Requires `golang.org/x/sys/unix`.
 
 ### server/fstest
 

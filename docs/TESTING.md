@@ -215,7 +215,7 @@ Run with a time limit:
 go test -fuzz=FuzzCodecRoundTrip -fuzztime=60s ./proto/p9l/
 ```
 
-CI runs a 60-second pass for each of four fuzz targets on every push and pull request (`.github/workflows/ci.yml` `fuzz` job, one matrix leg per target): the p9l codec, the p9u codec, `FuzzClientLock`, and `FuzzClientXattr`.
+CI runs a 60-second pass for each of five fuzz targets on every push and pull request (`.github/workflows/ci.yml` `fuzz` job, one matrix leg per target): the p9l codec, p9u codec, dirent codec, `FuzzClientLock`, and `FuzzClientXattr`.
 
 Crash inputs are stored in `proto/p9l/testdata/fuzz/` and `proto/p9u/testdata/fuzz/` and are replayed automatically on subsequent `go test` runs.
 
@@ -397,7 +397,7 @@ The race detector is not used for benchmarks (it distorts throughput and allocat
 All benchmarks build on a small set of helpers from `bench_test.go` and `io_bench_test.go`:
 
 - `newConnPair(tb, root, opts...)` -- server + `net.Pipe` client pair; Tversion already negotiated (`server/walk_test.go`, used by benchmarks via `testing.TB`).
-- `newConnPairMsize(tb, root, msize, opts...)` -- same, but with a caller-chosen negotiated msize; required when a benchmark needs msize > 64 KiB (`server/io_bench_test.go`).
+- `newConnPairMsizeTransport(tb, transport, root, msize, opts...)` -- test pair with a caller-chosen transport and negotiated msize (`server/io_bench_test.go`).
 - `mustEncode(tb, tag, msg)` -- pre-encode a frame once, outside the measurement loop.
 - `drainResponse(c)` -- read and discard exactly one 9P frame from the wire; faster than a full decode.
 - `benchAttachFid0(b, cp)` -- wire fid 0 to the server's root before measurement.

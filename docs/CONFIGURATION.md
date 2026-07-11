@@ -8,16 +8,18 @@ Server options are passed to `server.New(root, opts...)` and control connection 
 
 | Option | Signature | Default | Description |
 |--------|-----------|---------|-------------|
-| `WithMaxMsize` | `WithMaxMsize(msize uint32)` | `1048576` (1 MiB) | Maximum message size the server will accept during version negotiation. The negotiated msize is `min(client, server)` -- the client's `Tversion.msize` is clamped to this ceiling. Must be at least 256 bytes (`minMsize`); version negotiation fails otherwise. |
-| `WithMaxInflight` | `WithMaxInflight(n int)` | `64` | Maximum concurrent in-flight requests per connection. Values less than 1 are clamped to 1. Internally this bounds the count of `handleRequest` goroutines spawned under `recvMu` (recv-mutex worker model). Back-pressure is applied when all dispatchers are busy: no replacement reader is spawned past the cap, and the next request sits in the kernel socket buffer until one returns to the loop. Externally observable semantics are unchanged from earlier versions (bounded concurrency per connection). |
-| `WithMaxConnections` | `WithMaxConnections(n int)` | `0` (no limit) | Maximum number of concurrent connections the server will serve. When the limit is reached, `ServeConn` closes the new connection immediately, logs a warning, and increments the `ninep.server.connections_rejected` OTel counter. Values less than 1 disable the limit. |
-| `WithMaxFids` | `WithMaxFids(n int)` | `0` (no limit) | Maximum number of concurrent fids per connection. When the cap is reached, fid-creating operations (`Tattach`, `Twalk`, `Txattrwalk`) return `EMFILE`. Enforcement runs inside `fidTable.add` under the write lock, making it race-free. Values less than 1 disable the limit. |
-| `WithIdleTimeout` | `WithIdleTimeout(d time.Duration)` | `0` (no timeout) | Per-connection idle timeout. When greater than zero, read and write deadlines are set on the underlying `net.Conn` before each I/O operation. A connection with no activity for the duration is closed. **Set this whenever peers are untrusted**: responses are written inline under a per-connection write mutex, so a client that stops reading wedges the writing handler and eventually every dispatcher on that connection; the write deadline is what breaks the wedge. |
-| `WithDrainTimeout` | `WithDrainTimeout(d time.Duration)` | `5s` | Maximum time to wait for inflight request handlers to finish during connection cleanup and mid-session `Tversion` re-negotiation. Handlers that ignore context cancellation past the deadline are logged and orphaned (cleanup) or cause the connection to be closed (re-negotiation). Values less than or equal to zero are ignored. |
+| `WithMaxMsize` | `WithMaxMsize(msize uint32)` | `1048576` (1 MiB) | Maximum negotiated message size. `New` rejects values below 256 or above `proto.MaxMessageSize`. |
+| `WithMaxInflight` | `WithMaxInflight(n int)` | `64` | Maximum concurrent in-flight requests per connection. `New` rejects values below 1. |
+| `WithMaxConnections` | `WithMaxConnections(n int)` | `1024` | Maximum concurrent connections. Zero disables the limit; negative values are invalid. |
+| `WithMaxFids` | `WithMaxFids(n int)` | `4096` | Maximum concurrent fids per connection. Zero disables the limit; negative values are invalid. |
+| `WithIdleTimeout` | `WithIdleTimeout(d time.Duration)` | `2m` | Established-connection read and write deadline. Zero disables it; negative values are invalid. |
+| `WithDrainTimeout` | `WithDrainTimeout(d time.Duration)` | `5s` | Maximum wait for inflight handlers during cleanup and re-negotiation. Must be positive. |
+| `WithTrustedNetwork` | `WithTrustedNetwork()` | disabled | Disables connection, fid, and established-I/O limits when a trusted outer transport enforces them. |
 | `WithLogger` | `WithLogger(logger *slog.Logger)` | `slog.Default()` with trace correlation | Structured logger for the server. The handler is automatically wrapped with `NewTraceHandler` to inject `trace_id` and `span_id` attributes when an OTel span is active. |
 | `WithRequestLogging` | `WithRequestLogging()` | disabled | Installs per-request Debug logging that reuses the server's own trace-correlated logger (the one set by `WithLogger` or its default). Unlike `WithMiddleware(NewLoggingMiddleware(logger))`, which logs through a caller-supplied logger that may lack trace correlation, this logs through the wrapped, per-connection logger, so lines carry `trace_id`/`span_id` when an OTel span is active. |
 | `WithTracer` | `WithTracer(tp trace.TracerProvider)` | `nil` (no tracing) | OpenTelemetry `TracerProvider`. When set, an OTel middleware is automatically prepended to the middleware chain, producing a span for every 9P operation. If not set, no tracing overhead is incurred. |
 | `WithMeter` | `WithMeter(mp metric.MeterProvider)` | `nil` (no metrics) | OpenTelemetry `MeterProvider`. When set, an OTel middleware is automatically prepended to the middleware chain, recording duration, request/response sizes, and active request counts. If not set, no metrics overhead is incurred. |
+| `WithTracePathFilter` | `WithTracePathFilter(filter TracePathFilter)` | `nil` | Opts into the `ninep.path` span attribute. The callback can redact, hash, or drop each path. |
 | `WithMiddleware` | `WithMiddleware(mw ...Middleware)` | none | Appends middleware to the dispatch chain. The first middleware added is outermost (first to execute, last to see the response). Multiple calls append to the existing chain. |
 | `WithAnames` | `WithAnames(m map[string]Node)` | `nil` | Maps aname strings to root nodes for vhost-style attach dispatch. When set, `Tattach` uses the aname field to select the root node. An empty aname falls back to the default root passed to `New`. |
 | `WithAttacher` | `WithAttacher(a Attacher)` | `nil` | Sets a custom `Attacher` for full-control attach handling. When set, it takes precedence over both the default root node and any aname map configured via `WithAnames`. |
@@ -25,7 +27,7 @@ Server options are passed to `server.New(root, opts...)` and control connection 
 ### Usage
 
 ```go
-srv := server.New(root,
+srv, err := server.New(root,
     server.WithMaxMsize(1<<20),          // 1 MiB max message size (== default)
     server.WithMaxInflight(128),         // 128 concurrent requests
     server.WithMaxConnections(1000),     // cap total connections
@@ -35,6 +37,9 @@ srv := server.New(root,
     server.WithTracer(otel.GetTracerProvider()),
     server.WithMeter(otel.GetMeterProvider()),
 )
+if err != nil {
+    return err
+}
 ```
 
 ## Attach Configuration
@@ -56,7 +61,7 @@ type Attacher interface {
 ### Aname Map Example
 
 ```go
-srv := server.New(defaultRoot,
+srv, err := server.New(defaultRoot,
     server.WithAnames(map[string]server.Node{
         "data":   dataRoot,
         "config": configRoot,
@@ -80,7 +85,7 @@ Middleware is composed in order: the first added is outermost. Multiple `WithMid
 **`NewLoggingMiddleware`** -- Logs each 9P request at `Debug` level with structured attributes (`op`, `duration`, `error`).
 
 ```go
-srv := server.New(root,
+srv, err := server.New(root,
     server.WithMiddleware(server.NewLoggingMiddleware(logger)),
 )
 ```
@@ -100,7 +105,7 @@ Each 9P operation produces a span with `SpanKindServer`. Attributes:
 | `rpc.system.name` | string | Always `"9p"` |
 | `rpc.method` | string | Operation type (e.g., `"Tread"`, `"Twalk"`) |
 | `ninep.fid` | int64 | Fid from the request (when applicable) |
-| `ninep.path` | string | Resolved path for the fid (when available) |
+| `ninep.path` | string | Filtered path, only when `WithTracePathFilter` opts in |
 | `ninep.protocol` | string | Negotiated protocol (`"9P2000.L"` or `"9P2000.u"`) |
 
 Error responses set the span status to `codes.Error`.
@@ -110,6 +115,7 @@ Error responses set the span status to `codes.Error`.
 | Metric | Type | Unit | Description |
 |--------|------|------|-------------|
 | `ninep.server.duration` | Float64Histogram | `s` | Duration of 9P server operations |
+| `ninep.server.requests` | Int64Counter | | Completed requests with bounded `rpc.method` and `outcome=ok|error` attributes |
 | `ninep.server.request.size` | Int64Counter | `By` | Size of 9P request messages |
 | `ninep.server.response.size` | Int64Counter | `By` | Size of 9P response messages |
 | `ninep.server.active_requests` | Int64UpDownCounter | | Number of active 9P requests |
@@ -127,7 +133,7 @@ Pass a custom logger with `WithLogger`. The handler is automatically wrapped wit
 
 ```go
 handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
-srv := server.New(root, server.WithLogger(slog.New(handler)))
+srv, err := server.New(root, server.WithLogger(slog.New(handler)))
 ```
 
 ### NewTraceHandler
@@ -166,7 +172,7 @@ The `server/passthrough` package provides its own functional options for `NewRoo
 
 ### UIDMapper
 
-`UIDMapper` is a struct with two function fields. Both `ToHost` and `FromHost` MUST be non-nil; passing a mapper with either field nil via `WithUIDMapper` is a programming error and will panic the first time a UID/GID translation is attempted.
+`UIDMapper` is a struct with two function fields. Both `ToHost` and `FromHost` must be non-nil; `NewRoot` rejects an incomplete mapper.
 
 ```go
 type UIDMapper struct {
@@ -199,11 +205,11 @@ message sizing, concurrency, logging, lock polling, and per-op timeouts.
 | Option | Signature | Default | Description |
 |--------|-----------|---------|-------------|
 | `WithVersion` | `WithVersion(v proto.Version)` | unset (propose 9P2000.L, accept whatever the server negotiates) | Pins the version proposed during `Dial`. If the server negotiates any other version, `Dial` returns `ErrVersionMismatch`. Useful for deterministic protocol-specific tests. |
-| `WithMsize` | `WithMsize(n uint32)` | `1048576` (1 MiB) | Proposed maximum message size. The server's `Rversion.Msize` caps the proposal; negotiated msize is `min(client proposal, server cap)`. No clamping here -- a proposal that negotiates below 256 bytes surfaces `ErrMsizeTooSmall` at `Dial` time. |
-| `WithMaxInflight` | `WithMaxInflight(n int)` | `64` | Maximum concurrent outstanding requests on the Conn. Backs the tag allocator's free-list capacity; once saturated, new requests block until an in-flight tag is released. Values < 1 clamp to 1; values > 65534 clamp to 65534 (`NoTag` is reserved). |
-| `WithLogger` | `WithLogger(logger *slog.Logger)` | `slog.Default()` | Structured logger for diagnostic output. A nil logger is ignored (existing logger preserved). |
-| `WithLockPollSchedule` | `WithLockPollSchedule(schedule []time.Duration)` | `DefaultLockBackoff` (10/20/40/80/160/320/500ms cap) | Overrides the backoff curve `File.Lock` uses while polling on `LockStatusBlocked`/`LockStatusGrace`. An empty slice is a no-op (falls back to the default). Primarily useful for bounding test timing. |
-| `WithRequestTimeout` | `WithRequestTimeout(d time.Duration)` | `0` (infinite wait, matches Linux v9fs `trans=tcp`) | Per-request timeout applied to the non-ctx `File.Read`/`Write`/`ReadAt`/`WriteAt` methods. Timeout expiry drives Tflush via the standard cancellation pipeline; `errors.Is(err, context.DeadlineExceeded)` matches. Values <= 0 mean no timeout. Ignored by the `*Ctx` method variants, which honor the caller-supplied context verbatim. |
+| `WithMsize` | `WithMsize(n uint32)` | `1048576` (1 MiB) | Proposed maximum message size. `Dial` rejects values below 256 or above `proto.MaxMessageSize` before I/O. |
+| `WithMaxInflight` | `WithMaxInflight(n int)` | `64` | Outstanding-request and tag capacity. `Dial` rejects values outside 1..32766. |
+| `WithLogger` | `WithLogger(logger *slog.Logger)` | `slog.Default()` | Structured logger for diagnostic output. A nil logger is invalid. |
+| `WithLockPollSchedule` | `WithLockPollSchedule(schedule []time.Duration)` | `DefaultLockBackoff` | Lock retry schedule. Empty slices and negative durations are invalid; input is copied. |
+| `WithRequestTimeout` | `WithRequestTimeout(d time.Duration)` | `0` | Timeout for non-context file methods. Zero disables it; negative values are invalid. Context variants use the caller's context. |
 | `WithTracer` | `WithTracer(tp trace.TracerProvider)` | `nil` (no tracing) | OpenTelemetry `TracerProvider` for client-side spans. |
 | `WithMeter` | `WithMeter(mp metric.MeterProvider)` | `nil` (no metrics) | OpenTelemetry `MeterProvider` for client-side metrics. |
 
@@ -273,7 +279,7 @@ root := memfs.NewDir(gen).
     }).
     AddSymlink("latest", "data/cache.db")
 
-srv := server.New(root)
+srv, err := server.New(root)
 ```
 
 ## Internal Defaults
@@ -284,5 +290,6 @@ These values are not configurable but affect server behavior:
 |----------|-------|----------|-------------|
 | `minMsize` | `256` | `server/conn.go` | Minimum acceptable negotiated msize. Version negotiation fails if the negotiated value is below this. |
 | `flushWaitDeadline` | `5s` | `server/cleanup.go` | Maximum time a `Tflush` handler waits for the flushed request's response to reach the wire before closing the connection. The drain timeout formerly listed here is configurable via `WithDrainTimeout`. |
-| `bufpool.PoolMaxBufSize` | `1 MiB` | `internal/bufpool/bufpool.go` | Upper bound on pooled buffer capacity. Buffers that grow above this cap are released to GC rather than retained, keeping pool memory proportional to steady-state traffic. Matches the default `maxMsize` and the Linux kernel's silent msize cap. |
+| Encode buffer class | `1 KiB` | `internal/bufpool/bufpool.go` | Initial and retained capacity for response body encoders; buffers that grow are released. |
+| `bufpool.PoolMaxBufSize` | `1 MiB` | `internal/bufpool/bufpool.go` | Largest pooled message-buffer class, matching the default `maxMsize` and Linux kernel cap. |
 | Message bucket sizes | `1 KiB`, `4 KiB`, `64 KiB`, `1 MiB` | `internal/bufpool/bufpool.go` | Size classes for pooled message buffers (`GetMsgBuf`/`PutMsgBuf`). Chosen to cover control messages (1 KiB), page-sized reads (4 KiB), readdir fragments (64 KiB), and msize-scale reads (1 MiB) without wasting memory on the common case. |

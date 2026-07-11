@@ -2,7 +2,7 @@
 
 ## System Overview
 
-ninep is a Go library implementing the 9P2000.L and 9P2000.u network filesystem protocols. It accepts raw TCP or Unix socket connections, negotiates a protocol dialect, then dispatches incoming 9P messages to user-defined filesystem nodes through a capability-based interface inspired by go-fuse/v2/fs. The primary architectural style is layered: a wire encoding layer (`proto/`), protocol-specific codecs (`proto/p9l/`, `proto/p9u/`), and a server core (`server/`) that bridges protocol messages to filesystem operations. The library depends on the OpenTelemetry API for observability and the Go standard library for everything else.
+ninep is a Go library implementing the 9P2000.L and 9P2000.u network filesystem protocols. It accepts raw TCP or Unix socket connections, negotiates a protocol dialect, then dispatches incoming 9P messages to user-defined filesystem nodes through a capability-based interface inspired by go-fuse/v2/fs. The primary architectural style is layered: a wire encoding layer (`proto/`), protocol-specific codecs (`proto/p9l/`, `proto/p9u/`), and a server core (`server/`) that bridges protocol messages to filesystem operations. Production dependencies are the OpenTelemetry API and `golang.org/x/sys`; everything else uses the Go standard library.
 
 ## Component Diagram
 
@@ -100,7 +100,7 @@ Defines the shared vocabulary for all 9P communication:
 
 Process-wide buffer pools shared across `proto`, `proto/p9l`, `proto/p9u`, and `server`. Living under `internal/` enforces the "only ninep may import" property required by the design doc.
 
-- **`GetBuf` / `PutBuf`** -- `sync.Pool` of `*bytes.Buffer` pre-grown to 1 MiB. Used as the encode destination in `sendResponseInline` and `writeRaw`. A cap-guard (`PoolMaxBufSize`) drops oversized buffers to GC rather than retaining them.
+- **`GetBuf` / `PutBuf`** -- `sync.Pool` of 1 KiB `*bytes.Buffer` encode targets. Buffers that grow beyond the small class are dropped instead of being retained by concurrent control responses.
 - **`GetMsgBuf(n)` / `PutMsgBuf`** -- Size-classed `*[]byte` buckets: 1 KiB, 4 KiB, 64 KiB, 1 MiB. `handleRequest` borrows from the smallest bucket that fits the frame body; `Twrite.DecodeFromBuf` aliases into the borrowed buffer for zero-copy. Bucketing eliminates the pool-drain feedback loop where a 7-byte Tclunk would claim a 1 MiB buffer and amplify `seq_read_4k` throughput variance. `*[]byte` (not `[]byte`) is pooled to avoid the `any` boxing alloc.
 - **`GetStringBuf` / `PutStringBuf`** -- Dedicated small-scratch pool for `proto.ReadString`, sized for names/paths/version strings.
 

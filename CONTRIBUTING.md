@@ -92,16 +92,17 @@ trailers.
   `server/walk_test.go`. Filesystem-implementation tests use the harness in
   `server/fstest/`.
 - Run with the race detector locally: `go test -race -count=1 ./...`.
-- Codec changes in `proto/p9l` or `proto/p9u` should pass the existing fuzz
-  targets. CI runs 60-second fuzz passes across four targets: the p9l and
-  p9u codecs, plus `FuzzClientLock` and `FuzzClientXattr` in `client/`.
+- Codec changes should pass the existing fuzz targets. CI runs 60-second fuzz
+  passes across five targets: the p9l, p9u, and dirent codecs, plus
+  `FuzzClientLock` and `FuzzClientXattr` in `client/`.
 - Performance-sensitive changes should include a benchmark and, where
   possible, `benchstat` output in the PR description.
 
 CI (`.github/workflows/ci.yml`) runs `go vet`, `go test -race -count=1`,
 `go build -trimpath`, `golangci-lint`, a compile check of integration-tagged
-tests, and a 60-second fuzz pass across four targets (p9l codec, p9u codec,
-`FuzzClientLock`, `FuzzClientXattr`). All jobs must be green before merge.
+tests, and a 60-second fuzz pass across five targets (p9l codec, p9u codec,
+dirent codec, `FuzzClientLock`, `FuzzClientXattr`). All jobs must be green
+before merge.
 
 ## Code Review Expectations
 
