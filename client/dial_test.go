@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"runtime"
@@ -23,7 +24,8 @@ import (
 // version frames because Tversion/Rversion body layout is shared). The
 // goroutine keeps srvNC open after responding (blocking in a sink-read) so
 // the client-side SetDeadline/SetReadDeadline calls do not race against a
-// peer-initiated close on net.Pipe. t.Cleanup closes srvNC.
+// peer-initiated close on net.Pipe. t.Cleanup closes srvNC, waits for the
+// goroutine, and reports any setup error from the test goroutine.
 // deadlineConn records the most recent SetDeadline value so a test can verify
 // the negotiation deadline is cleared on a failed Dial.
 type deadlineConn struct {
@@ -70,26 +72,32 @@ func TestDial_ClearsDeadlineOnError(t *testing.T) {
 
 func runMockVersionServer(tb testing.TB, srvNC net.Conn, resp proto.Rversion) {
 	tb.Helper()
-	tb.Cleanup(func() { _ = srvNC.Close() })
+	done := make(chan error, 1)
+	tb.Cleanup(func() {
+		_ = srvNC.Close()
+		if err := <-done; err != nil {
+			tb.Logf("mock server: %v", err)
+		}
+	})
 
 	go func() {
 		// Read Tversion: size[4] + body.
 		var sizeBuf [4]byte
 		if _, err := io.ReadFull(srvNC, sizeBuf[:]); err != nil {
-			tb.Logf("mock server: read size: %v", err)
+			done <- fmt.Errorf("read size: %w", err)
 			return
 		}
 		size := binary.LittleEndian.Uint32(sizeBuf[:])
 		body := make([]byte, int(size)-4)
 		if _, err := io.ReadFull(srvNC, body); err != nil {
-			tb.Logf("mock server: read body: %v", err)
+			done <- fmt.Errorf("read body: %w", err)
 			return
 		}
 
 		// Write Rversion. Using p9l.Encode with proto.NoTag matches the
 		// wire format of the real server's response.
 		if err := p9l.Encode(srvNC, proto.NoTag, &resp); err != nil {
-			tb.Logf("mock server: encode Rversion: %v", err)
+			done <- fmt.Errorf("encode Rversion: %w", err)
 			return
 		}
 
@@ -99,6 +107,7 @@ func runMockVersionServer(tb testing.TB, srvNC net.Conn, resp proto.Rversion) {
 		sink := make([]byte, 4096)
 		for {
 			if _, err := srvNC.Read(sink); err != nil {
+				done <- nil
 				return
 			}
 		}
