@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"time"
 )
 
@@ -88,9 +89,10 @@ func WithRequestLogging() Option {
 
 // WithAnames sets a map of aname strings to root nodes for vhost-style
 // attach dispatch. When set, Tattach uses the aname field to select the
-// root node. An empty aname falls back to the default root.
+// root node. An empty aname falls back to the default root. The map is
+// cloned, so later mutation by the caller cannot race attach handling.
 func WithAnames(m map[string]Node) Option {
-	return func(s *Server) { s.anames = m }
+	return func(s *Server) { s.anames = maps.Clone(m) }
 }
 
 // Attacher provides full-control attach handling. When set via WithAttacher,

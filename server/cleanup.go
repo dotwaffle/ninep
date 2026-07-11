@@ -54,11 +54,12 @@ func (c *conn) cleanup() {
 	// already closed nc on ctx.Done, this returns ErrClosed (ignored).
 	_ = c.nc.Close()
 
-	// Wait for handleRequest goroutines to exit, but only when handlers
-	// drained. With nc closed, the read goroutines fall through promptly, so
-	// recvWG.Wait completes. When a handler is permanently stuck (e.g. a hung
-	// syscall ignoring ctx), recvWG never reaches zero; spawning a waiter then
-	// would leak it forever alongside the stuck handler, so we skip the wait.
+	// Step 4: Wait for handleRequest goroutines to exit, but only when
+	// handlers drained. With nc closed, the read goroutines fall through
+	// promptly, so recvWG.Wait completes. When a handler is permanently stuck
+	// (e.g. a hung syscall ignoring ctx), recvWG never reaches zero; spawning
+	// a waiter then would leak it forever alongside the stuck handler, so we
+	// skip the wait.
 	if drained {
 		recvDone := make(chan struct{})
 		go func() {
@@ -74,7 +75,7 @@ func (c *conn) cleanup() {
 		}
 	}
 
-	// Step 4: Clunk all fids and release handles.
+	// Step 5: Clunk all fids and release handles.
 	// Use swap-and-clear pattern: clunkAll returns all states, iterate outside lock.
 	states := c.fids.clunkAll()
 	if len(states) > 0 {
