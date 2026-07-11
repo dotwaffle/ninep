@@ -33,7 +33,7 @@ type fidState struct {
 	node      Node
 	path      string // Walked filesystem path for observability; protected by mu like node.
 	state     fidStatus
-	handle    FileHandle     // Non-nil after Open returns a handle (per API-04).
+	handle    FileHandle     // Non-nil after Open returns a handle.
 	dirCache  []proto.Dirent // Cached dirents for simple Readdirer (offset tracking).
 	dirCached bool           // True after first readdir populates cache.
 
@@ -182,7 +182,7 @@ func (fs *fidState) finishClunk(ctx context.Context, logger *slog.Logger, closeN
 }
 
 // fidTable is a concurrent-safe mapping from fid numbers to their state.
-// Protected by sync.RWMutex per GO-CC-3.
+// Protected by sync.RWMutex.
 type fidTable struct {
 	mu   sync.RWMutex
 	fids map[proto.Fid]*fidState

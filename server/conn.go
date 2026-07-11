@@ -118,8 +118,7 @@ type conn struct {
 
 	// writeMu serializes all writes to nc. Dispatching goroutines acquire
 	// it in sendResponseInline, and writeRaw (used during version
-	// negotiation) takes it as well. This prevents interleaved wire frames
-	// (GO-CC-3).
+	// negotiation) takes it as well. This prevents interleaved wire frames.
 	writeMu sync.Mutex
 
 	// encHdr holds the 7-byte response header (size[4] + type[1] + tag[2])
@@ -248,7 +247,7 @@ func (c *conn) serve(ctx context.Context) {
 		RemoteAddr: c.nc.RemoteAddr().String(),
 	})
 
-	// Close the net.Conn when context is cancelled to unblock reads (GO-CC-2).
+	// Close the net.Conn when context is cancelled to unblock reads.
 	go func() {
 		<-ctx.Done()
 		_ = c.nc.Close()
@@ -349,7 +348,7 @@ func (c *conn) negotiateVersion(ctx context.Context) error {
 		return fmt.Errorf("decode tversion: %w", err)
 	}
 
-	// Validate msize + select protocol via shared helper (shared helper).
+	// Validate msize and select the negotiated protocol.
 	res, err := c.negotiate(&tver)
 	if err != nil {
 		return err // ErrMsizeTooSmall
@@ -769,7 +768,7 @@ func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message
 		// Recover BEFORE releasing msg: the log line below reads from msg,
 		// and once putCachedMsg runs a concurrent borrower may hold it.
 		if r := recover(); r != nil {
-			// SERV-06: Handler panic -> EIO, never crash the server.
+			// Isolate handler panics to this request and return EIO.
 			c.logger.Error("handler panic",
 				slog.Any("panic", r),
 				slog.String("message_type", msg.Type().String()),
@@ -874,7 +873,7 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 		return
 	}
 
-	// Validate msize + select protocol via shared helper (shared helper).
+	// Validate msize and select the negotiated protocol.
 	res, err := c.negotiate(&tver)
 	if err != nil {
 		c.logger.Warn("re-negotiation msize too small; closing connection",

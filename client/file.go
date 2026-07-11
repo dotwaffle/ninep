@@ -209,8 +209,7 @@ func (f *File) Clone(ctx context.Context) (*File, error) {
 // 7-byte message header. For Twrite it is fid[4] + offset[8] +
 // count[4] = 16 bytes; for Rread it is count[4] = 4 bytes. Using 24
 // as a single clamp constant covers both directions with a small
-// safety margin and matches the Q5 resolution ("iounit=0 clamps to
-// msize - 24").
+// safety margin.
 const ioFrameOverhead uint32 = 24
 
 // maxChunk returns the largest count the File should request in a

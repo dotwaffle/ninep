@@ -1,7 +1,5 @@
-// Package pool provides a generic bounded-channel cache for reusable message
-// structs on the 9P server and client hot paths. It replaces the seven
-// per-type chan caches that previously lived at package scope in
-// ninep/server/msgcache.go (v1.1.15 -- v1.2.x).
+// Package pool provides bounded-channel caches for reusable message structs
+// on the 9P server and client hot paths.
 //
 // # Design
 //
@@ -11,9 +9,9 @@
 // the pointer; on a full channel the pointer is dropped to the GC.
 //
 // Channels give atomic Get/Put without the cross-P balancing overhead that
-// sync.Pool exhibits under goroutine-per-request workloads. The v1.1.15
-// measurement showed ~15% regression when sync.Pool wrapped *proto.Tread;
-// the bounded-chan design sidesteps that entirely.
+// sync.Pool exhibits under goroutine-per-request workloads. Benchmarks of the
+// request path showed that sync.Pool reduced throughput; bounded channels
+// avoid that balancing cost.
 //
 // # Aliasing invariant (caller responsibility)
 //
@@ -29,11 +27,10 @@
 // (m.Data = nil before twriteCache.Put(m)).
 package pool
 
-// Cap is the per-Cache channel depth. Matches the msgCacheCap = 3 constant
-// from the pre-extraction server/msgcache.go:14. Three slots hold the few
-// in-flight messages a typical dispatch loop has in the receive-decode-handle
-// pipeline without retaining unused memory. Do NOT change without
-// re-running the BenchmarkWalkClunk comparison.
+// Cap is the per-Cache channel depth. Three slots hold the few in-flight
+// messages a typical dispatch loop has in the receive-decode-handle pipeline
+// without retaining unused memory. Do not change it without rerunning the
+// BenchmarkWalkClunk comparison.
 const Cap = 3
 
 // Ordering: channel-FIFO. A Put followed by three more Puts and four Gets
@@ -72,9 +69,8 @@ func NewCache[T any]() *Cache[T] {
 // fresh new(T) allocation otherwise. The receive is non-blocking.
 //
 // Zero-reset: *m = *new(T) sets every field to its zero value before
-// returning, matching the pre-extraction per-type `*m = proto.Twrite{}`
-// pattern. Callers that need belt-and-braces clearing of aliasing fields
-// must still clear them on the Put side -- see the package-level comment.
+// returning. Callers must still clear aliased fields on the Put side; see the
+// package-level comment.
 func (c *Cache[T]) Get() *T {
 	select {
 	case m := <-c.ch:

@@ -210,7 +210,7 @@ func (c *Conn) readLoop() {
 		// letting a peer amplify a tiny short-body frame into a large
 		// allocation (count is bounded only by MaxDataSize, independent of
 		// the negotiated msize). The ZC fast path above applies the same
-		// check at line 174; mirror it here for Rreaddir and for the Rread
+		// check in the decoded path; mirror it here for Rreaddir and for the Rread
 		// path where entry.dst is nil.
 		if msgType == proto.TypeRread || msgType == proto.TypeRreaddir {
 			if len(b) < 7 {

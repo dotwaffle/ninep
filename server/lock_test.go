@@ -356,7 +356,7 @@ func TestTwoConnPair_SmokeTest(t *testing.T) {
 	b.attach(t, 1, 0, "B", "")
 }
 
-// --- Multi-connection contention tests (TEST-02) ---
+// --- Multi-connection contention tests. ---
 
 // contentionSetup creates a symlinkDir root with a contentionLockFile named
 // "lockfile" and returns (a, b, lf) where a and b are two connections to the

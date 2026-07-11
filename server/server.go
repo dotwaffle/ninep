@@ -38,7 +38,7 @@ type Server struct {
 	maxConnections   int64         // 0 = unlimited
 	connCount        atomic.Int64  // active connections (internal bookkeeping)
 	maxFids          int           // 0 = unlimited (per-connection cap)
-	idleTimeout      time.Duration // 0 = no timeout (GO-SEC-1)
+	idleTimeout      time.Duration // 0 disables idle timeouts.
 	handshakeTimeout time.Duration // bounds the initial version handshake when idleTimeout is 0
 	drainTimeout     time.Duration // bounds inflight drain during cleanup and re-negotiation
 	logger           *slog.Logger

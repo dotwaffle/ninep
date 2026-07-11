@@ -264,9 +264,8 @@ func BenchmarkClientWrite_1M(b *testing.B) {
 // Each iteration: root.Clone(ctx) issues Twalk(rootFid, newFid, nil) --
 // the 0-step "clone" walk that returns a fresh *File whose Close issues
 // Tclunk. This is the client-surface equivalent of the server's raw
-// Twalk(...,nil)/Tclunk frame pair. (The plan suggested File.Walk(ctx,
-// nil) but that path errors out -- File.Walk rejects empty names; Clone
-// is the documented 0-step API per File.Walk's godoc.)
+// Twalk(...,nil)/Tclunk frame pair. File.Walk rejects empty names, so
+// Clone is the documented zero-step API.
 func BenchmarkClientWalkClunk(b *testing.B) {
 	for _, transport := range []string{"unix", "pipe"} {
 		b.Run("transport="+transport, func(b *testing.B) {

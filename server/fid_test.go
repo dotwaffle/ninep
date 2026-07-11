@@ -491,7 +491,7 @@ func TestFidTable_ConcurrentAccess(t *testing.T) {
 	}
 }
 
-// isErrFidInUse checks if err wraps ErrFidInUse using errors.Is (GO-ERR-2).
+// isErrFidInUse reports whether err wraps ErrFidInUse.
 func isErrFidInUse(err error) bool {
 	return errors.Is(err, ErrFidInUse)
 }

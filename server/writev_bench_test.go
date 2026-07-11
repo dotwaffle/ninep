@@ -97,10 +97,10 @@ func BenchmarkWriteApproach(b *testing.B) {
 		{"transport=pipe", pipePair},
 	}
 
-	// Third approach variant simulates the v1.1.9 Payloader pattern: the
-	// fixed body + payload are separate net.Buffers entries so the payload
-	// bytes go direct to socket via writev (no memcpy into a shared body
-	// buffer). The caller passes the payload as body here; we split into
+	// This approach keeps the fixed body and payload in separate net.Buffers
+	// entries so the payload bytes go direct to the socket via writev, with no
+	// copy into a shared body buffer. The caller passes the payload as body
+	// here; we split it into
 	// [hdr, fixedBody(4 bytes of count prefix stand-in), payload].
 	approaches := []struct {
 		name string

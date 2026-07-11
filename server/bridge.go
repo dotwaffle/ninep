@@ -181,13 +181,13 @@ func (c *conn) handleRead(ctx context.Context, m *proto.Tread) proto.Message {
 	}
 	defer fs.endIO(ctx, c.logger)
 
-	// Clamp count to prevent oversized allocations (T-03-03).
+	// Clamp count to the largest response that fits the negotiated msize.
 	maxData := c.msize - proto.HeaderSize - 4
 	if m.Count > maxData {
 		m.Count = maxData
 	}
 
-	// FileHandle dispatch first (per API-04).
+	// Prefer the open handle; fall back to the underlying node.
 	if fs.handle != nil {
 		if reader, ok := fs.handle.(FileReader); ok {
 			data, bufPtr, errResp := c.fillPooled(m.Count, func(buf []byte) (int, error) {
@@ -270,7 +270,7 @@ func (c *conn) handleWrite(ctx context.Context, m *proto.Twrite) proto.Message {
 	}
 	defer fs.endIO(ctx, c.logger)
 
-	// FileHandle dispatch first (per API-04).
+	// Prefer the open handle; fall back to the underlying node.
 	if fs.handle != nil {
 		if writer, ok := fs.handle.(FileWriter); ok {
 			count, err := writer.Write(ctx, m.Data, m.Offset)
@@ -321,7 +321,7 @@ func (c *conn) handleGetattr(ctx context.Context, m *p9l.Tgetattr) proto.Message
 		return c.errorMsg(errnoFromError(err))
 	}
 
-	// Override QID from server's authoritative source (T-03-09).
+	// The server's node identity is authoritative for the returned QID.
 	attr.QID = nodeQID(fs.currentNode())
 
 	return &p9l.Rgetattr{Attr: attr}
@@ -389,7 +389,7 @@ func (c *conn) handleReaddir(ctx context.Context, m *p9l.Treaddir) proto.Message
 	}
 	defer fs.endIO(ctx, c.logger)
 
-	// Clamp count to prevent oversized allocations (T-03-03).
+	// Clamp count to the largest response that fits the negotiated msize.
 	maxData := c.msize - proto.HeaderSize - 4
 	if m.Count > maxData {
 		m.Count = maxData
@@ -757,7 +757,7 @@ func (c *conn) handleStatfs(ctx context.Context, m *p9l.Tstatfs) proto.Message {
 // handleFsync dispatches Tfsync to FileSyncer on the open handle first,
 // falling back to NodeFsyncer on the underlying node. DataSync from the
 // wire is decoded but not forwarded: implementations always perform a
-// full fsync (see CONTEXT.md D-QMIG-01).
+// full fsync.
 //
 // Requires the fid to be in opened state: the Linux v9fs kernel client
 // only issues Tfsync on opened fids, and returning EBADF on unopened
@@ -936,7 +936,7 @@ func (c *conn) handleRename(ctx context.Context, m *p9l.Trename) proto.Message {
 }
 
 // handleLock dispatches to FileLocker.Lock (handle-first) then
-// NodeLocker.Lock. Requires the fid to be in opened state per T-04-05.
+// NodeLocker.Lock. The fid must be open.
 func (c *conn) handleLock(ctx context.Context, m *p9l.Tlock) proto.Message {
 	fs := c.fids.get(m.Fid)
 	if fs == nil {
@@ -977,7 +977,7 @@ func (c *conn) handleLock(ctx context.Context, m *p9l.Tlock) proto.Message {
 }
 
 // handleGetlock dispatches to FileLocker.GetLock (handle-first) then
-// NodeLocker.GetLock. Requires the fid to be in opened state per T-04-05.
+// NodeLocker.GetLock. The fid must be open.
 func (c *conn) handleGetlock(ctx context.Context, m *p9l.Tgetlock) proto.Message {
 	fs := c.fids.get(m.Fid)
 	if fs == nil {
@@ -1022,7 +1022,7 @@ func (c *conn) handleGetlock(ctx context.Context, m *p9l.Tgetlock) proto.Message
 
 // handleXattrwalk handles Txattrwalk: creates a new fid in xattr read mode.
 // For name != "", retrieves a single xattr. For name == "", lists all xattrs.
-// RawXattrer takes precedence over simple interfaces per CONTEXT.md locked decision.
+// RawXattrer takes precedence over the simple xattr interfaces.
 func (c *conn) handleXattrwalk(ctx context.Context, m *p9l.Txattrwalk) proto.Message {
 	fs := c.fids.get(m.Fid)
 	if fs == nil {
@@ -1118,7 +1118,7 @@ func (c *conn) handleXattrcreate(ctx context.Context, m *p9l.Txattrcreate) proto
 		return c.errorMsg(proto.EBADF)
 	}
 
-	// Clamp xattr buffer to msize to prevent oversized allocations (T-04-06).
+	// Reject xattrs that cannot fit within the negotiated message size.
 	if m.AttrSize > uint64(c.msize) {
 		return c.errorMsg(proto.EINVAL)
 	}

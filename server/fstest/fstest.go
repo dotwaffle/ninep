@@ -73,8 +73,8 @@ type testConn struct {
 
 // newTestConn creates a server serving root over a net.Pipe, negotiates
 // the 9P2000.L version, and returns a testConn ready for protocol
-// operations. A 5-second timeout prevents test hangs from broken
-// implementations (T-06-10 mitigation).
+// operations. A 5-second timeout prevents broken implementations from
+// hanging the test suite.
 func newTestConn(t *testing.T, root server.Node) *testConn {
 	t.Helper()
 

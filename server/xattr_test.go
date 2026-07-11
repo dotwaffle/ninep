@@ -569,9 +569,8 @@ func TestXattr_ENOSYS_NoSetter(t *testing.T) {
 	isError(t, msg, proto.ENOSYS)
 }
 
-// TestXattr_TooBig_EINVAL verifies the msize clamp at bridge.go:844: an
-// AttrSize exceeding the negotiated msize is rejected with EINVAL before any
-// writer is allocated. Protects against oversized buffer allocation (T-04-06).
+// TestXattr_TooBig_EINVAL verifies that an AttrSize exceeding the negotiated
+// msize is rejected with EINVAL before any writer is allocated.
 func TestXattr_TooBig_EINVAL(t *testing.T) {
 	t.Parallel()
 
@@ -637,8 +636,7 @@ func TestXattr_Overwrite_ENOSPC(t *testing.T) {
 // TestXattr_Remove verifies the simple-interface remove flow: Txattrcreate
 // with AttrSize=0 followed by Tclunk (no intermediate Twrite) invokes
 // NodeXattrRemover.RemoveXattr. The removal is observable because a
-// subsequent Txattrwalk for the removed key surfaces ENODATA. Covers the
-// dispatch.go:221-228 branch and RESEARCH gap #1.
+// subsequent Txattrwalk for the removed key surfaces ENODATA.
 func TestXattr_Remove(t *testing.T) {
 	t.Parallel()
 
@@ -719,13 +717,10 @@ func TestXattr_EmptyList(t *testing.T) {
 	}
 }
 
-// TestXattr_Priority verifies the precedence rule at bridge.go:758 and :849:
-// when a node satisfies BOTH RawXattrer and the simple NodeXattr* interfaces,
-// Txattrwalk and Txattrcreate MUST route through the RawXattrer methods. The
-// simple interfaces must never be invoked -- bothXattrFile records any such
-// invocation in simpleCalls, so len(simpleCalls) == 0 after the full flow
-// proves the routing is exclusive. Covers T-11-01-02 (Information Disclosure
-// via priority-dispatch regression).
+// TestXattr_Priority verifies that RawXattrer takes precedence when a node also
+// implements the simple NodeXattr interfaces. The simple interfaces must not
+// be invoked; bothXattrFile records any such call so the test can prove that
+// routing is exclusive.
 func TestXattr_Priority(t *testing.T) {
 	t.Parallel()
 

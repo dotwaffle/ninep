@@ -154,7 +154,7 @@ Interface naming convention: `Node` + operation name + `er` suffix. Examples fro
 | `NodeFsyncer` | `Fsync(ctx) error` | Tfsync |
 | `NodeLocker` | `Lock(...)` / `GetLock(...)` | Tlock / Tgetlock |
 
-**Read and RawReaddir are buf-passing.** Since v1.1.3 the server pulls a pooled body buffer from `internal/bufpool`, clamps it to the Tread/Treaddir count (capped at msize), and hands it to your `Read` / `RawReaddir`. Fill the buffer in place and return the count written. Do **not** retain the slice past the call -- `pooledRread`/`pooledRreaddir` in `bridge.go` wrap the response and release the buffer back to the pool after the writev completes.
+**Read and RawReaddir receive caller-owned buffers.** The server pulls a pooled body buffer from `internal/bufpool`, clamps it to the Tread/Treaddir count (capped at msize), and hands it to your `Read` / `RawReaddir`. Fill the buffer in place and return the count written. Do **not** retain the slice past the call -- `pooledRread`/`pooledRreaddir` in `bridge.go` wrap the response and release the buffer back to the pool after the writev completes.
 
 ```go
 func (f *myFile) Read(ctx context.Context, buf []byte, offset uint64) (int, error) {

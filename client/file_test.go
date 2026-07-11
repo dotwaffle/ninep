@@ -3,7 +3,6 @@ package client_test
 import (
 	"context"
 	"errors"
-	"io"
 	"testing"
 	"time"
 
@@ -15,25 +14,6 @@ import (
 func fileTestCtx(t *testing.T) (context.Context, context.CancelFunc) {
 	t.Helper()
 	return context.WithTimeout(t.Context(), 5*time.Second)
-}
-
-// TestFile_ImplementsIO: compile-time io.* assertions are enforced in
-// client/file.go via `var _ io.Reader = (*File)(nil)` etc. This test
-// adds a runtime belt-and-braces check: a *File value is assignable to
-// each of the six interfaces. Any removal of an interface method from
-// *File fails `go build` at the package-level assertion before this
-// test even links, but the assignments here catch misnamed stubs.
-func TestFile_ImplementsIO(t *testing.T) {
-	t.Parallel()
-	var f *client.File
-	var (
-		_ io.Reader   = f
-		_ io.Writer   = f
-		_ io.Closer   = f
-		_ io.Seeker   = f
-		_ io.ReaderAt = f
-		_ io.WriterAt = f
-	)
 }
 
 // TestFile_QidAccessor: File.Qid() returns the QID captured at

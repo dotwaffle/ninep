@@ -189,8 +189,7 @@ func newBenchTree(tb testing.TB) *benchDir {
 // nonPayloaderRread wraps a proto.Rread but deliberately does NOT embed it,
 // so *nonPayloaderRread does not satisfy proto.Payloader (EncodeFixed/Payload
 // are NOT method-promoted because inner is a field, not an embedded type).
-// This forces sendResponseInline to take the EncodeTo fallback branch
-// (server/conn.go:833) - the pre-v1.1.18 copy path.
+// This forces sendResponseInline to take the EncodeTo fallback copy path.
 //
 // Used by BenchmarkServerRead_{4K,1M}/encode=copy subtests to
 // reconstruct a same-binary copy-path baseline (no git-checkout
@@ -321,12 +320,10 @@ func BenchmarkRead(b *testing.B) {
 }
 
 // BenchmarkReadPipelined measures pipelined request throughput under the
-// inline-write model (v1.1.15+). Each worker encodes and writev's its
-// response independently under writeMu; there is no cross-request
-// coalescing (the pre-v1.1.15 writer-goroutine model batched multiple
-// queued responses into a single writev). This benchmark validates that
-// pipelining multiple in-flight requests still sustains throughput with
-// per-response writev.
+// inline-write model. Each worker encodes and writes its response independently
+// under writeMu, with no cross-request coalescing. This benchmark validates
+// that multiple in-flight requests still sustain throughput with per-response
+// writev.
 //
 // The burst size (BurstN) controls how many Tread requests are in flight
 // simultaneously. The benchmark reports MB/s for the full batch and
