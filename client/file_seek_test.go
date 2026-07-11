@@ -130,7 +130,7 @@ func TestFileSeek_NegativeAbsolute(t *testing.T) {
 
 // TestFileSeek_End_UnsetSize: with cachedSize == 0, Seek(0, SeekEnd)
 // returns (0, nil); Seek(-5, SeekEnd) returns an error referencing
-// File.Sync.
+// File.RefreshSize.
 func TestFileSeek_End_UnsetSize(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
@@ -159,8 +159,8 @@ func TestFileSeek_End_UnsetSize(t *testing.T) {
 	}
 	if _, err := f.Seek(-5, io.SeekEnd); err == nil {
 		t.Error("Seek(-5, SeekEnd) with cachedSize=0: nil err, want negative-position error")
-	} else if !strings.Contains(err.Error(), "File.Sync") {
-		t.Errorf("Seek(-5, SeekEnd) err=%q, want mention of File.Sync", err)
+	} else if !strings.Contains(err.Error(), "File.RefreshSize") {
+		t.Errorf("Seek(-5, SeekEnd) err=%q, want mention of File.RefreshSize", err)
 	}
 }
 

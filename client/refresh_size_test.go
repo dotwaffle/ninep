@@ -14,10 +14,11 @@ import (
 	"github.com/dotwaffle/ninep/server/memfs"
 )
 
-// TestFileSync_PopulatesCachedSize: before Sync, f.CachedSize == 0.
-// After Sync on /hello.txt (12 bytes), f.CachedSize == 12. Exercises
+// TestFileRefreshSize_PopulatesCachedSize: before RefreshSize,
+// f.CachedSize == 0. After RefreshSize on /hello.txt (12 bytes),
+// f.CachedSize == 12. Exercises
 // the full Tgetattr (.L) → attr.Size → f.cachedSize path.
-func TestFileSync_PopulatesCachedSize(t *testing.T) {
+func TestFileRefreshSize_PopulatesCachedSize(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
 	defer cleanup()
@@ -37,20 +38,20 @@ func TestFileSync_PopulatesCachedSize(t *testing.T) {
 	defer func() { _ = f.Close() }()
 
 	if got := client.CachedSizeOf(f); got != 0 {
-		t.Fatalf("pre-Sync cachedSize = %d, want 0", got)
+		t.Fatalf("pre-RefreshSize cachedSize = %d, want 0", got)
 	}
-	if err := f.Sync(); err != nil {
-		t.Fatalf("Sync: %v", err)
+	if err := f.RefreshSize(); err != nil {
+		t.Fatalf("RefreshSize: %v", err)
 	}
 	if got := client.CachedSizeOf(f); got != 12 {
-		t.Errorf("post-Sync cachedSize = %d, want 12", got)
+		t.Errorf("post-RefreshSize cachedSize = %d, want 12", got)
 	}
 }
 
-// TestFileSync_SeekEndAfterSync: after Sync, Seek(0, io.SeekEnd) returns
+// TestFileRefreshSize_SeekEndAfterRefresh: after Sync, Seek(0, io.SeekEnd) returns
 // the file's actual size, without requiring the SetCachedSize test
 // hook.
-func TestFileSync_SeekEndAfterSync(t *testing.T) {
+func TestFileRefreshSize_SeekEndAfterRefresh(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
 	defer cleanup()
@@ -69,22 +70,22 @@ func TestFileSync_SeekEndAfterSync(t *testing.T) {
 	}
 	defer func() { _ = f.Close() }()
 
-	if err := f.Sync(); err != nil {
-		t.Fatalf("Sync: %v", err)
+	if err := f.RefreshSize(); err != nil {
+		t.Fatalf("RefreshSize: %v", err)
 	}
 	pos, err := f.Seek(0, io.SeekEnd)
 	if err != nil {
 		t.Fatalf("Seek(0, SeekEnd): %v", err)
 	}
 	if pos != 12 {
-		t.Errorf("Seek(0, SeekEnd) after Sync = %d, want 12", pos)
+		t.Errorf("Seek(0, SeekEnd) after RefreshSize = %d, want 12", pos)
 	}
 }
 
-// TestFileSync_IsIdempotent: consecutive Sync calls both succeed. Each
-// call is a fresh wire op (no caching). Exercises that Sync is safe to
+// TestFileRefreshSize_IsIdempotent: consecutive Sync calls both succeed. Each
+// call is a fresh wire op (no caching). Exercises that RefreshSize is safe to
 // invoke repeatedly without state corruption.
-func TestFileSync_IsIdempotent(t *testing.T) {
+func TestFileRefreshSize_IsIdempotent(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
 	defer cleanup()
@@ -104,20 +105,20 @@ func TestFileSync_IsIdempotent(t *testing.T) {
 	defer func() { _ = f.Close() }()
 
 	for i := range 3 {
-		if err := f.Sync(); err != nil {
-			t.Errorf("Sync #%d: %v, want nil", i+1, err)
+		if err := f.RefreshSize(); err != nil {
+			t.Errorf("RefreshSize #%d: %v, want nil", i+1, err)
 		}
 	}
 	if got := client.CachedSizeOf(f); got != 12 {
-		t.Errorf("post-Sync cachedSize = %d, want 12", got)
+		t.Errorf("post-RefreshSize cachedSize = %d, want 12", got)
 	}
 }
 
-// TestFileSync_ErrorPropagates: Sync against a node whose Getattr
+// TestFileRefreshSize_ErrorPropagates: Sync against a node whose Getattr
 // returns proto.ENOENT surfaces a *client.Error whose errors.Is matches
 // proto.ENOENT. The pre-call cachedSize is preserved on error (not
-// zeroed by a failed Sync).
-func TestFileSync_ErrorPropagates(t *testing.T) {
+// zeroed by a failed RefreshSize).
+func TestFileRefreshSize_ErrorPropagates(t *testing.T) {
 	t.Parallel()
 	gen := &server.QIDGenerator{}
 	root := memfs.NewDir(gen)
@@ -148,25 +149,25 @@ func TestFileSync_ErrorPropagates(t *testing.T) {
 	defer func() { _ = f.Close() }()
 
 	// Pre-poke cachedSize so we can assert it is NOT overwritten on
-	// error (the contract: failed Sync preserves the previous value).
+	// error (the contract: failed RefreshSize preserves the previous value).
 	client.SetCachedSize(f, 99)
-	err = f.Sync()
+	err = f.RefreshSize()
 	var ce *client.Error
 	if !errors.As(err, &ce) {
-		t.Fatalf("Sync err = %v, want *client.Error", err)
+		t.Fatalf("RefreshSize err = %v, want *client.Error", err)
 	}
 	if !errors.Is(err, proto.ENOENT) {
-		t.Fatalf("errors.Is(Sync err, ENOENT) = false, err = %v", err)
+		t.Fatalf("errors.Is(RefreshSize err, ENOENT) = false, err = %v", err)
 	}
 	if got := client.CachedSizeOf(f); got != 99 {
 		t.Errorf("post-error cachedSize = %d, want 99 (error path must preserve)", got)
 	}
 }
 
-// TestFileSync_DotU_UsesTstat: on a .u Conn, Sync issues Tstat (not
+// TestFileRefreshSize_DotU_UsesTstat: on a .u Conn, Sync issues Tstat (not
 // Tgetattr) and populates cachedSize from Stat.Length. Exercised via
 // the uMockStatServer that returns wantStat.Length == 12.
-func TestFileSync_DotU_UsesTstat(t *testing.T) {
+func TestFileRefreshSize_DotU_UsesTstat(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newUMockStatClientPair(t, wantStat)
 	defer cleanup()
@@ -178,16 +179,16 @@ func TestFileSync_DotU_UsesTstat(t *testing.T) {
 		t.Fatalf("Attach: %v", err)
 	}
 	f := client.NewFileForTest(cli)
-	if err := f.Sync(); err != nil {
-		t.Fatalf("Sync: %v", err)
+	if err := f.RefreshSize(); err != nil {
+		t.Fatalf("RefreshSize: %v", err)
 	}
 	if got := client.CachedSizeOf(f); got != 12 {
-		t.Errorf("post-Sync cachedSize = %d, want 12 (from wantStat.Length)", got)
+		t.Errorf("post-RefreshSize cachedSize = %d, want 12 (from wantStat.Length)", got)
 	}
 }
 
 // testSyncENOENT is a memfs-compatible Node whose Getattr returns
-// proto.ENOENT. Used to exercise Sync's error-propagation path.
+// proto.ENOENT. Used to exercise RefreshSize's error-propagation path.
 type testSyncENOENT struct {
 	server.Inode
 	qid proto.QID

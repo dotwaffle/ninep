@@ -736,7 +736,7 @@ func (f *File) Fid() proto.Fid
 func (f *File) Close() error
 func (f *File) Walk(ctx context.Context, names []string) (*File, error)
 func (f *File) Clone(ctx context.Context) (*File, error)
-func (f *File) Sync() error
+func (f *File) RefreshSize() error
 func (f *File) ReadDir(n int) ([]os.DirEntry, error)
 
 // io.Reader / io.Writer / io.Seeker / io.ReaderAt / io.WriterAt:

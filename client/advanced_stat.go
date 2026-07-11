@@ -86,8 +86,8 @@ func statToFileInfo(st p9u.Stat) FileInfo {
 // full [p9u.Stat] (string UID/GID, Extension).
 //
 // Stat does NOT mutate f.cachedSize -- that side effect lives in
-// [File.Sync] so [File.Seek] with [io.SeekEnd] has a predictable
-// refresh primitive.
+// [File.RefreshSize] so [File.Seek] with [io.SeekEnd] has a
+// predictable refresh primitive.
 func (f *File) Stat(ctx context.Context) (FileInfo, error) {
 	r := f.conn.Raw()
 	switch f.conn.dialect {

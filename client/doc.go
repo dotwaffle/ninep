@@ -89,11 +89,12 @@
 // [File.Seek] is a pure client-side arithmetic operation. 9P's
 // Tread/Twrite carry the offset on every request, so there is no
 // server-side seek state. SeekStart and SeekCurrent never touch the
-// wire. SeekEnd uses a cached size field populated by [File.Sync],
+// wire. SeekEnd uses a cached size field populated by [File.RefreshSize],
 // which issues Tgetattr on .L (or Tstat on .u) to refresh. Callers
 // that need SeekEnd relative to fresh size after concurrent writes
-// invoke Sync first; SeekEnd on a file whose size has not been cached
-// returns 0 for SeekEnd(0) and an error guiding the caller to Sync
+// invoke RefreshSize first; SeekEnd on a file whose size has not been
+// cached returns 0 for SeekEnd(0) and an error guiding the caller to
+// RefreshSize
 // for any negative offset.
 //
 // # Concurrency and parallelism
@@ -145,7 +146,7 @@
 //     [proto.SetAttr].Valid bitmask). (.L-only)
 //   - [File.Statfs] -- filesystem-level stats (by value, not pointer).
 //     (.L-only)
-//   - [File.Sync] -- refresh the File's cachedSize from the server
+//   - [File.RefreshSize] -- refresh the File's cachedSize from the server
 //     (Tgetattr on .L, Tstat on .u); backs Seek(SeekEnd) after
 //     concurrent writes.
 //

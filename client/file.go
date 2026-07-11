@@ -67,7 +67,7 @@ type File struct {
 
 	mu     sync.Mutex // serializes Read/Write/ReadAt/WriteAt; guards offset + cachedSize + readdirOffset
 	offset int64      // local seek offset
-	// cachedSize is consulted by Seek(SeekEnd); populated by File.Sync
+	// cachedSize is consulted by Seek(SeekEnd); populated by File.RefreshSize
 	// via Tgetattr/Tstat.
 	cachedSize int64
 	// readdirOffset is the Treaddir Offset field for the NEXT
@@ -400,9 +400,9 @@ func (f *File) Write(p []byte) (int, error) {
 //   - [io.SeekCurrent]: offset is relative to the current position.
 //   - [io.SeekEnd]:     offset is relative to the file's size, read
 //     from f.cachedSize. cachedSize defaults to 0 and is populated by
-//     [File.Sync]; before Sync runs SeekEnd(0) returns 0 (correct for
+//     [File.RefreshSize]; before it runs SeekEnd(0) returns 0 (correct for
 //     an empty file) and SeekEnd(-n) for n > 0 returns a "negative
-//     position" error with guidance to call File.Sync first.
+//     position" error with guidance to call File.RefreshSize first.
 //
 // Returns an error when the computed absolute position is negative.
 // Seeking past the end of the file is allowed and does not error --
@@ -430,7 +430,7 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 	}
 	if abs < 0 {
 		if whence == io.SeekEnd && f.cachedSize == 0 {
-			return f.offset, fmt.Errorf("client: negative position %d; SeekEnd requires File.Sync to populate size", abs)
+			return f.offset, fmt.Errorf("client: negative position %d; SeekEnd requires File.RefreshSize to populate size", abs)
 		}
 		return f.offset, fmt.Errorf("client: negative position %d", abs)
 	}
@@ -506,34 +506,6 @@ func (f *File) ReadAt(p []byte, off int64) (int, error) {
 	ctx, cancel := f.conn.opCtx(context.Background())
 	defer cancel()
 	return f.ReadAtCtx(ctx, p, off)
-}
-
-// Sync refreshes this File's cached size from the server by issuing
-// Tgetattr (.L) or Tstat (.u). Callers that use [File.Seek] with
-// [io.SeekEnd] on a file whose size may have changed server-side (e.g.
-// concurrent writers, or a truncate via another fid) call Sync first
-// so the subsequent SeekEnd returns a current value.
-//
-// Sync uses a bounded background context; for caller-controlled
-// cancellation use [File.Stat] directly (which takes a ctx and
-// returns the size via the returned [p9u.Stat] without mutating
-// f.cachedSize).
-//
-// Sync is not a cache refresh in the "only do it if stale" sense:
-// every call issues a fresh wire op. Callers that want a cheap
-// SeekEnd after a known-static file was attached should cache the
-// post-Sync size themselves.
-//
-// On error, f.cachedSize is NOT modified - the previous successful
-// value (or the zero-value initial state) is preserved. This keeps
-// a file whose first Sync succeeded but whose second Sync fails
-// transiently usable for SeekEnd against the earlier size.
-//
-// Satisfies the common [io.Syncer]-like shape (no ctx) matching
-// [os.File.Sync]. The internal syncImpl lives in client/sync.go; the
-// body here is the one-line dispatch.
-func (f *File) Sync() error {
-	return f.syncImpl()
 }
 
 // ReadDir reads directory entries from this File, which must have been
