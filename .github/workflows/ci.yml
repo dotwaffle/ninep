@@ -130,7 +130,7 @@ jobs:
           key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
           restore-keys: ${{ runner.os }}-gomod-
 
-      # Per-matrix-leg key: the four legs run in parallel and build
+      # Per-matrix-leg key: the five legs run in parallel and build
       # different packages, so a shared key would re-introduce
       # first-writer-wins among them.
       - uses: actions/cache@v5
@@ -147,7 +147,7 @@ jobs:
       # can be downloaded and committed as a permanent regression seed.
       - name: Upload fuzz crasher
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-crasher-${{ matrix.name }}
           path: '**/testdata/fuzz/**'
@@ -226,6 +226,45 @@ jobs:
             exit 1
           fi
 
+  kernel-mount:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Load 9P kernel modules
+        run: |
+          sudo modprobe 9p
+          sudo modprobe 9pnet
+
+      - name: Kernel mount tests (must not skip)
+        run: |
+          set -eo pipefail
+          sudo --preserve-env=PATH go test -tags=integration -count=1 -v ./server/passthrough -run '^TestKernelMount' | tee kernel-mount.out
+          if grep -q -- '--- SKIP' kernel-mount.out; then
+            echo "::error::kernel mount tests skipped; v9fs mount support not active on runner"
+            exit 1
+          fi
+
+  freebsd-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Passthrough tests on FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          copyback: false
+          prepare: pkg install -y go
+          run: go test -count=1 ./server/passthrough
+
   benchmark:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -273,6 +312,8 @@ jobs:
         include:
           - goos: freebsd
             goarch: amd64
+          - goos: freebsd
+            goarch: arm64
           - goos: darwin
             goarch: amd64
           - goos: windows
