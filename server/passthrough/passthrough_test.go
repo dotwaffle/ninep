@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -310,6 +311,21 @@ func TestCustomUIDMapper(t *testing.T) {
 	}
 }
 
+func TestNewRootRejectsIncompleteUIDMapper(t *testing.T) {
+	t.Parallel()
+	for _, mapper := range []UIDMapper{
+		{},
+		{ToHost: IdentityMapper().ToHost},
+		{FromHost: IdentityMapper().FromHost},
+	} {
+		root, err := NewRoot(t.TempDir(), WithUIDMapper(mapper))
+		if err == nil {
+			_ = root.Close(t.Context())
+			t.Fatal("NewRoot succeeded with incomplete UID mapper")
+		}
+	}
+}
+
 func TestFileHandle_ReadWrite(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -607,6 +623,44 @@ func TestLookupOpen_UsesResolvedFD(t *testing.T) {
 	}
 	if got := string(buf[:n]); got != "safe" {
 		t.Fatalf("Read = %q, want pinned content %q", got, "safe")
+	}
+}
+
+func TestLinkUsesResolvedSource(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "source")
+	if err := os.WriteFile(sourcePath, []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	root, err := NewRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close(t.Context()) })
+
+	target, err := root.Lookup(t.Context(), "source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetNode := target.(*Node)
+	t.Cleanup(func() { _ = targetNode.Close(t.Context()) })
+
+	if err := os.Rename(sourcePath, filepath.Join(dir, "moved")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourcePath, []byte("replacement"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Link(t.Context(), target, "hardlink"); err != nil {
+		t.Fatalf("Link: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "hardlink"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); got != "original" {
+		t.Fatalf("hardlink data = %q, want %q", got, "original")
 	}
 }
 
@@ -1109,6 +1163,30 @@ func TestReaddir(t *testing.T) {
 	}
 }
 
+func TestOpenDirectoryReturnsRawReaddirHandle(t *testing.T) {
+	t.Parallel()
+	root, err := NewRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close(t.Context()) })
+
+	handle, _, err := root.Open(t.Context(), unix.O_RDONLY)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, ok := handle.(server.FileRawReaddirer); !ok {
+		t.Fatalf("directory handle = %T, want server.FileRawReaddirer", handle)
+	}
+	releaser, ok := handle.(server.FileReleaser)
+	if !ok {
+		t.Fatalf("directory handle = %T, want server.FileReleaser", handle)
+	}
+	if err := releaser.Release(t.Context()); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+}
+
 func TestLock_NonBlocking(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -1212,7 +1290,7 @@ type connPair struct {
 func newConnPair(t *testing.T, root server.Node) *connPair {
 	t.Helper()
 
-	srv := server.New(root,
+	srv := server.MustNew(root,
 		server.WithMaxMsize(65536),
 		server.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 	)
@@ -1471,6 +1549,51 @@ func TestProtocol_Readdir(t *testing.T) {
 	}
 	if len(rd.Data) == 0 {
 		t.Fatal("readdir returned no data")
+	}
+}
+
+func TestProtocol_ReaddirPagination(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for i := range 20 {
+		name := fmt.Sprintf("entry-%02d", i)
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root, err := NewRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp := newConnPair(t, root)
+	defer cp.close(t)
+	attach(t, cp, 1, 0)
+	sendMessage(t, cp.client, 2, &p9l.Tlopen{Fid: 0, Flags: syscall.O_RDONLY})
+	_, _ = readResponse(t, cp.client)
+
+	names := map[string]bool{}
+	var offset uint64
+	for tag := proto.Tag(3); ; tag++ {
+		sendMessage(t, cp.client, tag, &p9l.Treaddir{Fid: 0, Offset: offset, Count: 40})
+		_, msg := readResponse(t, cp.client)
+		response, ok := msg.(*p9l.Rreaddir)
+		if !ok {
+			t.Fatalf("expected Rreaddir, got %T", msg)
+		}
+		if len(response.Data) == 0 {
+			break
+		}
+		entries, err := proto.ParseDirents(response.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			names[entry.Name] = true
+			offset = entry.Offset
+		}
+	}
+	if len(names) != 20 {
+		t.Fatalf("read %d unique entries, want 20", len(names))
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/server"
 )
 
@@ -15,10 +16,12 @@ import (
 
 // Compile-time assertions that fileHandle implements the server file handle interfaces.
 var (
-	_ server.FileReader   = (*fileHandle)(nil)
-	_ server.FileWriter   = (*fileHandle)(nil)
-	_ server.FileReleaser = (*fileHandle)(nil)
-	_ server.FileSyncer   = (*fileHandle)(nil)
+	_ server.FileReader       = (*fileHandle)(nil)
+	_ server.FileWriter       = (*fileHandle)(nil)
+	_ server.FileReleaser     = (*fileHandle)(nil)
+	_ server.FileSyncer       = (*fileHandle)(nil)
+	_ server.FileRawReaddirer = (*dirHandle)(nil)
+	_ server.FileReleaser     = (*dirHandle)(nil)
 )
 
 // Read reads up to len(buf) bytes starting at offset using Pread.
@@ -49,4 +52,28 @@ func (h *fileHandle) Release(_ context.Context) error {
 // unix.Fsync on the reopened fd. Returns a proto.Errno on failure.
 func (h *fileHandle) Fsync(_ context.Context) error {
 	return toProtoErr(unix.Fsync(h.fd))
+}
+
+// RawReaddir streams one bounded native directory chunk into the caller's 9P
+// response buffer. The native offset cookie allows a later request to resume
+// without retaining the directory listing in server memory.
+func (h *dirHandle) RawReaddir(_ context.Context, buf []byte, offset uint64) (int, error) {
+	const maxOffset = uint64(1<<63 - 1)
+	if offset > maxOffset {
+		return 0, proto.EINVAL
+	}
+	if _, err := unix.Seek(h.fd, int64(offset), 0); err != nil {
+		return 0, toProtoErr(err)
+	}
+	var raw [8192]byte
+	n, err := unix.Getdents(h.fd, raw[:])
+	if err != nil {
+		return 0, toProtoErr(err)
+	}
+	encoded, _ := proto.EncodeDirentsInto(buf, parseDirents(raw[:n]))
+	return encoded, nil
+}
+
+func (h *dirHandle) Release(_ context.Context) error {
+	return toProtoErr(unix.Close(h.fd))
 }

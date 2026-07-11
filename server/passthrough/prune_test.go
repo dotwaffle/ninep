@@ -26,7 +26,7 @@ import (
 func newPruneTestServer(t *testing.T, root *Root) (*client.Conn, func()) {
 	t.Helper()
 
-	srv := server.New(root)
+	srv := server.MustNew(root)
 	cliNC, srvNC := net.Pipe()
 
 	runCtx, runCancel := context.WithTimeout(t.Context(), 5*time.Second)

@@ -12,32 +12,21 @@ import (
 )
 
 // Link creates a hard link named name in this directory pointing to target.
-//
-// Hard-link creation is namespace-based on FreeBSD. The source parent
-// descriptor keeps resolution inside the original directory, while the source
-// name selects the entry that exists when Link runs.
 func (n *Node) Link(_ context.Context, target server.Node, name string) error {
 	if n.QID().Type != proto.QTDIR {
 		return proto.ENOTDIR
 	}
 
-	var srcParentFd int
-	var srcName string
+	var source *Node
 	switch t := target.(type) {
 	case *Node:
-		srcParentFd = t.parentFd
-		srcName = t.name
+		source = t
 	case *Root:
-		srcParentFd = t.parentFd
-		srcName = t.name
+		source = &t.Node
 	default:
 		return proto.EINVAL
 	}
-	if srcParentFd == 0 || srcName == "" {
-		return proto.EINVAL
-	}
-
-	if err := unix.Linkat(srcParentFd, srcName, n.fd, name, 0); err != nil {
+	if err := source.linkResolved(n.fd, name); err != nil {
 		return toProtoErr(err)
 	}
 	return nil

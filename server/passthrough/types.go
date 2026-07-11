@@ -13,9 +13,9 @@ import (
 // syscalls. For directories, the fd is opened with O_RDONLY|O_DIRECTORY. For
 // other files, the fd is opened with oPath|O_NOFOLLOW.
 //
-// parentFd and name are stored for nodes that need parent-anchored *at calls
-// (Readlink, Link, Setattr Lchown/UtimesNanoAt) and for platforms that cannot
-// reopen a file from the held descriptor. parentFd is the node's OWN
+// parentFd and name support FreeBSD operations that cannot be issued against
+// O_PATH directly. Those fallbacks verify the named entry against the held
+// descriptor's device and inode. parentFd is the node's own
 // duplicate of the parent directory's fd (see childNode), not the parent
 // node's fd number: the parent node can be clunked -- closing its fd -- while
 // this node lives on, and a borrowed number would then be stale or, worse,
@@ -39,7 +39,7 @@ type Node struct {
 }
 
 // Root is the top-level node of a passthrough filesystem. It wraps a Node
-// with configuration (host path, UID mapper). Create with NewRoot.
+// with its UID mapper and security options. Create with NewRoot.
 //
 // dev and ino record the export root directory's identity so Lookup can clamp
 // ".." at the root: any node whose directory matches (dev, ino) resolves ".."
@@ -73,6 +73,10 @@ func WithDeviceNodes() Option {
 // fileHandle wraps an OS file descriptor for per-open read/write operations
 // using Pread/Pwrite for offset-based I/O without shared seek position.
 type fileHandle struct {
+	fd int
+}
+
+type dirHandle struct {
 	fd int
 }
 

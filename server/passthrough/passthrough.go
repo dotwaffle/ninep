@@ -4,6 +4,7 @@ package passthrough
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"golang.org/x/sys/unix"
@@ -34,6 +35,10 @@ func NewRoot(hostPath string, opts ...Option) (*Root, error) {
 	}
 	for _, opt := range opts {
 		opt(r)
+	}
+	if r.mapper.ToHost == nil || r.mapper.FromHost == nil {
+		_ = unix.Close(fd)
+		return nil, errors.New("passthrough: UID mapper callbacks must not be nil")
 	}
 
 	r.root = r
@@ -129,13 +134,15 @@ var (
 	_ server.NodeStatFSer  = (*Node)(nil)
 )
 
-// Open opens the node. For directories, returns nil (readdir uses the
-// NodeReaddirer interface). For non-directories, opens a fresh fd from the
-// resolved node reference so a later directory-entry replacement cannot
-// redirect the open.
+// Open opens the node. Directories receive a cursor-bearing raw readdir
+// handle; other nodes receive an offset-based data handle.
 func (n *Node) Open(_ context.Context, flags uint32) (server.FileHandle, uint32, error) {
 	if n.QID().Type == proto.QTDIR {
-		return nil, 0, nil
+		fd, err := n.openResolved(unix.O_RDONLY | unix.O_DIRECTORY)
+		if err != nil {
+			return nil, 0, toProtoErr(err)
+		}
+		return &dirHandle{fd: fd}, 0, nil
 	}
 	fd, err := n.openResolved(flags)
 	if err != nil {

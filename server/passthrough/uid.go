@@ -7,10 +7,8 @@ package passthrough
 // like Setattr). FromHost maps OS UIDs to protocol UIDs (used for operations
 // like Getattr).
 //
-// Both ToHost and FromHost MUST be non-nil. Passing a UIDMapper with
-// either field nil via WithUIDMapper is a programming error and will
-// panic the first time a UID/GID translation is attempted. Use
-// IdentityMapper() for the identity-mapping default.
+// Both ToHost and FromHost must be non-nil. NewRoot rejects an incomplete
+// mapper. Use IdentityMapper for the identity-mapping default.
 type UIDMapper struct {
 	// ToHost maps 9P UIDs to host OS UIDs. Required (non-nil).
 	ToHost func(uid, gid uint32) (uint32, uint32)

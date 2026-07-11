@@ -37,6 +37,7 @@ func parseDirents(buf []byte) []proto.Dirent {
 
 	for len(buf) >= headerLen {
 		ino := binary.LittleEndian.Uint64(buf[0:8])
+		offset := binary.LittleEndian.Uint64(buf[8:16])
 		reclen := binary.LittleEndian.Uint16(buf[16:18])
 		dtype := buf[18]
 		namlen := binary.LittleEndian.Uint16(buf[20:22])
@@ -55,8 +56,9 @@ func parseDirents(buf []byte) []proto.Dirent {
 					Type: dtypeToQIDType(dtype),
 					Path: ino,
 				},
-				Type: dtype,
-				Name: name,
+				Offset: offset,
+				Type:   dtype,
+				Name:   name,
 			})
 		}
 		buf = buf[reclen:]

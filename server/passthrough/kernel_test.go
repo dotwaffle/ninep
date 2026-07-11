@@ -39,7 +39,7 @@ func mountV9FS(t *testing.T, root *Root) string {
 		t.Fatalf("listen unix %s: %v", sockPath, err)
 	}
 
-	srv := server.New(root, server.WithMaxMsize(65536))
+	srv := server.MustNew(root, server.WithMaxMsize(65536))
 
 	errCh := make(chan error, 1)
 	go func() {

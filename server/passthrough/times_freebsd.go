@@ -11,6 +11,12 @@ func (n *Node) setTimesResolved(ts []unix.Timespec) error {
 		var err error
 		fd, err = n.openResolved(unix.O_RDONLY)
 		if err != nil {
+			if err == unix.ELOOP {
+				if err := n.verifyNamedIdentity(); err != nil {
+					return err
+				}
+				return unix.UtimesNanoAt(n.parentFd, n.name, ts, unix.AT_SYMLINK_NOFOLLOW)
+			}
 			return err
 		}
 		closeFD = true

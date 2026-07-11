@@ -8,11 +8,11 @@
 //
 // # Platform support
 //
-// This package supports Linux and FreeBSD. Both ports use the *at syscall
-// family for inode-anchored access control. The security model is identical:
-// every Node holds an O_PATH fd (O_RDONLY|O_DIRECTORY for directories) rooted
-// at a specific inode, and every name-based operation goes through
-// (parentFd, name) anchored *at calls.
+// This package supports Linux and FreeBSD. Every node holds an O_PATH fd
+// (O_RDONLY|O_DIRECTORY for directories) that defines its identity. Linux can
+// operate directly through that descriptor. Where FreeBSD requires a
+// namespace lookup, the implementation resolves through a held parent and
+// verifies device and inode before operating.
 //
 // On FreeBSD/{amd64,arm64,arm,386} the O_PATH flag is sourced from a local
 // constant rather than golang.org/x/sys (which doesn't yet export it for
