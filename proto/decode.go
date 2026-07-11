@@ -25,17 +25,18 @@ func ReadUint8(r io.Reader) (uint8, error) {
 }
 
 // ReadUint16 reads a little-endian uint16 from r.
+// The *bytes.Reader fast path calls Read on the concrete type: the buffer
+// does not escape through an interface, so it stays on the stack.
 func ReadUint16(r io.Reader) (uint16, error) {
 	if br, ok := r.(*bytes.Reader); ok {
+		var buf [2]byte
 		if br.Len() == 0 {
 			return 0, io.EOF
 		}
-		if br.Len() < 2 {
+		if n, _ := br.Read(buf[:]); n < 2 {
 			return 0, io.ErrUnexpectedEOF
 		}
-		b0, _ := br.ReadByte()
-		b1, _ := br.ReadByte()
-		return uint16(b0) | uint16(b1)<<8, nil
+		return binary.LittleEndian.Uint16(buf[:]), nil
 	}
 	var buf [2]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
@@ -45,19 +46,17 @@ func ReadUint16(r io.Reader) (uint16, error) {
 }
 
 // ReadUint32 reads a little-endian uint32 from r.
+// See ReadUint16 for the fast-path rationale.
 func ReadUint32(r io.Reader) (uint32, error) {
 	if br, ok := r.(*bytes.Reader); ok {
+		var buf [4]byte
 		if br.Len() == 0 {
 			return 0, io.EOF
 		}
-		if br.Len() < 4 {
+		if n, _ := br.Read(buf[:]); n < 4 {
 			return 0, io.ErrUnexpectedEOF
 		}
-		b0, _ := br.ReadByte()
-		b1, _ := br.ReadByte()
-		b2, _ := br.ReadByte()
-		b3, _ := br.ReadByte()
-		return uint32(b0) | uint32(b1)<<8 | uint32(b2)<<16 | uint32(b3)<<24, nil
+		return binary.LittleEndian.Uint32(buf[:]), nil
 	}
 	var buf [4]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
@@ -67,24 +66,17 @@ func ReadUint32(r io.Reader) (uint32, error) {
 }
 
 // ReadUint64 reads a little-endian uint64 from r.
+// See ReadUint16 for the fast-path rationale.
 func ReadUint64(r io.Reader) (uint64, error) {
 	if br, ok := r.(*bytes.Reader); ok {
+		var buf [8]byte
 		if br.Len() == 0 {
 			return 0, io.EOF
 		}
-		if br.Len() < 8 {
+		if n, _ := br.Read(buf[:]); n < 8 {
 			return 0, io.ErrUnexpectedEOF
 		}
-		b0, _ := br.ReadByte()
-		b1, _ := br.ReadByte()
-		b2, _ := br.ReadByte()
-		b3, _ := br.ReadByte()
-		b4, _ := br.ReadByte()
-		b5, _ := br.ReadByte()
-		b6, _ := br.ReadByte()
-		b7, _ := br.ReadByte()
-		return uint64(b0) | uint64(b1)<<8 | uint64(b2)<<16 | uint64(b3)<<24 |
-			uint64(b4)<<32 | uint64(b5)<<40 | uint64(b6)<<48 | uint64(b7)<<56, nil
+		return binary.LittleEndian.Uint64(buf[:]), nil
 	}
 	var buf [8]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
