@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/dotwaffle/ninep/internal/protometa"
 	"github.com/dotwaffle/ninep/proto"
@@ -65,23 +66,6 @@ func newOTelInstruments(mp metric.MeterProvider) (*otelInstruments, error) {
 	}, nil
 }
 
-// probeMeter latches c.meterEnabled from a one-time Enabled() probe of the
-// configured meter provider, a cheap gate the metric path uses to skip
-// attribute computation. The tracer is deliberately NOT probed: a sampler's
-// decision is per-span, so caching one probe span's IsRecording would freeze
-// the sampling decision for the connection's whole life (dropping every span,
-// or recording every span, regardless of the sampler). startSpan instead calls
-// the tracer on each operation and lets the SDK sampler decide.
-func (c *Conn) probeMeter(cfg *config) {
-	if cfg.meterProvider != nil {
-		meter := cfg.meterProvider.Meter(instrumentationName)
-		counter, err := meter.Int64Counter("probe")
-		if err == nil {
-			c.meterEnabled = counter.Enabled(context.Background())
-		}
-	}
-}
-
 func (c *Conn) startSpan(ctx context.Context, opName string, msg proto.Message) (context.Context, trace.Span) {
 	if c.tracer == nil {
 		// Return a dedicated no-op span, not whatever span is already in
@@ -113,24 +97,26 @@ func (c *Conn) startSpan(ctx context.Context, opName string, msg proto.Message) 
 // already computed, avoiding a re-encode. frameSize is header + body + payload;
 // the metric counts the message body, matching the prior EncodeTo-based count.
 func (c *Conn) recordRequestSize(ctx context.Context, frameSize uint32) {
-	if !c.meterEnabled {
+	if c.inst == nil || !c.inst.reqSize.Enabled(ctx) {
 		return
 	}
 	c.inst.reqSize.Add(ctx, int64(frameSize)-int64(proto.HeaderSize))
 }
 
-func (c *Conn) recordResponse(ctx context.Context, opType proto.MessageType, elapsed float64, resp proto.Message) {
-	if !c.meterEnabled {
+func (c *Conn) recordResponse(ctx context.Context, opType proto.MessageType, start time.Time, resp proto.Message) {
+	if c.inst == nil {
 		return
 	}
 
-	opt, ok := c.opNameAttrs[opType]
-	if !ok {
-		opt = metric.WithAttributes(attribute.String("rpc.method", opType.String()))
+	if !start.IsZero() && c.inst.duration.Enabled(ctx) {
+		opt, ok := c.opNameAttrs[opType]
+		if !ok {
+			opt = metric.WithAttributes(attribute.String("rpc.method", opType.String()))
+		}
+		c.inst.duration.Record(ctx, time.Since(start).Seconds(), opt)
 	}
-	c.inst.duration.Record(ctx, elapsed, opt)
 
-	if resp != nil {
+	if resp != nil && c.inst.respSize.Enabled(ctx) {
 		var respBytes proto.ByteCounter
 		if err := resp.EncodeTo(&respBytes); err == nil {
 			c.inst.respSize.Add(ctx, int64(respBytes))
@@ -138,17 +124,21 @@ func (c *Conn) recordResponse(ctx context.Context, opType proto.MessageType, ela
 	}
 }
 
-func (c *Conn) recordZCResponse(ctx context.Context, opType proto.MessageType, elapsed float64, n int) {
-	if !c.meterEnabled {
+func (c *Conn) recordZCResponse(ctx context.Context, opType proto.MessageType, start time.Time, n int) {
+	if c.inst == nil {
 		return
 	}
 
-	opt, ok := c.opNameAttrs[opType]
-	if !ok {
-		opt = metric.WithAttributes(attribute.String("rpc.method", opType.String()))
+	if !start.IsZero() && c.inst.duration.Enabled(ctx) {
+		opt, ok := c.opNameAttrs[opType]
+		if !ok {
+			opt = metric.WithAttributes(attribute.String("rpc.method", opType.String()))
+		}
+		c.inst.duration.Record(ctx, time.Since(start).Seconds(), opt)
 	}
-	c.inst.duration.Record(ctx, elapsed, opt)
-	c.inst.respSize.Add(ctx, int64(n))
+	if c.inst.respSize.Enabled(ctx) {
+		c.inst.respSize.Add(ctx, int64(n))
+	}
 }
 
 func (c *Conn) recordError(span trace.Span, err error) {

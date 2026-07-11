@@ -86,11 +86,57 @@ func TestOTelMiddlewareSpanCreation(t *testing.T) {
 	sendMessage(t, nc, 1, tattach)
 	_, _ = readResponse(t, nc)
 
-	// Verify spans
-	spans := exporter.GetSpans()
-	if len(spans) < 2 {
-		t.Errorf("got %d spans, want >= 2", len(spans))
+	for _, span := range exporter.GetSpans() {
+		if span.Name == "Tattach" {
+			return
+		}
 	}
+	t.Fatal("Tattach span not recorded")
+}
+
+func TestOTelConstructionDoesNotEmitProbeSpan(t *testing.T) {
+	t.Parallel()
+	tp, exporter := NewTestTracerProvider(t)
+	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
+	if _, err := New(root, WithTracer(tp)); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for _, span := range exporter.GetSpans() {
+		if span.Name == "probe" {
+			t.Fatal("server construction emitted a probe span")
+		}
+	}
+}
+
+func TestOTelMiddlewareRespectsParentSampling(t *testing.T) {
+	t.Parallel()
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSyncer(exporter),
+		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.NeverSample())),
+	)
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	root := newDirNode(proto.QID{Type: proto.QTDIR, Path: 1})
+	srv := MustNew(root, WithTracer(tp))
+
+	parentTP := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	t.Cleanup(func() { _ = parentTP.Shutdown(context.Background()) })
+	serveCtx, parent := parentTP.Tracer("test").Start(t.Context(), "parent")
+	defer parent.End()
+
+	clientConn, serverConn := otelConnPair(t)
+	go srv.ServeConn(serveCtx, serverConn)
+	sendTversion(t, clientConn, 65536, "9P2000.L")
+	_ = readRversion(t, clientConn)
+	sendMessage(t, clientConn, 1, &proto.Tattach{Fid: 0, Afid: proto.NoFid})
+	_, _ = readResponse(t, clientConn)
+
+	for _, span := range exporter.GetSpans() {
+		if span.Name == "Tattach" {
+			return
+		}
+	}
+	t.Fatal("Tattach span was dropped despite its sampled parent")
 }
 
 // setupOTelTest creates a Server with OTel tracing and metrics, starts serving
@@ -770,25 +816,18 @@ func TestWithTracerAndWithMeterOptions(t *testing.T) {
 	}
 }
 
-// TestServerNoopDetection verifies probeOTelProviders correctly populates
-// s.tracerRecording and s.meterEnabled across the matrix of configurations
-// the server may encounter.
-func TestServerNoopDetection(t *testing.T) {
+func TestServerTelemetryConfiguration(t *testing.T) {
 	t.Parallel()
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
 
 	cases := []struct {
-		name             string
-		opts             []Option
-		wantRecording    bool
-		wantMeterEnabled bool
+		name          string
+		opts          []Option
+		wantInstalled bool
 	}{
 		{
-			name:             "no_options_both_nil",
-			opts:             nil,
-			wantRecording:    false,
-			wantMeterEnabled: false,
+			name: "no options",
 		},
 		{
 			name: "both_noop_package_providers",
@@ -796,8 +835,7 @@ func TestServerNoopDetection(t *testing.T) {
 				WithTracer(tracenoop.NewTracerProvider()),
 				WithMeter(metricnoop.NewMeterProvider()),
 			},
-			wantRecording:    false,
-			wantMeterEnabled: false,
+			wantInstalled: true,
 		},
 		{
 			name: "both_global_defaults_pre_sdk",
@@ -805,23 +843,15 @@ func TestServerNoopDetection(t *testing.T) {
 				WithTracer(otel.GetTracerProvider()),
 				WithMeter(otel.GetMeterProvider()),
 			},
-			wantRecording:    false,
-			wantMeterEnabled: false,
+			wantInstalled: true,
 		},
 		{
 			name: "both_sdk_providers",
 			opts: []Option{
 				WithTracer(sdktrace.NewTracerProvider()),
-				// A MeterProvider with NO reader reports Enabled()==false
-				// because there is no consumer to process measurements --
-				// OTel's SDK treats a reader-less provider as effectively
-				// a noop. Wire a ManualReader so the probe sees the SDK
-				// as enabled (the real deployment case where a reader is
-				// always attached).
 				WithMeter(sdkmetric.NewMeterProvider(sdkmetric.WithReader(sdkmetric.NewManualReader()))),
 			},
-			wantRecording:    true,
-			wantMeterEnabled: true,
+			wantInstalled: true,
 		},
 		{
 			name: "real_tracer_noop_meter",
@@ -829,8 +859,7 @@ func TestServerNoopDetection(t *testing.T) {
 				WithTracer(sdktrace.NewTracerProvider()),
 				WithMeter(metricnoop.NewMeterProvider()),
 			},
-			wantRecording:    true,
-			wantMeterEnabled: false,
+			wantInstalled: true,
 		},
 	}
 
@@ -839,20 +868,15 @@ func TestServerNoopDetection(t *testing.T) {
 			t.Parallel()
 			root := newDirNode(rootQID)
 			srv := MustNew(root, append([]Option{WithLogger(discardLogger())}, tc.opts...)...)
-			if srv.tracerRecording != tc.wantRecording {
-				t.Errorf("tracerRecording = %v, want %v", srv.tracerRecording, tc.wantRecording)
-			}
-			if srv.meterEnabled != tc.wantMeterEnabled {
-				t.Errorf("meterEnabled = %v, want %v", srv.meterEnabled, tc.wantMeterEnabled)
+			installed := srv.otelCore != nil && srv.connInst != nil
+			if installed != tc.wantInstalled {
+				t.Errorf("telemetry installed = %v, want %v", installed, tc.wantInstalled)
 			}
 		})
 	}
 }
 
-// TestOTelNoopShortCircuit verifies the short-circuit path: when both
-// providers are noop, no OTel middleware is installed on a new conn's
-// handler chain and c.otelInst stays nil.
-func TestOTelNoopShortCircuit(t *testing.T) {
+func TestOTelExplicitNoopProvidersInstall(t *testing.T) {
 	t.Parallel()
 
 	rootQID := proto.QID{Type: proto.QTDIR, Version: 0, Path: 1}
@@ -864,25 +888,14 @@ func TestOTelNoopShortCircuit(t *testing.T) {
 		WithMeter(metricnoop.NewMeterProvider()),
 	)
 
-	// Probe results must be false -- both providers are noop.
-	if srv.tracerRecording {
-		t.Errorf("tracerRecording = true, want false (noop tracer)")
-	}
-	if srv.meterEnabled {
-		t.Errorf("meterEnabled = true, want false (noop meter)")
-	}
-
-	// Build a conn via newConn (the install site) and verify c.otelInst
-	// is nil -- the connOTelInstruments are only created inside the
-	// install gate, so a nil otelInst proves the gate did not fire.
 	client, server := net.Pipe()
 	t.Cleanup(func() {
 		_ = client.Close()
 		_ = server.Close()
 	})
 	c := newConn(srv, server)
-	if c.otelInst != nil {
-		t.Errorf("c.otelInst = %+v, want nil (short-circuit should skip install)", c.otelInst)
+	if c.otelInst == nil {
+		t.Fatal("explicit no-op providers did not install telemetry middleware")
 	}
 }
 
@@ -910,10 +923,7 @@ func TestOTelPartialNoopInstalls(t *testing.T) {
 			name: "noop_tracer_real_meter",
 			opts: []Option{
 				WithTracer(tracenoop.NewTracerProvider()),
-				// A reader-less sdkmetric.MeterProvider reports
-				// Enabled()==false, making it indistinguishable from a
-				// noop meter. Wire a ManualReader so the probe sees the
-				// SDK meter as enabled.
+				// A ManualReader supplies a real metric consumer.
 				WithMeter(sdkmetric.NewMeterProvider(sdkmetric.WithReader(sdkmetric.NewManualReader()))),
 			},
 		},

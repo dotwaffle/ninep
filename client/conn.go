@@ -127,11 +127,9 @@ type Conn struct {
 	// defaultFlushGrace; an internal field so tests can shorten it.
 	flushGrace time.Duration
 
-	tracer       trace.Tracer
-	meter        metric.Meter
-	inst         *otelInstruments
-	opNameAttrs  map[proto.MessageType]metric.MeasurementOption
-	meterEnabled bool
+	tracer      trace.Tracer
+	inst        *otelInstruments
+	opNameAttrs map[proto.MessageType]metric.MeasurementOption
 
 	// raw is the wire surface returned by [Conn.Raw]; embedding it here
 	// keeps Raw() allocation-free. Its back-pointer is set once in Dial.

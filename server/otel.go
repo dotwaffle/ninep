@@ -85,8 +85,7 @@ type otelCore struct {
 	outcomeAttrs map[proto.MessageType][2]metric.MeasurementOption
 }
 
-// newOTelCore builds the shared OTel state from the configured providers.
-// Called once from server.New when either probe reported a live provider.
+// newOTelCore builds shared OTel state from explicitly configured providers.
 func newOTelCore(tp trace.TracerProvider, mp metric.MeterProvider) (*otelCore, error) {
 	meter := mp.Meter(instrumentationName)
 	duration, err := meter.Float64Histogram("ninep.server.duration",
@@ -250,44 +249,6 @@ func (o *otelCore) middleware(c *conn) Middleware {
 	}
 }
 
-// probeOTelProviders populates s.tracerRecording and s.meterEnabled via a
-// one-time probe of the configured providers. Called exactly once from
-// server.New after options apply and after nil providers have been filled
-// with noop defaults. Probe objects (span + counter) are discarded
-// immediately; only the two booleans are retained.
-//
-// The probe creates a span with instrumentationName scope and an
-// Int64Counter named "probe" in the same scope. If a real OTel SDK is later
-// installed via otel.SetTracerProvider / otel.SetMeterProvider AFTER
-// server.New returns, the probe instrument may surface as a zero-valued
-// "probe" counter under the ninep scope. This is acceptable because
-// consumers wire OTel BEFORE server.New, so in practice the probe
-// never reaches a real SDK. Re-probing to handle post-New provider
-// swaps is explicitly deferred.
-//
-// Preconditions: s.tracerProvider and s.meterProvider MUST be non-nil. The
-// caller (New) ensures this.
-func probeOTelProviders(s *Server) {
-	// Tracer probe: IsRecording() is false for both noop.NewTracerProvider()
-	// and otel.GetTracerProvider() before any SDK is installed.
-	tracer := s.tracerProvider.Tracer(instrumentationName)
-	_, span := tracer.Start(context.Background(), "probe")
-	s.tracerRecording = span.IsRecording()
-	span.End()
-
-	// Meter probe: Enabled(ctx) is false for both noop.NewMeterProvider()
-	// and otel.GetMeterProvider() before any SDK is installed. Stable API
-	// since OTel v1.40.0.
-	meter := s.meterProvider.Meter(instrumentationName)
-	counter, err := meter.Int64Counter("probe")
-	if err != nil {
-		// Int64Counter only errors on invalid names; "probe" is valid.
-		// Defensive: leave meterEnabled at its zero value (false).
-		return
-	}
-	s.meterEnabled = counter.Enabled(context.Background())
-}
-
 // requestMessageTypes lists every T-message type the server may dispatch.
 // Used by buildOpNameAttrs to pre-build the metric.MeasurementOption cache.
 // Responses (R-prefixed types) and Tlerror (never sent on the wire) are
@@ -410,7 +371,10 @@ func (o *connOTelInstruments) recordConnChange(delta int64) {
 	if o == nil {
 		return
 	}
-	o.connGauge.Add(context.Background(), delta)
+	ctx := context.Background()
+	if o.connGauge.Enabled(ctx) {
+		o.connGauge.Add(ctx, delta)
+	}
 }
 
 // recordFidChange records a fid count change (+1 or -1).
@@ -418,7 +382,10 @@ func (o *connOTelInstruments) recordFidChange(delta int64) {
 	if o == nil {
 		return
 	}
-	o.fidGauge.Add(context.Background(), delta)
+	ctx := context.Background()
+	if o.fidGauge.Enabled(ctx) {
+		o.fidGauge.Add(ctx, delta)
+	}
 }
 
 // recordAbnormalEvent counts one abnormal server event with the given reason
@@ -428,8 +395,11 @@ func (o *connOTelInstruments) recordAbnormalEvent(reason string) {
 	if o == nil {
 		return
 	}
-	o.abnormalEvents.Add(context.Background(), 1,
-		metric.WithAttributes(attribute.String("reason", reason)))
+	ctx := context.Background()
+	if o.abnormalEvents.Enabled(ctx) {
+		o.abnormalEvents.Add(ctx, 1,
+			metric.WithAttributes(attribute.String("reason", reason)))
+	}
 }
 
 // serverOTelInstruments holds server-level (pre-connection) OTel instruments.
@@ -463,5 +433,8 @@ func (o *serverOTelInstruments) recordConnectionRejected() {
 	if o == nil {
 		return
 	}
-	o.connectionsRejected.Add(context.Background(), 1)
+	ctx := context.Background()
+	if o.connectionsRejected.Enabled(ctx) {
+		o.connectionsRejected.Add(ctx, 1)
+	}
 }

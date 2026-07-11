@@ -130,14 +130,8 @@ func BenchmarkHandleRead_NoOTel(b *testing.B) {
 // BenchmarkHandleRead_NoopOTel is the treatment case: server built
 // with WithTracer(otel.GetTracerProvider()) +
 // WithMeter(otel.GetMeterProvider()) against an uninitialized OTel
-// SDK, matching the typical consumer wiring. With the probe-based
-// short-circuit in place, both probes return false during server construction,
-// the middleware is NOT installed at newConn, and per-request cost
-// drops to the BenchmarkHandleRead_NoOTel baseline.
-//
-// Acceptance: allocs/op EXACTLY equals BenchmarkHandleRead_NoOTel;
-// ns/op within 1%. Any allocs/op delta proves the middleware is
-// still installed and the short-circuit is broken.
+// SDK, matching explicit no-op provider wiring. The middleware remains
+// installed, so this benchmark measures the cost of that explicit choice.
 //
 // Note: this benchmark relies on global OTel state staying noop. No
 // other test or benchmark in the server package calls otel.SetTracerProvider

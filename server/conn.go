@@ -204,16 +204,10 @@ func newConn(s *Server, nc net.Conn) *conn {
 		return c.dispatch(ctx, tag, msg)
 	}
 
-	// If either probe at server.New detected a recording tracer or enabled
-	// meter, prepend OTel middleware (outermost) and create connection-level
-	// gauge instruments. The nil-to-noop fallback that previously lived here
-	// has been moved to server.New: by the time we reach this block,
-	// either (a) s.tracerRecording and s.meterEnabled are both false and we
-	// skip the install entirely (short-circuit path -- no middleware call
-	// frame, no context.WithValue wrap, no span.Start), or (b) at least one
-	// is true and both s.tracerProvider and s.meterProvider are non-nil.
+	// Explicit telemetry configuration installs the middleware. Sampling and
+	// metric enablement are decided by each real request.
 	mws := s.middlewares
-	if s.tracerRecording || s.meterEnabled {
+	if s.otelCore != nil {
 		mws = append([]Middleware{s.otelCore.middleware(c)}, mws...)
 		c.otelInst = s.connInst
 	}

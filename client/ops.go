@@ -181,10 +181,14 @@ func (c *Conn) roundTripWithFlush(ctx context.Context, msg proto.Message, flushO
 	}
 
 	var start time.Time
-	if c.meterEnabled {
-		c.inst.activeReqs.Add(ctx, 1)
-		defer c.inst.activeReqs.Add(ctx, -1)
-		start = time.Now()
+	if c.inst != nil {
+		if c.inst.activeReqs.Enabled(ctx) {
+			c.inst.activeReqs.Add(ctx, 1)
+			defer c.inst.activeReqs.Add(ctx, -1)
+		}
+		if c.inst.duration.Enabled(ctx) {
+			start = time.Now()
+		}
 	}
 
 	resp, _, err := c.exchangeWithFlush(ctx, span, msg, nil, flushOnCancel)
@@ -192,9 +196,7 @@ func (c *Conn) roundTripWithFlush(ctx context.Context, msg proto.Message, flushO
 		return nil, err
 	}
 
-	if c.meterEnabled {
-		c.recordResponse(ctx, msg.Type(), time.Since(start).Seconds(), resp)
-	}
+	c.recordResponse(ctx, msg.Type(), start, resp)
 	if c.tracer != nil && isErrorResponse(resp) {
 		span.SetStatus(codes.Error, msg.Type().String())
 	}
@@ -396,10 +398,14 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 	}
 
 	var start time.Time
-	if c.meterEnabled {
-		c.inst.activeReqs.Add(ctx, 1)
-		defer c.inst.activeReqs.Add(ctx, -1)
-		start = time.Now()
+	if c.inst != nil {
+		if c.inst.activeReqs.Enabled(ctx) {
+			c.inst.activeReqs.Add(ctx, 1)
+			defer c.inst.activeReqs.Add(ctx, -1)
+		}
+		if c.inst.duration.Enabled(ctx) {
+			start = time.Now()
+		}
 	}
 
 	resp, n, err := c.exchange(ctx, span, req, dst)
@@ -412,9 +418,7 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 	// end catches a misbehaving server returning Rread (cached path)
 	// or some other unexpected R-type -- never panic, always return err.
 	if resp == rreadSentinelOK {
-		if c.meterEnabled {
-			c.recordZCResponse(ctx, proto.TypeTread, time.Since(start).Seconds(), n)
-		}
+		c.recordZCResponse(ctx, proto.TypeTread, start, n)
 		return n, nil
 	}
 	if err := toError(resp); err != nil {

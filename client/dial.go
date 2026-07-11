@@ -225,16 +225,12 @@ func Dial(ctx context.Context, nc net.Conn, opts ...Option) (_ *Conn, retErr err
 	}
 	c.raw = Raw{c: c}
 
-	// Assign the tracer unconditionally when a provider is configured and let
-	// the SDK sampler decide per span; do NOT gate on a one-time probe (that
-	// would freeze the sampling decision for the connection). The meter path
-	// keeps its Enabled() probe as a cheap attribute-computation gate.
+	// Providers are installed when explicitly configured. Sampling and metric
+	// enablement are decided by each real request span and instrument.
 	if cfg.tracerProvider != nil {
 		c.tracer = cfg.tracerProvider.Tracer(instrumentationName)
 	}
-	c.probeMeter(cfg)
-	if c.meterEnabled {
-		c.meter = cfg.meterProvider.Meter(instrumentationName)
+	if cfg.meterProvider != nil {
 		inst, ierr := newOTelInstruments(cfg.meterProvider)
 		if ierr != nil {
 			return nil, fmt.Errorf("client.Dial: otel instruments: %w", ierr)

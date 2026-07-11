@@ -2,25 +2,76 @@ package client
 
 import (
 	"context"
-	"github.com/dotwaffle/ninep/proto"
 	"net"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/server"
 	"github.com/dotwaffle/ninep/server/memfs"
 
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
+type recordingMeterProvider struct {
+	metric.MeterProvider
+	mu    sync.Mutex
+	names []string
+}
+
+func newRecordingMeterProvider() *recordingMeterProvider {
+	return &recordingMeterProvider{MeterProvider: metricnoop.NewMeterProvider()}
+}
+
+func (p *recordingMeterProvider) Meter(name string, opts ...metric.MeterOption) metric.Meter {
+	return recordingMeter{Meter: p.MeterProvider.Meter(name, opts...), provider: p}
+}
+
+type recordingMeter struct {
+	metric.Meter
+	provider *recordingMeterProvider
+}
+
+func (m recordingMeter) Int64Counter(name string, opts ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	m.provider.mu.Lock()
+	m.provider.names = append(m.provider.names, name)
+	m.provider.mu.Unlock()
+	return m.Meter.Int64Counter(name, opts...)
+}
+
+func TestClientOTel_MeterDoesNotCreateProbeInstrument(t *testing.T) {
+	t.Parallel()
+	mp := newRecordingMeterProvider()
+	gen := new(server.QIDGenerator)
+	srv := server.MustNew(memfs.NewDir(gen))
+	cliNC, srvNC := net.Pipe()
+	defer func() { _ = cliNC.Close() }()
+	defer func() { _ = srvNC.Close() }()
+	go srv.ServeConn(t.Context(), srvNC)
+
+	cli, err := Dial(t.Context(), cliNC, WithMeter(mp))
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer func() { _ = cli.Close() }()
+	mp.mu.Lock()
+	names := append([]string(nil), mp.names...)
+	mp.mu.Unlock()
+	if slices.Contains(names, "probe") {
+		t.Fatalf("meter instruments include synthetic probe: %v", names)
+	}
+}
+
 // TestClientOTel_TracingRespectsParentSampling asserts the tracer honors the
-// SDK sampler per span rather than latching a one-time probe. The client tracer
-// only samples a span whose parent is sampled (root spans, like the old probe,
-// are never sampled); an operation carrying a sampled parent must still be
-// recorded.
+// SDK sampler per span. The client tracer only samples a span whose parent is
+// sampled; an operation carrying a sampled parent must still be recorded.
 func TestClientOTel_TracingRespectsParentSampling(t *testing.T) {
 	t.Parallel()
 
@@ -49,8 +100,8 @@ func TestClientOTel_TracingRespectsParentSampling(t *testing.T) {
 	defer func() { _ = cli.Close() }()
 
 	// A sampled parent span from an independent always-sample provider. The
-	// client's ParentBased sampler must record the op span because the parent
-	// is sampled, not freeze on a one-time probe decision.
+	// The client's ParentBased sampler must record the operation span because
+	// the parent is sampled.
 	parentTP := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
 	t.Cleanup(func() { _ = parentTP.Shutdown(context.Background()) })
 	opCtx, parent := parentTP.Tracer("test").Start(ctx, "parent")
@@ -67,7 +118,7 @@ func TestClientOTel_TracingRespectsParentSampling(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("Tattach span not recorded; tracing was frozen by the probe instead of honoring per-span sampling")
+		t.Fatal("Tattach span not recorded despite its sampled parent")
 	}
 }
 

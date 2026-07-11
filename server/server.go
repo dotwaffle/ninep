@@ -50,17 +50,8 @@ type Server struct {
 	meterProvider    metric.MeterProvider
 	tracePathFilter  TracePathFilter
 	otelInst         *serverOTelInstruments // server-level metrics (nil if no MeterProvider)
-	otelCore         *otelCore              // shared request-middleware state (nil unless a probe passed)
-	connInst         *connOTelInstruments   // shared conn/fid gauges (nil unless a probe passed)
-
-	// tracerRecording is true when the configured TracerProvider produces
-	// recording spans. Populated once by probeOTelProviders in New(), then
-	// immutable. When both tracerRecording and meterEnabled are false, the
-	// OTel middleware is NOT installed at newConn time.
-	tracerRecording bool
-	// meterEnabled is true when the configured MeterProvider produces
-	// instruments whose Enabled(ctx) returns true. See tracerRecording docs.
-	meterEnabled bool
+	otelCore         *otelCore
+	connInst         *connOTelInstruments
 }
 
 // New creates a Server rooted at the given Node. Options configure behavior.
@@ -85,21 +76,14 @@ func New(root Node, opts ...Option) (*Server, error) {
 		return nil, err
 	}
 
-	// Probe OTel providers once at construction. The cached booleans drive
-	// the install gate in newConn (server/conn.go). When both providers are
-	// nil, skip the probe entirely -- tracerRecording and meterEnabled stay
-	// false and newConn's gate is false, so the middleware is never installed.
-	// When either is non-nil, fill the other with a noop default (matching
-	// the prior conn.go install-gate pattern, moved up here) and run
-	// the probe against the real (possibly noop) providers.
-	if s.tracerProvider != nil || s.meterProvider != nil {
+	telemetryConfigured := s.tracerProvider != nil || s.meterProvider != nil
+	if telemetryConfigured {
 		if s.tracerProvider == nil {
 			s.tracerProvider = tracenoop.NewTracerProvider()
 		}
 		if s.meterProvider == nil {
 			s.meterProvider = metricnoop.NewMeterProvider()
 		}
-		probeOTelProviders(s)
 	}
 
 	var err error
@@ -107,7 +91,7 @@ func New(root Node, opts ...Option) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("server: initialize telemetry: %w", err)
 	}
-	if s.tracerRecording || s.meterEnabled {
+	if telemetryConfigured {
 		// Build the shared middleware core and conn/fid gauges once here
 		// rather than per connection: instrument creation takes the SDK
 		// registry mutex and the attribute cache is ~30 map entries.
