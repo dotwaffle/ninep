@@ -89,7 +89,7 @@ trailers.
 - All new code must include tests. Use table-driven tests (see existing
   `*_test.go` files for the pattern) and `t.Parallel()` where safe.
 - Protocol-level tests use the `net.Pipe()` + `newConnPair` helper in
-  `server/conn_test.go`. Filesystem-implementation tests use the harness in
+  `server/walk_test.go`. Filesystem-implementation tests use the harness in
   `server/fstest/`.
 - Run with the race detector locally: `go test -race -count=1 ./...`.
 - Codec changes in `proto/p9l` or `proto/p9u` should pass the existing fuzz

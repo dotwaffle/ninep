@@ -24,17 +24,23 @@ Run all tests with the race detector enabled:
 go test -race -count=1 ./...
 ```
 
-This executes tests across all seven packages:
+This executes tests across all thirteen packages with test files:
 
 | Package | Description |
 |---------|-------------|
 | `proto` | Wire types, QID, Errno, encoding helpers |
 | `proto/p9l` | 9P2000.L codec encode/decode and round-trip |
 | `proto/p9u` | 9P2000.u codec encode/decode and round-trip |
+| `internal/bufpool` | Size-classed buffer pools |
+| `internal/pool` | Generic bounded-channel struct cache |
+| `internal/wire` | Frame read/write helpers |
 | `server` | Server core, connection, fid table, walk, flush, bridge, middleware, OTel, logging |
 | `server/fstest` | Protocol-level conformance harness |
 | `server/memfs` | In-memory filesystem implementation |
 | `server/passthrough` | Host-backed passthrough filesystem |
+| `client` | Wire-level client: Conn, File, Session, Raw |
+| `client/clienttest` | Server+client pair helpers |
+| `vsock` | AF_VSOCK transport (loopback tests skip without kernel support) |
 
 ### Package-specific tests
 
@@ -132,18 +138,24 @@ fstest.Check(t, root)
 
 ### Test case categories
 
-The harness includes 20 test cases organized into categories:
+The harness includes 30 test cases organized into categories:
 
 | Category | Cases | What they verify |
 |----------|-------|------------------|
 | `walk/*` | 5 | Root attach, child walk, deep walk, nonexistent path, fid cloning |
 | `read/*` | 3 | Basic read, offset read, read past EOF |
-| `write/*` | 1 | Write and read-back verification |
-| `readdir/*` | 2 | Directory listing, empty directory |
+| `write/*` | 3 | Write and read-back, growing writes, sparse writes |
+| `setattr/*` | 3 | Truncate, extend, setattr after the parent fid is clunked |
+| `readdir/*` | 3 | Directory listing, empty directory, paginated listing across Treaddir offsets |
+| `rename/*` | 1 | Rename within a directory via Trenameat |
 | `create/*` | 1 | File creation via Tlcreate |
 | `mkdir` | 1 | Directory creation via Tmkdir |
 | `getattr/*` | 2 | File and directory attribute retrieval |
 | `error/*` | 2 | Walk from file (ENOTDIR), read on directory |
+| `symlink/*` | 1 | Tsymlink + Treadlink round trip |
+| `link/*` | 1 | Hard link via Tlink |
+| `statfs` | 1 | Tstatfs response sanity |
+| `fsync` | 1 | Tfsync on an open fid |
 | `unlink/*` | 1 | File unlinking via Tunlinkat |
 | `concurrent/*` | 1 | Concurrent read correctness |
 
@@ -450,7 +462,7 @@ The `-count=1` flag disables test caching, ensuring every run exercises the race
 
 ## CI integration
 
-CI is defined in `.github/workflows/ci.yml` and runs on every push to `main` and every pull request. Six jobs execute in parallel, several with their own runner matrix:
+CI is defined in `.github/workflows/ci.yml` and runs on every push to `main` and every pull request. Seven jobs execute in parallel, several with their own runner matrix:
 
 | Job | Matrix | Command | Purpose |
 |-----|--------|---------|---------|
@@ -460,5 +472,6 @@ CI is defined in `.github/workflows/ci.yml` and runs on every push to `main` and
 | `stress` | `ubuntu-latest`, `ubuntu-24.04-arm` | `go test -tags=stress -race -count=1 ./server/...` | Race-sensitive stress tests targeting the requestCtx concurrency surface |
 | `vsock` | `ubuntu-latest`, `ubuntu-24.04-arm` | `go test -race -count=1 -v ./vsock/...` (fails if any test skips) | AF_VSOCK loopback tests against the real kernel vsock transport |
 | `benchmark` | -- | `go test -bench=BenchmarkClient -run=^$ ./client/` piped through `benchstat` | Client benchmark smoke run |
+| `cross-build` | GOOS/GOARCH combinations not covered by the other jobs | `go vet` + `go build` per platform | Compile-only check; exists because an amd64-only CI once missed a passthrough build break on arm/386 |
 
 Go version tracks `stable` via `actions/setup-go@v6`. The integration-test step compiles but does not execute the kernel tests (the `-run ^$` pattern matches no tests); actual kernel mount tests run locally or on dedicated runners.

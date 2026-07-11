@@ -87,7 +87,8 @@ ninep/
     fid.go              Fid table with lifecycle state tracking
     flush.go            Inflight request tracking and Tflush cancellation
     cleanup.go          Connection shutdown: cancel inflight, drain, close nc, wait recvWG, clunk fids
-    msgcache.go         Bounded chan caches for hot request types (Tread/Twrite/Twalk/Tclunk/Tlopen/Tgetattr)
+    (hot request structs are cached via the shared internal/pool.Cache; the
+     former server/msgcache.go was folded into it)
     middleware.go       Handler/Middleware types, chain(), WithMiddleware()
     options.go          Functional options (WithMaxMsize, WithMaxInflight, WithLogger, etc.)
     errors.go           Sentinel errors (ErrFidInUse, ErrNotNegotiated, etc.)
@@ -293,7 +294,7 @@ var (
 
 ## Adding a New 9P Operation
 
-This section walks through the full flow of adding a new capability. Use `NodeFsyncer` as a hypothetical example.
+This section walks through the full flow of adding a new capability, using `NodeFsyncer` -- now part of the tree -- as the worked example; compare each step against the real implementation in `server/node.go`, `server/inode.go`, and `server/bridge.go`. (The real bridge handler additionally prefers `FileSyncer` on the open handle before falling back to the node-level `NodeFsyncer`.)
 
 ### Step 1: Define the Capability Interface
 
@@ -335,7 +336,7 @@ If the message type does not already exist in `proto/`, add it. For 9P2000.L mes
 ```go
 type Tfsync struct {
     Fid      proto.Fid
-    Datasync uint32
+    DataSync uint32
 }
 
 type Rfsync struct{}
@@ -523,7 +524,7 @@ All helpers live under `server/` with `_test.go` suffixes. Reuse them in new ben
 
 | Helper | File | Purpose |
 |--------|------|---------|
-| `newConnPair(tb, root, opts...)` | `conn_test.go` | In-memory `net.Pipe` pair with `ServeConn` running; auto-negotiates `Tversion` at msize 65536 |
+| `newConnPair(tb, root, opts...)` | `walk_test.go` | In-memory `net.Pipe` pair with `ServeConn` running; auto-negotiates `Tversion` at msize 65536 |
 | `newConnPairMsize(tb, root, msize, opts...)` | `io_bench_test.go` | Same as above but with a caller-chosen msize; required for benchmarks that negotiate > 64 KiB |
 | `mustEncode(tb, tag, msg)` | `bench_test.go` | Pre-encode a wire frame once, outside the hot loop |
 | `drainResponse(c)` | `bench_test.go` | Consume one size-prefixed frame from the wire and discard the body |
@@ -566,7 +567,7 @@ The project uses golangci-lint. Run:
 golangci-lint run ./...
 ```
 
-No `.golangci.yml` configuration file is present -- the default golangci-lint configuration is used. The standard Go toolchain checks also apply:
+Configuration lives in `.golangci.yml` (golangci-lint v2). The standard preset (errcheck, govet, ineffassign, staticcheck, unused) is enabled via `default: standard`, with additions and exclusions justified linter-by-linter in the file's header comment -- read it before enabling anything new, since several plausible linters were evaluated and deliberately left off (some are actively harmful to this tree, e.g. unconvert's autofix breaks non-amd64 builds of passthrough). The standard Go toolchain checks also apply:
 
 ```bash
 go vet ./...

@@ -51,8 +51,9 @@ Allocation paths:
   internal/bufpool/   size-classed []byte buckets (1K/4K/64K/1M) for
                       message bodies and encode buffers; separate
                       *bytes.Buffer pool for Encode destinations.
-  server/msgcache.go  per-type bounded channel caches (cap=3) for
-                      Tread/Twrite/Twalk/Tclunk/Tlopen/Tgetattr structs.
+  internal/pool/      generic bounded-channel Cache[T] (cap=3); per-type
+                      caches for hot request/response structs on both the
+                      server and client sides.
 ```
 
 ## Package Responsibilities
@@ -63,7 +64,12 @@ ninep/
 │   ├── p9l/               9P2000.L codec and message structs
 │   └── p9u/               9P2000.u codec and message structs
 ├── internal/
-│   └── bufpool/           Size-classed []byte and *bytes.Buffer pools
+│   ├── bufpool/           Size-classed []byte and *bytes.Buffer pools
+│   ├── pool/              Generic bounded-channel Cache[T] for hot structs
+│   └── wire/              Framing helpers (ReadSize, ReadBody, WriteFramesLocked)
+├── client/                Wire-level client: Conn, File, Session, Raw
+│   └── clienttest/        Server+client test pair helpers
+├── vsock/                 AF_VSOCK Listen/Dial transport (Linux)
 └── server/                Server core, dispatch, capability bridge
     ├── memfs/             In-memory node types with fluent builder API
     ├── passthrough/       Host-filesystem passthrough using *at syscalls
@@ -109,8 +115,8 @@ The server core. Key files and their roles:
 | `cleanup.go` | Orderly connection shutdown: cancel inflight, drain, close `nc`, wait for `recvWG`, clunk all fids |
 | `dispatch.go` | `dispatch()` type-switch routing, `handleAttach`, `handleWalk`, `handleClunk`, `handleFlush` |
 | `bridge.go` | Capability bridge handlers; `pooledRread`/`pooledRreaddir` wrappers that carry a `bufpool.PutMsgBuf` callback via the `releaser` interface |
-| `msgcache.go` | Bounded per-type struct caches (cap 3) for `Tread`, `Twrite`, `Twalk`, `Tclunk`, `Tlopen`, `Tgetattr`; `putCachedMsg` releases on request completion |
-| `node.go` | 23 capability interfaces (`Node`, `NodeLookuper`, `NodeReader`, `NodeWriter`, ...) |
+| `msgcache_pools.go` | Per-type struct caches for `Tread`, `Twrite`, `Twalk`, `Tclunk`, `Tlopen`, `Tgetattr` backed by `internal/pool.Cache` (cap 3); `putCachedMsg` releases on request completion |
+| `node.go` | 24 capability interfaces (`Node`, `NodeLookuper`, `NodeReader`, `NodeWriter`, ...) |
 | `inode.go` | `Inode` struct: tree management, ENOSYS defaults for all capability interfaces |
 | `fid.go` | `fidTable` (concurrent map), `fidState` (lifecycle tracking), state transitions |
 | `flush.go` | `inflightMap`: tag tracking, per-request cancellation, drain-on-disconnect |
@@ -150,7 +156,7 @@ Protocol-level conformance test harness. `Check(t, root)` or `CheckFactory(t, ne
 
 ### Node and Capability Interfaces
 
-`Node` is the minimal interface: a single method `QID() proto.QID`. The server discovers filesystem behavior through 23 optional capability interfaces defined in `server/node.go`:
+`Node` is the minimal interface: a single method `QID() proto.QID`. The server discovers filesystem behavior through 24 optional capability interfaces defined in `server/node.go`:
 
 | Interface | Method(s) | Purpose |
 |-----------|-----------|---------|
@@ -171,6 +177,7 @@ Protocol-level conformance test harness. `Check(t, root)` or `CheckFactory(t, ne
 | `NodeUnlinker` | `Unlink(ctx, name, flags) error` | Remove directory entry |
 | `NodeRenamer` | `Rename(ctx, oldName, newDir, newName) error` | Move/rename entry |
 | `NodeStatFSer` | `StatFS(ctx) (FSStat, error)` | Filesystem statistics |
+| `NodeFsyncer` | `Fsync(ctx) error` | Flush node-level state to storage (bridge prefers `FileSyncer` on the open handle) |
 | `NodeLocker` | `Lock(...)`, `GetLock(...)` | POSIX byte-range locking |
 | `NodeCloser` | `Close(ctx) error` | Cleanup on clunk |
 | `NodeXattrGetter` | `GetXattr(ctx, name) ([]byte, error)` | Read extended attribute |
@@ -184,7 +191,7 @@ Protocol-level conformance test harness. `Check(t, root)` or `CheckFactory(t, ne
 
 `Inode` (`server/inode.go`) serves dual purposes:
 
-1. **ENOSYS default provider** -- Implements all 23 capability interfaces with methods that return `proto.ENOSYS`. When users embed `Inode` and override only the methods they need, unimplemented operations automatically fail with the correct error.
+1. **ENOSYS default provider** -- Implements all 24 capability interfaces with methods that return `proto.ENOSYS`. When users embed `Inode` and override only the methods they need, unimplemented operations automatically fail with the correct error.
 
 2. **Tree management** -- Maintains parent/child relationships via a `sync.Mutex`-protected `map[string]*Inode`. Provides `AddChild`, `RemoveChild`, `Children`, `Parent`, and a default `Lookup` that resolves children from this map.
 
@@ -215,13 +222,13 @@ A 9P request follows this path from network bytes to filesystem operation:
    Routing inside the loop:
    - `Tversion` mid-connection triggers `handleReVersion` (drains inflight, clunks all fids, re-negotiates via `writeRaw`). Spawn-replacement is skipped on `Tversion` so the renegotiating goroutine is the sole reader during the codec/msize swap. If the inflight drain exceeds the drain timeout (`WithDrainTimeout`, default 5 s), i.e. at least one handler ignored ctx cancellation, the connection is closed instead of continuing, because a late response from a stuck handler could alias against the client's reused tag space after `Rversion` is sent.
    - `Tflush` short-circuits to `handleFlush` AFTER `recvMu` is released (it operates on OTHER tags' inflight state and must not itself create an inflight entry).
-   - All other messages are decoded via `newMessage()`. Hot types (`Tread`, `Twrite`, `Twalk`, `Tclunk`, `Tlopen`, `Tgetattr`) are pulled from the `msgcache` bounded channel; cache miss allocates fresh.
+   - All other messages are decoded via `newMessage()`. Hot types (`Tread`, `Twrite`, `Twalk`, `Tclunk`, `Tlopen`, `Tgetattr`) are pulled from bounded per-type caches (`internal/pool.Cache`); cache miss allocates fresh.
 
 4. **Zero-copy Twrite** -- `Twrite.DecodeFromBuf` aliases `m.Data` directly into the pooled frame buffer so write payloads never incur a memcpy between read and handler. The message body buffer pointer is carried as a local in `handleRequest` and released by `dispatchInline`'s defer after the handler returns. All other decodes use a per-iteration `bytes.Reader` to avoid a per-message alloc; those message types copy fields out during `DecodeFrom`, so the frame buffer is returned to `bufpool` immediately.
 
 5. **Spawn-replacement decision** -- After reading a request, the dispatcher decides whether to spawn a successor before releasing `recvMu`: only if no sibling is parked on `recvMu` (`recvIdle == 0`) AND `workerCount < maxInflight`. The successor takes over reading the next request while the current dispatcher handles the one it just read. The `maxInflight` cap (default 64) bounds total goroutine count per connection, providing back-pressure: if all workers are dispatching, the next request sits in the kernel socket buffer until one returns to the loop.
 
-6. **dispatchInline** -- Called by `handleRequest` after `recvMu` is released. Runs the request through the middleware + dispatch chain with panic recovery. On exit (deferred): release the zero-copy `bufPtr` if present, return the request struct to its `msgcache` via `putCachedMsg`, emit an `EIO` response if the handler panicked, and call `c.inflight.finish(tag)`. The handler itself is `c.handler`, the middleware-wrapped dispatch chain built once in `newConn`.
+6. **dispatchInline** -- Called by `handleRequest` after `recvMu` is released. Runs the request through the middleware + dispatch chain with panic recovery. On exit (deferred): release the zero-copy `bufPtr` if present, return the request struct to its bounded cache via `putCachedMsg`, emit an `EIO` response if the handler panicked, and call `c.inflight.finish(tag)`. The handler itself is `c.handler`, the middleware-wrapped dispatch chain built once in `newConn`.
 
 7. **Middleware chain** -- When OTel is configured, the outermost middleware creates a span, records request/response sizes, and tracks active requests. Zero middleware incurs zero overhead (`chain` returns the inner handler directly).
 
@@ -274,7 +281,7 @@ There is no writer goroutine. Each `handleRequest` goroutine calls `sendResponse
 | `sync.WaitGroup` | `conn.recvWG` | Cleanup drain: waits for `handleRequest` goroutines to exit |
 | `sync.Mutex` | `conn.writeMu` | Serialises `sendResponseInline` writes and `writeRaw` |
 | `context.CancelFunc` | per-request | Flush cancellation via `inflightMap.flush(tag)` |
-| bounded `chan *T` | `server/msgcache.go` | Per-type struct cache (cap 3) for Tread/Twrite/Twalk/Tclunk/Tlopen/Tgetattr |
+| bounded `chan *T` | `internal/pool/cache.go` | Generic `Cache[T]` (cap 3); per-type request-struct caches for Tread/Twrite/Twalk/Tclunk/Tlopen/Tgetattr |
 | `sync.Pool` | `internal/bufpool/` | `*bytes.Buffer` encode pool and size-classed `*[]byte` buckets |
 
 ## Fid State Machine

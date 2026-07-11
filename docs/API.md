@@ -11,7 +11,7 @@
 | `proto/p9u` | `github.com/dotwaffle/ninep/proto/p9u` | 9P2000.u codec (Encode/Decode) |
 | `server` | `github.com/dotwaffle/ninep/server` | Server core, capability interfaces, Inode, middleware |
 | `server/memfs` | `github.com/dotwaffle/ninep/server/memfs` | In-memory filesystem nodes (MemFile, MemDir, StaticFile) |
-| `server/passthrough` | `github.com/dotwaffle/ninep/server/passthrough` | Host OS passthrough filesystem (Linux only) |
+| `server/passthrough` | `github.com/dotwaffle/ninep/server/passthrough` | Host OS passthrough filesystem (Linux and FreeBSD 14.0+) |
 | `server/fstest` | `github.com/dotwaffle/ninep/server/fstest` | Protocol-level test harness for filesystem implementations |
 | `client` | `github.com/dotwaffle/ninep/client` | Wire-level 9P client: Conn, File, Session, Raw escape hatch |
 | `client/clienttest` | `github.com/dotwaffle/ninep/client/clienttest` | Server+client test pair helpers (mirrors `httptest`) |
@@ -330,6 +330,7 @@ All options are passed to `server.New(root, opts...)`.
 | `WithMiddleware` | `func(mw ...Middleware) Option` | `nil` | Append middleware to dispatch chain |
 | `WithTracer` | `func(tp trace.TracerProvider) Option` | `nil` | OTel tracing; auto-prepends tracing middleware |
 | `WithMeter` | `func(mp metric.MeterProvider) Option` | `nil` | OTel metrics; auto-prepends metrics middleware |
+| `WithRequestLogging` | `func() Option` | off | Per-request Debug logging through the server's own (trace-correlated) logger |
 
 ### Attacher Interface
 
@@ -562,7 +563,7 @@ srv := server.New(root, server.WithMaxMsize(65536))
 
 ## passthrough Package (`server/passthrough`)
 
-Host OS passthrough filesystem using `*at` syscalls. Linux only. All operations delegate to the host kernel via file descriptors, preventing path traversal attacks.
+Host OS passthrough filesystem using `*at` syscalls. Supported on Linux and FreeBSD (14.0+). All operations delegate to the host kernel via file descriptors, preventing path traversal attacks.
 
 ### NewRoot
 
@@ -577,6 +578,7 @@ Creates a passthrough filesystem rooted at `hostPath`. The path must be an exist
 | Option | Signature | Description |
 |--------|-----------|-------------|
 | `WithUIDMapper` | `func(m UIDMapper) Option` | Custom UID/GID mapping (default: `IdentityMapper()`) |
+| `WithDeviceNodes` | `func() Option` | Permit clients to create block/character device nodes via Tmknod (off by default: a privileged server would otherwise let a remote peer mint raw host device access) |
 
 ### UIDMapper
 
