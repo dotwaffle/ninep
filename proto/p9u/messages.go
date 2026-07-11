@@ -223,7 +223,7 @@ func (m *Rcreate) DecodeFrom(r io.Reader) error {
 //	type[2] dev[4] qid[13] mode[4] atime[4] mtime[4] length[8]
 //	name[s] uid[s] gid[s] muid[s] extension[s] n_uid[4] n_gid[4] n_muid[4]
 type Stat struct {
-	Size      uint16 // Total size of stat entry, excluding this field itself.
+	Size      uint16 // Total size of stat entry, excluding this field itself. Populated by DecodeFrom; EncodeTo recomputes and ignores it.
 	Type      uint16
 	Dev       uint32
 	QID       proto.QID

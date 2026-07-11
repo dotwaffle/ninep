@@ -409,12 +409,12 @@ func (m *Tread) DecodeFrom(r io.Reader) error {
 	return nil
 }
 
-// Payloader is implemented by response messages that carry a large opaque
-// payload (typically the user data portion of Rread/Rreaddir). The
-// server's inline response writer detects Payloaders and issues the
-// payload as a separate net.Buffers entry so the header, fixed body, and
-// payload are emitted in a single writev without copying the payload into
-// the pooled body buffer.
+// Payloader is implemented by messages that carry a large opaque payload:
+// Rread and Rreaddir on the response side, Twrite on the request side.
+// The server's inline response writer and the client's outbound writer
+// detect Payloaders and issue the payload as a separate net.Buffers entry
+// so the header, fixed body, and payload are emitted in a single writev
+// without copying the payload into the pooled body buffer.
 //
 // Contract:
 //   - EncodeFixed writes only the non-payload part of the body. For Rread
@@ -517,9 +517,9 @@ func (m *Twrite) Payload() []byte { return m.Data }
 
 // EncodeTo writes the Twrite body: fid[4] + offset[8] + count[4] + data[count].
 //
-// Deprecation Note: for hot-path zero-copy writes, use EncodeFixed + Payload
-// instead. EncodeTo is preserved for legacy callers and tests that write
-// the full message body into a single buffer.
+// It is the correct path for callers that assemble the full message body in
+// a single buffer. Writers that can hand the payload to writev separately
+// (the client's outbound path) use EncodeFixed + Payload to skip the copy.
 func (m *Twrite) EncodeTo(w io.Writer) error {
 	if err := m.EncodeFixed(w); err != nil {
 		return err
