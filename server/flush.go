@@ -64,6 +64,13 @@ func (im *inflightMap) start(tag proto.Tag, rctx *requestCtx) bool {
 		if !entry.committed {
 			return false
 		}
+		// A Tflush may have registered a waiter on the committed entry
+		// during its response-write window. Release it before the entry is
+		// replaced, or that Tflush blocks the full flush-wait deadline and
+		// tears the connection down.
+		if entry.done != nil {
+			close(entry.done)
+		}
 		im.entries[tag] = inflightEntry{rctx: rctx}
 		return true
 	}
