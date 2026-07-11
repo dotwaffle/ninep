@@ -80,6 +80,9 @@ func (n *Node) GetXattr(_ context.Context, name string) ([]byte, error) {
 // FreeBSD's extattr_set_fd has no XATTR_CREATE/XATTR_REPLACE flags; the flags
 // argument from 9P is ignored on FreeBSD.
 func (n *Node) SetXattr(_ context.Context, name string, data []byte, _ uint32) error {
+	if err := n.requireMutable(); err != nil {
+		return err
+	}
 	fd, err := n.xattrFd()
 	if err != nil {
 		return toProtoErr(err)
@@ -155,6 +158,9 @@ func parseExtattrList(buf []byte, prefix string) []string {
 
 // RemoveXattr removes an extended attribute via ExtattrDeleteFd.
 func (n *Node) RemoveXattr(_ context.Context, name string) error {
+	if err := n.requireMutable(); err != nil {
+		return err
+	}
 	fd, err := n.xattrFd()
 	if err != nil {
 		return toProtoErr(err)

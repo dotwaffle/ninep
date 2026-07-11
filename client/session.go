@@ -127,7 +127,7 @@ func (c *Conn) OpenFile(ctx context.Context, p string, flags int, mode os.FileMo
 // issues Tlcreate (.L) or Tcreate (.u) for the basename. Returns an
 // open *File positioned at offset 0.
 //
-// On .L, gid defaults to 0 ("server default"). On .u, extension is
+// On .L, gid defaults to [proto.NoUID]. On .u, extension is
 // empty (regular file). Callers needing non-default gid or .u
 // extensions should use [Raw.Tlcreate] / [Raw.Tcreate] directly.
 //
@@ -172,7 +172,7 @@ func (c *Conn) Create(ctx context.Context, p string, flags int, mode os.FileMode
 	var iounit uint32
 	switch c.dialect {
 	case protocolL:
-		qid, iounit, err = c.tlcreate(ctx, dirFid, name, uint32(flags), perm, 0)
+		qid, iounit, err = c.tlcreate(ctx, dirFid, name, uint32(flags), perm, proto.NoUID)
 	case protocolU:
 		qid, iounit, err = c.tcreate(ctx, dirFid, name, perm, posixToNinepMode(flags), "")
 	default:

@@ -100,19 +100,22 @@ type NodeCreater interface {
 	//     server default (msize minus header overhead); non-zero values
 	//     are clamped to that default.
 	//   - an error.
+	// gid is [proto.NoUID] when the client did not request an owning group.
 	Create(ctx context.Context, name string, flags uint32, mode proto.FileMode, gid uint32) (Node, FileHandle, uint32, error)
 }
 
 // NodeMkdirer is implemented by directory nodes that can create subdirectories.
 type NodeMkdirer interface {
 	// Mkdir creates a new subdirectory in this directory.
+	// gid is [proto.NoUID] when no owning group was requested.
 	Mkdir(ctx context.Context, name string, mode proto.FileMode, gid uint32) (Node, error)
 }
 
 // NodeSymlinker is implemented by directory nodes that can create symbolic links.
 type NodeSymlinker interface {
 	// Symlink creates a symbolic link named name pointing to target in this
-	// directory. Returns the new symlink Node.
+	// directory. Returns the new symlink Node. gid is [proto.NoUID] when no
+	// owning group was requested.
 	Symlink(ctx context.Context, name, target string, gid uint32) (Node, error)
 }
 
@@ -128,7 +131,8 @@ type NodeLinker interface {
 // NodeMknoder is implemented by directory nodes that can create device nodes.
 type NodeMknoder interface {
 	// Mknod creates a device node named name with the given mode, major/minor
-	// numbers, and owning group.
+	// numbers, and owning group. gid is [proto.NoUID] when no group was
+	// requested.
 	Mknod(ctx context.Context, name string, mode proto.FileMode, major, minor, gid uint32) (Node, error)
 }
 

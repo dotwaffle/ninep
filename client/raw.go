@@ -131,7 +131,7 @@ func (r *Raw) Tlopen(ctx context.Context, fid proto.Fid, flags uint32) (proto.QI
 //
 // flags is the POSIX open flag set (O_RDWR, O_CREAT already implied,
 // etc.). mode is the POSIX permission bits + file-type. gid is the
-// group to assign to the new file (zero for "use the server default").
+// group to assign to the new file; pass [proto.NoUID] for the server default.
 func (r *Raw) Tlcreate(ctx context.Context, fid proto.Fid, name string, flags uint32, mode proto.FileMode, gid uint32) (proto.QID, uint32, error) {
 	return r.c.tlcreate(ctx, fid, name, flags, mode, gid)
 }

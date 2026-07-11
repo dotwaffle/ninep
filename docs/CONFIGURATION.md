@@ -173,6 +173,8 @@ The `server/passthrough` package provides its own functional options for `NewRoo
 |--------|-----------|---------|-------------|
 | `WithUIDMapper` | `WithUIDMapper(m UIDMapper)` | `IdentityMapper()` | Sets a custom UID/GID mapper for bidirectional mapping between 9P protocol UIDs and host OS UIDs. |
 | `WithDeviceNodes` | `WithDeviceNodes()` | disabled | Permits clients to create block and character device nodes via `Tmknod`. Disabled by default: a privileged server (`CAP_MKNOD`, commonly root) would otherwise let a remote peer create arbitrary device nodes inside the export and open them for raw host device access. Enable only when the export is trusted to receive device nodes. |
+| `WithReadOnly` | `WithReadOnly()` | disabled | Rejects writable opens and every metadata, namespace, creation, and xattr mutation with `EROFS`. |
+| `WithOwnershipChanges` | `WithOwnershipChanges()` | disabled | Permits requested UID/GID changes and creation groups. Without it, ownership changes return `EPERM`; use `proto.NoUID` when creation should inherit the server process default. |
 
 ### UIDMapper
 
@@ -191,6 +193,9 @@ type UIDMapper struct {
 - `FromHost` maps host OS UIDs to 9P protocol UIDs (used for operations like `Getattr`).
 
 `IdentityMapper()` returns a mapper where both functions return uid/gid unchanged.
+Mapping translates identifiers; it does not authenticate the peer or authorize
+an ownership change. Passthrough accesses the host filesystem with the server
+process's OS authority.
 
 ```go
 root, err := passthrough.NewRoot("/srv/shared",
@@ -213,6 +218,7 @@ message sizing, concurrency, logging, lock polling, and per-op timeouts.
 | `WithMaxInflight` | `WithMaxInflight(n int)` | `64` | Outstanding-request and tag capacity. `Dial` rejects values outside 1..32766. |
 | `WithLogger` | `WithLogger(logger *slog.Logger)` | `slog.Default()` | Structured logger for diagnostic output. A nil logger is invalid. |
 | `WithLockPollSchedule` | `WithLockPollSchedule(schedule []time.Duration)` | `DefaultLockBackoff` | Lock retry schedule. Empty slices and negative durations are invalid; input is copied. |
+| `WithCleanupTimeout` | `WithCleanupTimeout(d time.Duration)` | `5s` | Bounds internal fid-retirement clunks. A timeout quarantines the indeterminate fid instead of extending through request flush grace or reusing it. |
 | `WithRequestTimeout` | `WithRequestTimeout(d time.Duration)` | `0` | Timeout for non-context file methods. Zero disables it; negative values are invalid. Context variants use the caller's context. |
 | `WithTracer` | `WithTracer(tp trace.TracerProvider)` | `nil` (no tracing) | OpenTelemetry `TracerProvider` for client-side spans. |
 | `WithMeter` | `WithMeter(mp metric.MeterProvider)` | `nil` (no metrics) | OpenTelemetry `MeterProvider` for client-side metrics. |

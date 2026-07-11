@@ -98,7 +98,7 @@ func TestDescriptorsAreCloseOnExec(t *testing.T) {
 	assertCloseOnExec(t, "lookup node", existingNode.fd)
 	assertCloseOnExec(t, "lookup parent", existingNode.parentFd)
 
-	created, handle, _, err := root.Create(t.Context(), "created", unix.O_RDWR, 0644, 0)
+	created, handle, _, err := root.Create(t.Context(), "created", unix.O_RDWR, 0644, proto.NoUID)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestDescriptorsAreCloseOnExec(t *testing.T) {
 	assertCloseOnExec(t, "created parent", createdNode.parentFd)
 	assertCloseOnExec(t, "created handle", createdHandle.fd)
 
-	subdir, err := root.Mkdir(t.Context(), "subdir", 0755, 0)
+	subdir, err := root.Mkdir(t.Context(), "subdir", 0755, proto.NoUID)
 	if err != nil {
 		t.Fatalf("Mkdir: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestDescriptorsAreCloseOnExec(t *testing.T) {
 	assertCloseOnExec(t, "directory node", subdirNode.fd)
 	assertCloseOnExec(t, "directory parent", subdirNode.parentFd)
 
-	symlink, err := root.Symlink(t.Context(), "symlink", "existing", 0)
+	symlink, err := root.Symlink(t.Context(), "symlink", "existing", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Symlink: %v", err)
 	}
@@ -831,7 +831,7 @@ func TestMknod_DeniesDeviceNodesByDefault(t *testing.T) {
 	t.Cleanup(func() { _ = root.Close(t.Context()) })
 	ctx := t.Context()
 
-	if _, err := root.Mknod(ctx, "dev", proto.FileMode(unix.S_IFCHR|0o644), 1, 3, 0); !errors.Is(err, proto.EPERM) {
+	if _, err := root.Mknod(ctx, "dev", proto.FileMode(unix.S_IFCHR|0o644), 1, 3, proto.NoUID); !errors.Is(err, proto.EPERM) {
 		t.Fatalf("Mknod char device: err = %v, want EPERM", err)
 	}
 	if _, serr := os.Stat(filepath.Join(dir, "dev")); !os.IsNotExist(serr) {
@@ -839,7 +839,7 @@ func TestMknod_DeniesDeviceNodesByDefault(t *testing.T) {
 	}
 
 	// FIFOs are not device nodes; the guard must not block them.
-	if _, err := root.Mknod(ctx, "fifo", proto.FileMode(unix.S_IFIFO|0o644), 0, 0, 0); err != nil {
+	if _, err := root.Mknod(ctx, "fifo", proto.FileMode(unix.S_IFIFO|0o644), 0, 0, proto.NoUID); err != nil {
 		t.Fatalf("Mknod fifo: %v", err)
 	}
 }
@@ -873,6 +873,153 @@ func TestDeviceNodeDenied(t *testing.T) {
 	if on.deviceNodeDenied(chr) || on.deviceNodeDenied(blk) {
 		t.Error("WithDeviceNodes must allow block and character devices")
 	}
+}
+
+func TestReadOnlyRejectsMutations(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		call func(context.Context, *Root, *Node) error
+	}{
+		{"open for write", func(ctx context.Context, _ *Root, node *Node) error {
+			_, _, err := node.Open(ctx, unix.O_WRONLY)
+			return err
+		}},
+		{"setattr", func(ctx context.Context, _ *Root, node *Node) error {
+			return node.Setattr(ctx, proto.SetAttr{Valid: proto.SetAttrMode, Mode: 0o600})
+		}},
+		{"create", func(ctx context.Context, root *Root, _ *Node) error {
+			_, _, _, err := root.Create(ctx, "created", unix.O_RDWR, 0o600, proto.NoUID)
+			return err
+		}},
+		{"mkdir", func(ctx context.Context, root *Root, _ *Node) error {
+			_, err := root.Mkdir(ctx, "created-dir", 0o700, proto.NoUID)
+			return err
+		}},
+		{"symlink", func(ctx context.Context, root *Root, _ *Node) error {
+			_, err := root.Symlink(ctx, "created-link", "file", proto.NoUID)
+			return err
+		}},
+		{"link", func(ctx context.Context, root *Root, node *Node) error {
+			return root.Link(ctx, node, "created-hardlink")
+		}},
+		{"mknod", func(ctx context.Context, root *Root, _ *Node) error {
+			_, err := root.Mknod(ctx, "created-fifo", proto.FileMode(unix.S_IFIFO|0o600), 0, 0, proto.NoUID)
+			return err
+		}},
+		{"unlink", func(ctx context.Context, root *Root, _ *Node) error {
+			return root.Unlink(ctx, "file", 0)
+		}},
+		{"rename", func(ctx context.Context, root *Root, _ *Node) error {
+			return root.Rename(ctx, "file", root, "renamed")
+		}},
+		{"set xattr", func(ctx context.Context, _ *Root, node *Node) error {
+			return node.SetXattr(ctx, "user.test", []byte("value"), 0)
+		}},
+		{"remove xattr", func(ctx context.Context, _ *Root, node *Node) error {
+			return node.RemoveXattr(ctx, "user.test")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "file"), []byte("data"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			root, err := NewRoot(dir, WithReadOnly())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = root.Close(t.Context()) })
+			found, err := root.Lookup(t.Context(), "file")
+			if err != nil {
+				t.Fatal(err)
+			}
+			node := found.(*Node)
+			t.Cleanup(func() { _ = node.Close(t.Context()) })
+			if err := tt.call(t.Context(), root, node); !errors.Is(err, proto.EROFS) {
+				t.Fatalf("error = %v, want EROFS", err)
+			}
+		})
+	}
+}
+
+func TestOwnershipChangesRequireExplicitOptIn(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		opts    []Option
+		wantErr error
+	}{
+		{name: "default denied", wantErr: proto.EPERM},
+		{name: "explicitly enabled", opts: []Option{WithOwnershipChanges()}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "file")
+			if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			root, err := NewRoot(dir, tt.opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = root.Close(t.Context()) })
+			found, err := root.Lookup(t.Context(), "file")
+			if err != nil {
+				t.Fatal(err)
+			}
+			node := found.(*Node)
+			t.Cleanup(func() { _ = node.Close(t.Context()) })
+			err = node.Setattr(t.Context(), proto.SetAttr{
+				Valid: proto.SetAttrUID | proto.SetAttrGID,
+				UID:   uint32(os.Getuid()),
+				GID:   uint32(os.Getgid()),
+			})
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Setattr ownership error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCreationGIDRequiresOwnershipOptIn(t *testing.T) {
+	t.Parallel()
+	t.Run("default denied", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := NewRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = root.Close(t.Context()) })
+		if _, err := root.Mkdir(t.Context(), "denied", 0o700, 1234); !errors.Is(err, proto.EPERM) {
+			t.Fatalf("Mkdir error = %v, want EPERM", err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "denied")); !os.IsNotExist(err) {
+			t.Fatalf("denied directory exists: %v", err)
+		}
+	})
+
+	t.Run("enabled applies gid", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := NewRoot(dir, WithOwnershipChanges())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = root.Close(t.Context()) })
+		created, err := root.Mkdir(t.Context(), "allowed", 0o700, uint32(os.Getgid()))
+		if err != nil {
+			t.Fatalf("Mkdir: %v", err)
+		}
+		t.Cleanup(func() { _ = created.(*Node).Close(t.Context()) })
+		var st unix.Stat_t
+		if err := unix.Stat(filepath.Join(dir, "allowed"), &st); err != nil {
+			t.Fatal(err)
+		}
+		if st.Gid != uint32(os.Getgid()) {
+			t.Fatalf("gid = %d, want %d", st.Gid, os.Getgid())
+		}
+	})
 }
 
 func TestLookupSetattr_SizeUsesResolvedFD(t *testing.T) {
@@ -999,7 +1146,7 @@ func TestCreate(t *testing.T) {
 	t.Cleanup(func() { _ = root.Close(t.Context()) })
 
 	ctx := t.Context()
-	child, fh, _, err := root.Create(ctx, "newfile.txt", syscall.O_RDWR, 0644, 0)
+	child, fh, _, err := root.Create(ctx, "newfile.txt", syscall.O_RDWR, 0644, proto.NoUID)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -1044,7 +1191,7 @@ func TestMkdir(t *testing.T) {
 	t.Cleanup(func() { _ = root.Close(t.Context()) })
 
 	ctx := t.Context()
-	child, err := root.Mkdir(ctx, "subdir", 0755, 0)
+	child, err := root.Mkdir(ctx, "subdir", 0755, proto.NoUID)
 	if err != nil {
 		t.Fatalf("Mkdir: %v", err)
 	}
@@ -1076,7 +1223,7 @@ func TestSymlink(t *testing.T) {
 	t.Cleanup(func() { _ = root.Close(t.Context()) })
 
 	ctx := t.Context()
-	child, err := root.Symlink(ctx, "link", "target.txt", 0)
+	child, err := root.Symlink(ctx, "link", "target.txt", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Symlink: %v", err)
 	}
@@ -1645,7 +1792,7 @@ func TestProtocol_CreateAndRead(t *testing.T) {
 		Name:  "created.txt",
 		Flags: syscall.O_RDWR,
 		Mode:  0644,
-		GID:   0,
+		GID:   proto.NoUID,
 	})
 	_, msg := readResponse(t, cp.client)
 	rc, ok := msg.(*p9l.Rlcreate)
@@ -1695,7 +1842,7 @@ func TestProtocol_Mkdir(t *testing.T) {
 		DirFid: 0,
 		Name:   "newdir",
 		Mode:   0755,
-		GID:    0,
+		GID:    proto.NoUID,
 	})
 	_, msg := readResponse(t, cp.client)
 	rm, ok := msg.(*p9l.Rmkdir)

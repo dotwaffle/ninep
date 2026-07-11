@@ -13,6 +13,9 @@ import (
 
 // Link creates a hard link named name in this directory pointing to target.
 func (n *Node) Link(_ context.Context, target server.Node, name string) error {
+	if err := n.requireMutable(); err != nil {
+		return err
+	}
 	if n.QID().Type != proto.QTDIR {
 		return proto.ENOTDIR
 	}
@@ -113,7 +116,14 @@ func (n *Node) Lookup(_ context.Context, name string) (server.Node, error) {
 
 // Create creates a new file in this directory via Openat with O_CREAT.
 // Returns the new Node and a fileHandle for the opened file.
-func (n *Node) Create(_ context.Context, name string, flags uint32, mode proto.FileMode, _ uint32) (server.Node, server.FileHandle, uint32, error) {
+func (n *Node) Create(_ context.Context, name string, flags uint32, mode proto.FileMode, gid uint32) (server.Node, server.FileHandle, uint32, error) {
+	if err := n.requireMutable(); err != nil {
+		return nil, nil, 0, err
+	}
+	hostGID, setGID, err := n.creationGID(gid)
+	if err != nil {
+		return nil, nil, 0, err
+	}
 	if n.QID().Type != proto.QTDIR {
 		return nil, nil, 0, proto.ENOTDIR
 	}
@@ -144,12 +154,27 @@ func (n *Node) Create(_ context.Context, name string, flags uint32, mode proto.F
 	}
 	child.Init(n.root.qidFor(&st), child)
 	child.EmbeddedInode().SetPrunable()
+	if setGID {
+		if err := child.chownResolved(-1, hostGID); err != nil {
+			_ = child.Close(context.Background())
+			_ = unix.Close(fd)
+			_ = unix.Unlinkat(n.fd, name, 0)
+			return nil, nil, 0, toProtoErr(err)
+		}
+	}
 
 	return child, &fileHandle{fd: fd}, 0, nil
 }
 
 // Mkdir creates a new subdirectory in this directory via Mkdirat.
-func (n *Node) Mkdir(_ context.Context, name string, mode proto.FileMode, _ uint32) (server.Node, error) {
+func (n *Node) Mkdir(_ context.Context, name string, mode proto.FileMode, gid uint32) (server.Node, error) {
+	if err := n.requireMutable(); err != nil {
+		return nil, err
+	}
+	hostGID, setGID, err := n.creationGID(gid)
+	if err != nil {
+		return nil, err
+	}
 	if n.QID().Type != proto.QTDIR {
 		return nil, proto.ENOTDIR
 	}
@@ -175,12 +200,26 @@ func (n *Node) Mkdir(_ context.Context, name string, mode proto.FileMode, _ uint
 	}
 	child.Init(n.root.qidFor(&st), child)
 	child.EmbeddedInode().SetPrunable()
+	if setGID {
+		if err := child.chownResolved(-1, hostGID); err != nil {
+			_ = child.Close(context.Background())
+			_ = unix.Unlinkat(n.fd, name, unix.AT_REMOVEDIR)
+			return nil, toProtoErr(err)
+		}
+	}
 
 	return child, nil
 }
 
 // Symlink creates a symbolic link named name pointing to target via Symlinkat.
-func (n *Node) Symlink(_ context.Context, name, target string, _ uint32) (server.Node, error) {
+func (n *Node) Symlink(_ context.Context, name, target string, gid uint32) (server.Node, error) {
+	if err := n.requireMutable(); err != nil {
+		return nil, err
+	}
+	hostGID, setGID, err := n.creationGID(gid)
+	if err != nil {
+		return nil, err
+	}
 	if n.QID().Type != proto.QTDIR {
 		return nil, proto.ENOTDIR
 	}
@@ -206,13 +245,27 @@ func (n *Node) Symlink(_ context.Context, name, target string, _ uint32) (server
 	}
 	child.Init(n.root.qidFor(&st), child)
 	child.EmbeddedInode().SetPrunable()
+	if setGID {
+		if err := child.chownResolved(-1, hostGID); err != nil {
+			_ = child.Close(context.Background())
+			_ = unix.Unlinkat(n.fd, name, 0)
+			return nil, toProtoErr(err)
+		}
+	}
 
 	return child, nil
 }
 
 // Mknod creates a device node named name via mknodat (a per-platform shim:
 // the dev argument is int on Linux and uint64 on FreeBSD).
-func (n *Node) Mknod(_ context.Context, name string, mode proto.FileMode, major, minor, _ uint32) (server.Node, error) {
+func (n *Node) Mknod(_ context.Context, name string, mode proto.FileMode, major, minor, gid uint32) (server.Node, error) {
+	if err := n.requireMutable(); err != nil {
+		return nil, err
+	}
+	hostGID, setGID, err := n.creationGID(gid)
+	if err != nil {
+		return nil, err
+	}
 	if n.QID().Type != proto.QTDIR {
 		return nil, proto.ENOTDIR
 	}
@@ -241,6 +294,13 @@ func (n *Node) Mknod(_ context.Context, name string, mode proto.FileMode, major,
 	}
 	child.Init(n.root.qidFor(&st), child)
 	child.EmbeddedInode().SetPrunable()
+	if setGID {
+		if err := child.chownResolved(-1, hostGID); err != nil {
+			_ = child.Close(context.Background())
+			_ = unix.Unlinkat(n.fd, name, 0)
+			return nil, toProtoErr(err)
+		}
+	}
 
 	return child, nil
 }
@@ -252,6 +312,9 @@ func (n *Node) Readlink(_ context.Context) (string, error) {
 
 // Unlink removes the entry named name from this directory via Unlinkat.
 func (n *Node) Unlink(_ context.Context, name string, flags uint32) error {
+	if err := n.requireMutable(); err != nil {
+		return err
+	}
 	if n.QID().Type != proto.QTDIR {
 		return proto.ENOTDIR
 	}
@@ -267,6 +330,9 @@ func (n *Node) Unlink(_ context.Context, name string, flags uint32) error {
 // Rename moves the entry oldName from this directory to newDir with newName
 // via Renameat.
 func (n *Node) Rename(_ context.Context, oldName string, newDir server.Node, newName string) error {
+	if err := n.requireMutable(); err != nil {
+		return err
+	}
 	if n.QID().Type != proto.QTDIR {
 		return proto.ENOTDIR
 	}
@@ -274,8 +340,14 @@ func (n *Node) Rename(_ context.Context, oldName string, newDir server.Node, new
 	var newDirFd int
 	switch d := newDir.(type) {
 	case *Node:
+		if err := d.requireMutable(); err != nil {
+			return err
+		}
 		newDirFd = d.fd
 	case *Root:
+		if err := d.Node.requireMutable(); err != nil {
+			return err
+		}
 		newDirFd = d.fd
 	default:
 		return proto.EINVAL

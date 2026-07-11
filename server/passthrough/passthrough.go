@@ -139,6 +139,9 @@ var (
 // Open opens the node. Directories receive a cursor-bearing raw readdir
 // handle; other nodes receive an offset-based data handle.
 func (n *Node) Open(_ context.Context, flags uint32) (server.FileHandle, uint32, error) {
+	if n.root.readOnly && (int(flags)&unix.O_ACCMODE != unix.O_RDONLY || int(flags)&unix.O_TRUNC != 0) {
+		return nil, 0, proto.EROFS
+	}
 	if n.QID().Type == proto.QTDIR {
 		fd, err := n.openResolved(unix.O_RDONLY | unix.O_DIRECTORY)
 		if err != nil {
@@ -164,6 +167,14 @@ func (n *Node) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) 
 
 // Setattr modifies file attributes based on the valid mask.
 func (n *Node) Setattr(_ context.Context, attr proto.SetAttr) error {
+	if attr.Valid != 0 {
+		if err := n.requireMutable(); err != nil {
+			return err
+		}
+	}
+	if attr.Valid&(proto.SetAttrUID|proto.SetAttrGID) != 0 && !n.root.allowOwner {
+		return proto.EPERM
+	}
 	if attr.Valid&proto.SetAttrMode != 0 {
 		if err := n.chmodResolved(attr.Mode); err != nil {
 			return toProtoErr(err)

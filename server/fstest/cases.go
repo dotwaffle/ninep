@@ -236,7 +236,7 @@ func createScratch(t *testing.T, tc *testConn, name string) {
 	t.Helper()
 	attach(t, tc, 1, 0, "test", "")
 	expectRwalk(t, walk(t, tc, 2, 0, 1))
-	msg := create(t, tc, 3, 1, name, syscall.O_RDWR, 0o644, 0)
+	msg := create(t, tc, 3, 1, name, syscall.O_RDWR, 0o644, proto.NoUID)
 	if _, ok := msg.(*p9l.Rlcreate); !ok {
 		t.Fatalf("expected Rlcreate for %q, got %T: %+v", name, msg, msg)
 	}
@@ -429,7 +429,7 @@ func testReaddirEmpty(t *testing.T, root server.Node) {
 	expectRwalk(t, msg)
 
 	// Mkdir "emptydir" in sub.
-	msg = mkdir(t, tc, 3, 1, "emptydir", 0o755, 0)
+	msg = mkdir(t, tc, 3, 1, "emptydir", 0o755, proto.NoUID)
 	if _, ok := msg.(*p9l.Rmkdir); !ok {
 		t.Fatalf("expected Rmkdir, got %T: %+v", msg, msg)
 	}
@@ -466,7 +466,7 @@ func testReaddirPaginated(t *testing.T, root server.Node) {
 	tc := newTestConn(t, root)
 	attach(t, tc, 1, 0, "test", "")
 
-	msg := mkdir(t, tc, 2, 0, "paginated", 0o755, 0)
+	msg := mkdir(t, tc, 2, 0, "paginated", 0o755, proto.NoUID)
 	if _, ok := msg.(*p9l.Rmkdir); !ok {
 		t.Fatalf("expected Rmkdir, got %T: %+v", msg, msg)
 	}
@@ -484,7 +484,7 @@ func testReaddirPaginated(t *testing.T, root server.Node) {
 		// for the next iteration and the final Readdir.
 		expectRwalk(t, walk(t, tc, tag, 1, 2))
 		tag++
-		msg = create(t, tc, tag, 2, name, syscall.O_RDWR, 0o644, 0)
+		msg = create(t, tc, tag, 2, name, syscall.O_RDWR, 0o644, proto.NoUID)
 		tag++
 		if _, ok := msg.(*p9l.Rlcreate); !ok {
 			t.Fatalf("create %q: expected Rlcreate, got %T: %+v", name, msg, msg)
@@ -546,7 +546,7 @@ func testRenameFile(t *testing.T, root server.Node) {
 
 	// Clone root fid for create, then create the scratch file to rename.
 	expectRwalk(t, walk(t, tc, 2, 0, 1))
-	msg := create(t, tc, 3, 1, "rename-src", syscall.O_RDWR, 0o644, 0)
+	msg := create(t, tc, 3, 1, "rename-src", syscall.O_RDWR, 0o644, proto.NoUID)
 	if _, ok := msg.(*p9l.Rlcreate); !ok {
 		t.Fatalf("expected Rlcreate, got %T: %+v", msg, msg)
 	}
@@ -584,7 +584,7 @@ func testCreateFile(t *testing.T, root server.Node) {
 	expectRwalk(t, msg)
 
 	// Create "newfile" in root. Tlcreate replaces fid 1 with the new file.
-	msg = create(t, tc, 3, 1, "newfile", syscall.O_RDWR, 0o644, 0)
+	msg = create(t, tc, 3, 1, "newfile", syscall.O_RDWR, 0o644, proto.NoUID)
 	if _, ok := msg.(*p9l.Rlcreate); !ok {
 		t.Fatalf("expected Rlcreate, got %T: %+v", msg, msg)
 	}
@@ -622,7 +622,7 @@ func testMkdir(t *testing.T, root server.Node) {
 	attach(t, tc, 1, 0, "test", "")
 
 	// Mkdir "newdir" in root.
-	msg := mkdir(t, tc, 2, 0, "newdir", 0o755, 0)
+	msg := mkdir(t, tc, 2, 0, "newdir", 0o755, proto.NoUID)
 	rmkdir, ok := msg.(*p9l.Rmkdir)
 	if !ok {
 		t.Fatalf("expected Rmkdir, got %T: %+v", msg, msg)
@@ -740,7 +740,7 @@ func testUnlinkFile(t *testing.T, root server.Node) {
 	expectRwalk(t, msg)
 
 	// Create a file to unlink.
-	msg = create(t, tc, 3, 1, "todelete", syscall.O_RDWR, 0o644, 0)
+	msg = create(t, tc, 3, 1, "todelete", syscall.O_RDWR, 0o644, proto.NoUID)
 	if _, ok := msg.(*p9l.Rlcreate); !ok {
 		t.Fatalf("expected Rlcreate, got %T: %+v", msg, msg)
 	}

@@ -639,7 +639,7 @@ func parseDirents(data []byte) []proto.Dirent {
 // symlink sends Tsymlink and returns the raw response.
 func symlink(t *testing.T, tc *testConn, tag proto.Tag, dirFid proto.Fid, name, target string) proto.Message {
 	t.Helper()
-	sendMsg(t, tc.client, tag, &p9l.Tsymlink{DirFid: dirFid, Name: name, Target: target})
+	sendMsg(t, tc.client, tag, &p9l.Tsymlink{DirFid: dirFid, Name: name, Target: target, GID: proto.NoUID})
 	_, msg := readMsg(t, tc.client)
 	return msg
 }

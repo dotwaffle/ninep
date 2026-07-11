@@ -28,7 +28,7 @@ import (
 // with the DMSYMLINK bit set and the target in the create extension field,
 // which is out of scope for this high-level surface).
 //
-// gid is passed as 0 ("server default"). Callers who need explicit gid
+// gid is passed as [proto.NoUID] (server default). Callers who need explicit gid
 // control should use [Raw.Tsymlink] directly.
 func (c *Conn) Symlink(ctx context.Context, linkPath, target string) (*File, error) {
 	if err := c.requireDialect(protocolL, "Symlink"); err != nil {
@@ -56,9 +56,8 @@ func (c *Conn) Symlink(ctx context.Context, linkPath, target string) (*File, err
 		return nil, err
 	}
 
-	// Issue Tsymlink against the parent dirFid. GID=0 defers to the
-	// server's default (matches Linux v9fs convention).
-	qid, err := c.Raw().Tsymlink(ctx, dirFid, name, target, 0)
+	// Issue Tsymlink against the parent dirFid without requesting a group.
+	qid, err := c.Raw().Tsymlink(ctx, dirFid, name, target, proto.NoUID)
 	if err != nil {
 		dirCleanup()
 		return nil, err

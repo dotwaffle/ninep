@@ -2,9 +2,12 @@
 // to the host OS filesystem. It validates the entire ninep library API surface
 // and serves as a production-grade reference implementation.
 //
-// All file operations use *at syscalls relative to directory file descriptors,
-// preventing path traversal attacks. UID/GID mapping is configurable with
-// identity mapping as the default.
+// All file operations use held descriptors or *at syscalls relative to held
+// directories. UID/GID mapping is configurable with identity mapping as the
+// default, but mapping is translation rather than authorization. The backend
+// operates with the server process's OS authority. Use WithReadOnly for exports
+// that should not mutate host state. Ownership changes require the explicit
+// WithOwnershipChanges option.
 //
 // # Platform support
 //

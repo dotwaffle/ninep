@@ -146,7 +146,7 @@ root := memfs.NewDir(gen).
 
 ### `server/passthrough/`
 
-Reference implementation that delegates all operations to the host filesystem via `*at` syscalls (`Openat`, `Fstatat`, `Mkdirat`, `Renameat`, `Unlinkat`, etc.). Nodes hold OS file descriptors. For non-directory files, `O_PATH` descriptors are opened on lookup and reopened via `/proc/self/fd/N` for actual I/O. Supports UID/GID mapping via the `UIDMapper` interface. Depends on `golang.org/x/sys/unix`.
+Reference implementation that delegates operations to the host filesystem through held descriptors and `*at` syscalls. It runs with the server process's OS authority. `WithReadOnly` disables mutations; ownership changes are denied unless `WithOwnershipChanges` is supplied. `UIDMapper` translates identifiers but is not an authorization mechanism. Depends on `golang.org/x/sys/unix`.
 
 ### `server/fstest/`
 

@@ -51,6 +51,9 @@ func (n *Node) GetXattr(_ context.Context, name string) ([]byte, error) {
 
 // SetXattr sets an extended attribute value using Fsetxattr.
 func (n *Node) SetXattr(_ context.Context, name string, data []byte, flags uint32) error {
+	if err := n.requireMutable(); err != nil {
+		return err
+	}
 	fd, err := n.xattrFd()
 	if err != nil {
 		return toProtoErr(err)
@@ -100,6 +103,9 @@ func (n *Node) ListXattrs(_ context.Context) ([]string, error) {
 
 // RemoveXattr removes an extended attribute using Fremovexattr.
 func (n *Node) RemoveXattr(_ context.Context, name string) error {
+	if err := n.requireMutable(); err != nil {
+		return err
+	}
 	fd, err := n.xattrFd()
 	if err != nil {
 		return toProtoErr(err)

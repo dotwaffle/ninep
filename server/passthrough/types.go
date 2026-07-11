@@ -7,6 +7,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/server"
 )
 
@@ -48,6 +49,8 @@ type Root struct {
 	dev         uint64
 	ino         uint64
 	allowDevice bool
+	readOnly    bool
+	allowOwner  bool
 	qidMu       sync.Mutex
 	qidPaths    map[fileIdentity]uint64
 	nextQIDPath uint64
@@ -69,6 +72,36 @@ func WithUIDMapper(m UIDMapper) Option {
 // this only when the export is trusted to receive device nodes.
 func WithDeviceNodes() Option {
 	return func(r *Root) { r.allowDevice = true }
+}
+
+// WithReadOnly rejects every operation that can modify the exported tree.
+func WithReadOnly() Option {
+	return func(r *Root) { r.readOnly = true }
+}
+
+// WithOwnershipChanges permits client-requested UID and GID changes.
+// Ownership changes are denied by default because UID mapping translates
+// values but does not authorize the peer that supplied them.
+func WithOwnershipChanges() Option {
+	return func(r *Root) { r.allowOwner = true }
+}
+
+func (n *Node) requireMutable() error {
+	if n.root.readOnly {
+		return proto.EROFS
+	}
+	return nil
+}
+
+func (n *Node) creationGID(gid uint32) (int, bool, error) {
+	if gid == proto.NoUID {
+		return -1, false, nil
+	}
+	if !n.root.allowOwner {
+		return -1, false, proto.EPERM
+	}
+	_, hostGID := n.root.mapper.ToHost(0, gid)
+	return int(hostGID), true, nil
 }
 
 // fileHandle wraps an OS file descriptor for per-open read/write operations

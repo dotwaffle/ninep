@@ -51,6 +51,9 @@ The package is implemented on Linux and FreeBSD 14 or later.
 Device nodes are disabled unless `WithDeviceNodes` is explicitly supplied.
 Both callbacks in a custom `UIDMapper` are required and are validated during
 root construction.
+`WithReadOnly` rejects all mutations. UID/GID mapping does not authorize a
+peer, and ownership changes are denied unless `WithOwnershipChanges` is
+explicitly supplied.
 
 ## Client model
 
