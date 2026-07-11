@@ -95,3 +95,57 @@ func TestPrune_WalkThenClunkRemovesChildEntry(t *testing.T) {
 		t.Error("children map still has file.txt after the only fid clunked; want pruned")
 	}
 }
+
+// TestPrune_WalkCloneAliasKeepsEntryUntilAllClunk proves the case a name-based
+// cap-and-delete scheme would get wrong: cloning a fid (Twalk nwname=0)
+// aliases the SAME server-side Inode rather than resolving a fresh one via
+// Lookup, so the child map entry must survive until every aliasing fid
+// clunks, not just the first.
+func TestPrune_WalkCloneAliasKeepsEntryUntilAllClunk(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write file.txt: %v", err)
+	}
+
+	root, err := NewRoot(dir)
+	if err != nil {
+		t.Fatalf("NewRoot(%q): %v", dir, err)
+	}
+
+	cli, teardown := newPruneTestServer(t, root)
+	defer teardown()
+
+	rootF, err := cli.Attach(t.Context(), "nobody", "")
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+
+	f1, err := rootF.Walk(t.Context(), []string{"file.txt"})
+	if err != nil {
+		t.Fatalf("Walk(file.txt): %v", err)
+	}
+
+	f2, err := f1.Clone(t.Context())
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+
+	if _, ok := root.EmbeddedInode().Children()["file.txt"]; !ok {
+		t.Fatal("children map missing file.txt after walk+clone")
+	}
+
+	if err := f1.Close(); err != nil {
+		t.Fatalf("Close f1: %v", err)
+	}
+	if _, ok := root.EmbeddedInode().Children()["file.txt"]; !ok {
+		t.Fatal("children map pruned file.txt while the cloned alias fid is still live")
+	}
+
+	if err := f2.Close(); err != nil {
+		t.Fatalf("Close f2: %v", err)
+	}
+	if _, ok := root.EmbeddedInode().Children()["file.txt"]; ok {
+		t.Error("children map still has file.txt after both aliasing fids clunked; want pruned")
+	}
+}

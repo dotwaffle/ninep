@@ -49,6 +49,13 @@ type fidState struct {
 	ioRefs  int
 	closing bool
 
+	// closeNode records, for the deferred releaseNow call endIO makes once
+	// ioRefs drains, whether that call should invoke NodeCloser.Close on
+	// node. finishClunk sets this from decRefNode's return value: closing
+	// is only correct once no other fid (walk-clone or xattrwalk alias)
+	// still references the identical Node value.
+	closeNode bool
+
 	// Xattr fields (used when state is fidXattrRead or fidXattrWrite).
 	xattrNode   Node        // Original node the xattr belongs to.
 	xattrName   string      // Attribute name.
@@ -104,18 +111,29 @@ func (fs *fidState) endIO(ctx context.Context, logger *slog.Logger) {
 	fs.mu.Lock()
 	fs.ioRefs--
 	release := fs.closing && fs.ioRefs == 0
+	closeNode := fs.closeNode
 	fs.mu.Unlock()
 	if release {
-		fs.releaseNow(ctx, logger)
+		fs.releaseNow(ctx, logger, closeNode)
 	}
 }
 
-// releaseNow calls FileReleaser.Release and NodeCloser.Close for fs. It must
-// only run once no I/O call registered via beginIO is still in flight,
-// either because handleClunk found ioRefs already at zero or because
-// endIO is draining the last outstanding call.
-func (fs *fidState) releaseNow(ctx context.Context, logger *slog.Logger) {
+// releaseNow calls FileReleaser.Release for fs, and NodeCloser.Close on
+// fs.node when closeNode is true. It must only run once no I/O call
+// registered via beginIO is still in flight, either because handleClunk
+// found ioRefs already at zero or because endIO is draining the last
+// outstanding call.
+//
+// closeNode must be false whenever another fid still references the
+// identical Node value (a walk-clone or xattrwalk alias of fs.node):
+// closing unconditionally would tear down the shared underlying resource
+// (e.g. a passthrough fd) out from under that other fid. Callers derive it
+// from decRefNode's return value.
+func (fs *fidState) releaseNow(ctx context.Context, logger *slog.Logger, closeNode bool) {
 	releaseFileHandle(ctx, fs.handle, logger)
+	if !closeNode {
+		return
+	}
 	if closer, ok := fs.node.(NodeCloser); ok {
 		if err := closer.Close(ctx); err != nil {
 			if logger != nil {
@@ -131,13 +149,18 @@ func (fs *fidState) releaseNow(ctx context.Context, logger *slog.Logger) {
 // Used by handleClunk and handleRemove: both fully tear down the fid --
 // Tremove clunks its fid whether or not the remove itself succeeds, per
 // remove(5).
-func (fs *fidState) finishClunk(ctx context.Context, logger *slog.Logger) {
+//
+// closeNode is forwarded to releaseNow (see its doc) and must reflect
+// whether this fid is the last one referencing fs.node, as reported by
+// decRefNode.
+func (fs *fidState) finishClunk(ctx context.Context, logger *slog.Logger, closeNode bool) {
 	fs.mu.Lock()
 	fs.closing = true
+	fs.closeNode = closeNode
 	release := fs.ioRefs == 0
 	fs.mu.Unlock()
 	if release {
-		fs.releaseNow(ctx, logger)
+		fs.releaseNow(ctx, logger, closeNode)
 	}
 }
 

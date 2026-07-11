@@ -59,9 +59,9 @@ func (i *Inode) incRef() {
 	i.refs.Add(1)
 }
 
-// decRef records one fewer live fid referencing this Inode and, if that
-// was the last one and this Inode is prunable, removes it from its
-// parent's children map.
+// decRef records one fewer live fid referencing this Inode, reporting
+// whether that was the last one. If it was and this Inode is prunable, it
+// is also removed from its parent's children map.
 //
 // The removal re-scans the parent for an entry whose value is THIS exact
 // Inode pointer before deleting, rather than deleting by name: passthrough
@@ -72,30 +72,41 @@ func (i *Inode) incRef() {
 // entry; comparing pointers first (the same pattern already used by
 // removeViaInodeTree and handleRename to recover a name from an Inode)
 // guards against that.
-func (i *Inode) decRef() {
+//
+// The returned bool also gates NodeCloser.Close: callers (fidState.
+// finishClunk/releaseNow, via decRefNode) must only close the node's
+// underlying resource (e.g. a passthrough fd) once every fid referencing
+// this Inode -- including walk-clone and xattrwalk aliases, which bind
+// distinct fids to the identical Node value -- has clunked. Closing on any
+// single alias's clunk would tear down the resource out from under the
+// others still live.
+func (i *Inode) decRef() (lastRef bool) {
 	if i.refs.Add(-1) != 0 {
-		return
+		return false
 	}
 	i.mu.Lock()
 	prunable := i.prunable
 	parent := i.parent
 	i.mu.Unlock()
-	if !prunable || parent == nil {
-		return
-	}
-
-	parent.mu.Lock()
-	defer parent.mu.Unlock()
-	for name, child := range parent.children {
-		if child == i {
-			delete(parent.children, name)
-			break
+	if prunable && parent != nil {
+		parent.mu.Lock()
+		for name, child := range parent.children {
+			if child == i {
+				delete(parent.children, name)
+				break
+			}
 		}
+		parent.mu.Unlock()
 	}
+	return true
 }
 
 // incRefNode increments the reference count on node's embedded Inode, if it
-// has one. Nodes that do not implement InodeEmbedder are unaffected.
+// has one. Tracked for every InodeEmbedder node regardless of SetPrunable:
+// the count also gates NodeCloser.Close (see decRefNode), which matters for
+// any node that can be aliased by more than one fid (walk-clone, xattrwalk),
+// not only prunable ones. Nodes that do not implement InodeEmbedder cannot
+// be tracked and are unaffected.
 func incRefNode(n Node) {
 	if ie, ok := n.(InodeEmbedder); ok {
 		ie.EmbeddedInode().incRef()
@@ -104,12 +115,22 @@ func incRefNode(n Node) {
 
 // decRefNode decrements the reference count on node's embedded Inode, if it
 // has one, pruning it from its parent's children map once no fid
-// references it (see Inode.decRef). Nodes that do not implement
-// InodeEmbedder are unaffected.
-func decRefNode(n Node) {
-	if ie, ok := n.(InodeEmbedder); ok {
-		ie.EmbeddedInode().decRef()
+// references it (see Inode.decRef), and reports whether this was the last
+// fid referencing the node.
+//
+// Callers use the return value to gate NodeCloser.Close: closing on any
+// single alias's clunk would tear down the underlying resource (e.g. a
+// passthrough fd) out from under another fid still bound to the identical
+// Node value. Nodes that do not implement InodeEmbedder cannot be tracked,
+// so decRefNode reports true for them, preserving the pre-refcounting
+// behavior of always closing on every clunk -- there is no way to know
+// whether such a node is aliased by another fid.
+func decRefNode(n Node) bool {
+	ie, ok := n.(InodeEmbedder)
+	if !ok {
+		return true
 	}
+	return ie.EmbeddedInode().decRef()
 }
 
 // Compile-time assertions that *Inode implements all capability interfaces.

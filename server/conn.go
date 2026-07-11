@@ -827,8 +827,8 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 		c.otelInst.recordFidChange(-int64(len(states)))
 	}
 	for _, fs := range states {
-		decRefNode(fs.currentNode())
-		fs.releaseNow(context.Background(), c.logger)
+		lastRef := decRefNode(fs.currentNode())
+		fs.releaseNow(context.Background(), c.logger, lastRef)
 	}
 
 	var tver proto.Tversion

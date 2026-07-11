@@ -259,6 +259,81 @@ func TestFidState_ClunkDefersReleaseUntilIODrains(t *testing.T) {
 	}
 }
 
+// closeRecorderNode is a Node that records whether Close was called, for
+// asserting the closeNode gate in fidState.releaseNow/finishClunk.
+type closeRecorderNode struct {
+	Inode
+	closed chan struct{}
+}
+
+func newCloseRecorderNode(qid proto.QID) *closeRecorderNode {
+	n := &closeRecorderNode{closed: make(chan struct{})}
+	n.Init(qid, n)
+	return n
+}
+
+func (n *closeRecorderNode) Close(context.Context) error {
+	close(n.closed)
+	return nil
+}
+
+// TestFidState_FinishClunk_CloseNodeGate pins the fix for the double-close
+// hazard where two fids alias the identical Node value (walk-clone via
+// Twalk nwname=0, or an xattrwalk fid): clunking one must not close the
+// shared underlying resource while the other is still live. finishClunk's
+// closeNode parameter (derived from decRefNode's "was this the last
+// reference" result) gates NodeCloser.Close for exactly this reason.
+func TestFidState_FinishClunk_CloseNodeGate(t *testing.T) {
+	t.Parallel()
+
+	node := newCloseRecorderNode(proto.QID{Path: 1})
+
+	// First aliasing fid clunks with closeNode=false: another fid (fs2,
+	// constructed below) still references the same node.
+	fs1 := &fidState{node: node, state: fidOpened}
+	fs1.finishClunk(context.Background(), nil, false)
+	select {
+	case <-node.closed:
+		t.Fatal("Close called with closeNode=false; want deferred to the last alias's clunk")
+	default:
+	}
+
+	// Second (and last) aliasing fid clunks with closeNode=true.
+	fs2 := &fidState{node: node, state: fidOpened}
+	fs2.finishClunk(context.Background(), nil, true)
+	select {
+	case <-node.closed:
+	default:
+		t.Fatal("Close not called with closeNode=true (last reference)")
+	}
+}
+
+// TestFidState_ClunkDefersCloseNodeGate covers the same closeNode gate on
+// the deferred-release path: finishClunk records closeNode on fs while an
+// I/O call is still in flight, and endIO must honor that recorded value
+// (not unconditionally close) once it performs the deferred release.
+func TestFidState_ClunkDefersCloseNodeGate(t *testing.T) {
+	t.Parallel()
+
+	node := newCloseRecorderNode(proto.QID{Path: 2})
+	fs := &fidState{node: node, state: fidOpened}
+
+	if !fs.beginIO() {
+		t.Fatal("beginIO: got false, want true (fid not yet closing)")
+	}
+
+	// closeNode=false: an aliasing fid is still live, so even once the
+	// in-flight I/O call drains, the deferred release must not close node.
+	fs.finishClunk(context.Background(), nil, false)
+
+	fs.endIO(context.Background(), nil)
+	select {
+	case <-node.closed:
+		t.Fatal("endIO closed node despite closeNode=false recorded by finishClunk")
+	default:
+	}
+}
+
 func TestFidTable_UpdateNonexistent(t *testing.T) {
 	t.Parallel()
 

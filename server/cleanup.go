@@ -75,8 +75,10 @@ func (c *conn) cleanup() {
 	for _, fs := range states {
 		// decRefNode unconditionally: the fid is gone from the table either
 		// way, so it no longer references its node regardless of whether the
-		// handle/node release below also runs.
-		decRefNode(fs.currentNode())
+		// handle/node release below also runs. Its return value also gates
+		// NodeCloser.Close below: a walk-clone or xattrwalk alias of this
+		// fid's node may still be live on another fid in this same batch.
+		lastRef := decRefNode(fs.currentNode())
 		// Release handles and close nodes only when handlers drained. A stuck
 		// handler may still be reading through fs.handle; closing its fd here
 		// would race that read (use-after-close on an fd that could be
@@ -85,7 +87,7 @@ func (c *conn) cleanup() {
 		if !drained {
 			continue
 		}
-		fs.releaseNow(context.Background(), c.logger)
+		fs.releaseNow(context.Background(), c.logger, lastRef)
 	}
 	if len(states) > 0 {
 		c.logger.Debug("cleanup: clunked fids",

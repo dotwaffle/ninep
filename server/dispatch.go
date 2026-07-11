@@ -265,7 +265,7 @@ func (c *conn) handleClunk(ctx context.Context, tc *proto.Tclunk) proto.Message 
 		return c.errorMsg(proto.EBADF)
 	}
 	c.otelInst.recordFidChange(-1)
-	decRefNode(fs.currentNode())
+	lastRef := decRefNode(fs.currentNode())
 
 	// Handle xattr commit/cleanup before normal clunk logic. clunk() has
 	// already removed the fid from the table, so no further handler can
@@ -313,8 +313,10 @@ func (c *conn) handleClunk(ctx context.Context, tc *proto.Tclunk) proto.Message 
 	// close the underlying fd out from under that call, and if the OS
 	// reused the fd number before the call returned, it would silently
 	// operate on the wrong file. finishClunk defers the release to the
-	// last such call's endIO in that case.
-	fs.finishClunk(ctx, c.logger)
+	// last such call's endIO in that case. lastRef additionally gates the
+	// NodeCloser.Close call itself: a walk-clone or xattrwalk alias of
+	// this fid's node may still be live on another fid.
+	fs.finishClunk(ctx, c.logger, lastRef)
 	return &proto.Rclunk{}
 }
 
@@ -336,8 +338,8 @@ func (c *conn) handleRemove(ctx context.Context, tr *proto.Tremove) proto.Messag
 	// once refs hits zero, so running it first would make the node
 	// unreachable via name lookup and break removal entirely.
 	removeErr := removeViaInodeTree(ctx, fs.currentNode())
-	decRefNode(fs.currentNode())
-	fs.finishClunk(ctx, c.logger)
+	lastRef := decRefNode(fs.currentNode())
+	fs.finishClunk(ctx, c.logger, lastRef)
 
 	if removeErr != nil {
 		return c.errorMsg(errnoFromError(removeErr))
