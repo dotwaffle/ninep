@@ -441,6 +441,11 @@ func (c *conn) readdirSimple(ctx context.Context, fs *fidState, m *p9l.Treaddir,
 	fs.mu.Lock()
 	// Re-fetch on offset 0 (client is re-reading from start) or first call.
 	if m.Offset == 0 || !fs.dirCached {
+		// Invalidate before the unlocked fetch: if Readdir fails, a
+		// subsequent offset>0 read must not serve entries from the previous
+		// listing as though the re-fetch had succeeded.
+		fs.dirCache = nil
+		fs.dirCached = false
 		fs.mu.Unlock()
 		dirents, err := rd.Readdir(ctx)
 		if err != nil {
