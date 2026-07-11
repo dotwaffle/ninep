@@ -1008,21 +1008,10 @@ func TestLock_NonBlocking(t *testing.T) {
 	}
 	defer func() { _ = syscall.Close(fd) }()
 
-	root, err := NewRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = root.Close(t.Context()) })
-
-	node := &Node{fd: fd, root: root}
-	var st unix.Stat_t
-	if err := unix.Fstat(fd, &st); err != nil {
-		t.Fatal(err)
-	}
-	node.Init(statToQID(&st), node)
+	h := &fileHandle{fd: fd}
 
 	ctx := t.Context()
-	status, err := node.Lock(ctx, proto.LockTypeWrLck, 0, 0, 0, 1, "test")
+	status, err := h.Lock(ctx, proto.LockTypeWrLck, 0, 0, 0, 1, "test")
 	if err != nil {
 		t.Fatalf("Lock: %v", err)
 	}
@@ -1031,7 +1020,7 @@ func TestLock_NonBlocking(t *testing.T) {
 	}
 
 	// Unlock.
-	status, err = node.Lock(ctx, proto.LockTypeUnlck, 0, 0, 0, 1, "test")
+	status, err = h.Lock(ctx, proto.LockTypeUnlck, 0, 0, 0, 1, "test")
 	if err != nil {
 		t.Fatalf("Unlock: %v", err)
 	}
@@ -1057,20 +1046,9 @@ func TestLock_BlockFlagDoesNotWait(t *testing.T) {
 	}
 	defer func() { _ = syscall.Close(fd) }()
 
-	root, err := NewRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = root.Close(t.Context()) })
+	h := &fileHandle{fd: fd}
 
-	node := &Node{fd: fd, root: root}
-	var st unix.Stat_t
-	if err := unix.Fstat(fd, &st); err != nil {
-		t.Fatal(err)
-	}
-	node.Init(statToQID(&st), node)
-
-	status, err := node.Lock(t.Context(), proto.LockTypeWrLck, proto.LockFlagBlock, 0, 0, 1, "test")
+	status, err := h.Lock(t.Context(), proto.LockTypeWrLck, proto.LockFlagBlock, 0, 0, 1, "test")
 	if err != nil {
 		t.Fatalf("Lock with block flag: %v", err)
 	}
@@ -1093,21 +1071,10 @@ func TestGetLock_NoConflict(t *testing.T) {
 	}
 	defer func() { _ = syscall.Close(fd) }()
 
-	root, err := NewRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = root.Close(t.Context()) })
-
-	node := &Node{fd: fd, root: root}
-	var st unix.Stat_t
-	if err := unix.Fstat(fd, &st); err != nil {
-		t.Fatal(err)
-	}
-	node.Init(statToQID(&st), node)
+	h := &fileHandle{fd: fd}
 
 	ctx := t.Context()
-	lt, _, _, _, _, err := node.GetLock(ctx, proto.LockTypeWrLck, 0, 0, 1, "test")
+	lt, _, _, _, _, err := h.GetLock(ctx, proto.LockTypeWrLck, 0, 0, 1, "test")
 	if err != nil {
 		t.Fatalf("GetLock: %v", err)
 	}

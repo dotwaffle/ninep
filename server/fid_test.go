@@ -356,18 +356,15 @@ func TestFidTable_UpdateRefTransferBalance(t *testing.T) {
 	incRefNode(node1) // The fid's own reference.
 
 	var wg sync.WaitGroup
-	for g, target := range []Node{node1, node2} {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for _, target := range []Node{node1, node2} {
+		wg.Go(func() {
 			for range 1000 {
 				if prev, ok := ft.update(1, target, "/t"); ok {
 					incRefNode(target)
 					decRefNode(prev)
 				}
 			}
-		}()
-		_ = g
+		})
 	}
 	wg.Wait()
 

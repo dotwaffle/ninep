@@ -50,11 +50,17 @@ func extattrBufPtr(b []byte) uintptr {
 // FreeBSD returns the required size when called with nbytes == 0; use the
 // size-then-read pattern (no ERANGE).
 func (n *Node) GetXattr(_ context.Context, name string) ([]byte, error) {
+	fd, err := n.xattrFd()
+	if err != nil {
+		return nil, toProtoErr(err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+
 	ns, bare, ok := splitXattrName(name)
 	if !ok {
 		return nil, proto.ENOTSUP
 	}
-	sz, err := unix.ExtattrGetFd(n.fd, ns, bare, 0, 0)
+	sz, err := unix.ExtattrGetFd(fd, ns, bare, 0, 0)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
@@ -62,7 +68,7 @@ func (n *Node) GetXattr(_ context.Context, name string) ([]byte, error) {
 		return nil, nil
 	}
 	buf := make([]byte, sz)
-	got, err := unix.ExtattrGetFd(n.fd, ns, bare, extattrBufPtr(buf), len(buf))
+	got, err := unix.ExtattrGetFd(fd, ns, bare, extattrBufPtr(buf), len(buf))
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
@@ -74,11 +80,17 @@ func (n *Node) GetXattr(_ context.Context, name string) ([]byte, error) {
 // FreeBSD's extattr_set_fd has no XATTR_CREATE/XATTR_REPLACE flags; the flags
 // argument from 9P is ignored on FreeBSD.
 func (n *Node) SetXattr(_ context.Context, name string, data []byte, _ uint32) error {
+	fd, err := n.xattrFd()
+	if err != nil {
+		return toProtoErr(err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+
 	ns, bare, ok := splitXattrName(name)
 	if !ok {
 		return proto.ENOTSUP
 	}
-	if _, err := unix.ExtattrSetFd(n.fd, ns, bare, extattrBufPtr(data), len(data)); err != nil {
+	if _, err := unix.ExtattrSetFd(fd, ns, bare, extattrBufPtr(data), len(data)); err != nil {
 		return toProtoErr(err)
 	}
 	return nil
@@ -90,6 +102,12 @@ func (n *Node) SetXattr(_ context.Context, name string, data []byte, _ uint32) e
 // FreeBSD's ExtattrListFd returns a packed list: [len:1][name:len]... with
 // no NUL separators (per extattr_get_file(2)).
 func (n *Node) ListXattrs(_ context.Context) ([]string, error) {
+	fd, err := n.xattrFd()
+	if err != nil {
+		return nil, toProtoErr(err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+
 	var names []string
 	for _, ent := range []struct {
 		ns     int
@@ -98,7 +116,7 @@ func (n *Node) ListXattrs(_ context.Context) ([]string, error) {
 		{unix.EXTATTR_NAMESPACE_USER, "user."},
 		{unix.EXTATTR_NAMESPACE_SYSTEM, "system."},
 	} {
-		sz, err := unix.ExtattrListFd(n.fd, ent.ns, 0, 0)
+		sz, err := unix.ExtattrListFd(fd, ent.ns, 0, 0)
 		if err != nil {
 			// SYSTEM namespace requires elevated privileges; EPERM is
 			// expected for unprivileged servers. Skip gracefully.
@@ -111,7 +129,7 @@ func (n *Node) ListXattrs(_ context.Context) ([]string, error) {
 			continue
 		}
 		buf := make([]byte, sz)
-		got, err := unix.ExtattrListFd(n.fd, ent.ns, extattrBufPtr(buf), len(buf))
+		got, err := unix.ExtattrListFd(fd, ent.ns, extattrBufPtr(buf), len(buf))
 		if err != nil {
 			return nil, toProtoErr(err)
 		}
@@ -137,11 +155,17 @@ func parseExtattrList(buf []byte, prefix string) []string {
 
 // RemoveXattr removes an extended attribute via ExtattrDeleteFd.
 func (n *Node) RemoveXattr(_ context.Context, name string) error {
+	fd, err := n.xattrFd()
+	if err != nil {
+		return toProtoErr(err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+
 	ns, bare, ok := splitXattrName(name)
 	if !ok {
 		return proto.ENOTSUP
 	}
-	if err := unix.ExtattrDeleteFd(n.fd, ns, bare); err != nil {
+	if err := unix.ExtattrDeleteFd(fd, ns, bare); err != nil {
 		return toProtoErr(err)
 	}
 	return nil

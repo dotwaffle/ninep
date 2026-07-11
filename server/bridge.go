@@ -922,8 +922,8 @@ func (c *conn) handleRename(ctx context.Context, m *p9l.Trename) proto.Message {
 	return &p9l.Rrename{}
 }
 
-// handleLock dispatches to NodeLocker.Lock. Requires the fid to be in opened
-// state per T-04-05.
+// handleLock dispatches to FileLocker.Lock (handle-first) then
+// NodeLocker.Lock. Requires the fid to be in opened state per T-04-05.
 func (c *conn) handleLock(ctx context.Context, m *p9l.Tlock) proto.Message {
 	fs := c.fids.get(m.Fid)
 	if fs == nil {
@@ -933,9 +933,26 @@ func (c *conn) handleLock(ctx context.Context, m *p9l.Tlock) proto.Message {
 		return c.errorMsg(proto.EBADF)
 	}
 
-	locker, ok := fs.currentNode().(NodeLocker)
-	if !ok {
-		return c.errorMsg(proto.ENOSYS)
+	// Register against a concurrent Tclunk before touching handle/node:
+	// beginIO returning false means clunk already ran and may have
+	// released them.
+	if !fs.beginIO() {
+		return c.errorMsg(proto.EBADF)
+	}
+	defer fs.endIO(ctx, c.logger)
+
+	var locker NodeLocker
+	if fs.handle != nil {
+		if fl, ok := fs.handle.(FileLocker); ok {
+			locker = fl
+		}
+	}
+	if locker == nil {
+		nl, ok := fs.currentNode().(NodeLocker)
+		if !ok {
+			return c.errorMsg(proto.ENOSYS)
+		}
+		locker = nl
 	}
 
 	status, err := locker.Lock(ctx, m.LockType, m.Flags, m.Start, m.Length, m.ProcID, m.ClientID)
@@ -946,8 +963,8 @@ func (c *conn) handleLock(ctx context.Context, m *p9l.Tlock) proto.Message {
 	return &p9l.Rlock{Status: status}
 }
 
-// handleGetlock dispatches to NodeLocker.GetLock. Requires the fid to be in
-// opened state per T-04-05.
+// handleGetlock dispatches to FileLocker.GetLock (handle-first) then
+// NodeLocker.GetLock. Requires the fid to be in opened state per T-04-05.
 func (c *conn) handleGetlock(ctx context.Context, m *p9l.Tgetlock) proto.Message {
 	fs := c.fids.get(m.Fid)
 	if fs == nil {
@@ -957,9 +974,23 @@ func (c *conn) handleGetlock(ctx context.Context, m *p9l.Tgetlock) proto.Message
 		return c.errorMsg(proto.EBADF)
 	}
 
-	locker, ok := fs.currentNode().(NodeLocker)
-	if !ok {
-		return c.errorMsg(proto.ENOSYS)
+	if !fs.beginIO() {
+		return c.errorMsg(proto.EBADF)
+	}
+	defer fs.endIO(ctx, c.logger)
+
+	var locker NodeLocker
+	if fs.handle != nil {
+		if fl, ok := fs.handle.(FileLocker); ok {
+			locker = fl
+		}
+	}
+	if locker == nil {
+		nl, ok := fs.currentNode().(NodeLocker)
+		if !ok {
+			return c.errorMsg(proto.ENOSYS)
+		}
+		locker = nl
 	}
 
 	lt, start, length, procID, clientID, err := locker.GetLock(ctx, m.LockType, m.Start, m.Length, m.ProcID, m.ClientID)

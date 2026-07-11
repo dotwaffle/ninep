@@ -1,6 +1,7 @@
 package fstest
 
 import (
+	"syscall"
 	"testing"
 
 	"github.com/dotwaffle/ninep/proto"
@@ -10,16 +11,19 @@ import (
 
 // LockExpectedTree documents the tree shape a root must provide for
 // CheckLock to pass. The root must contain a file "lockfile" that
-// implements NodeOpener AND NodeLocker. lockfile must start with no
-// active locks; Tgetlock on an un-held file must return LockTypeUnlck.
+// implements NodeOpener and lock support -- FileLocker on the open handle
+// or NodeLocker on the node. lockfile must be openable read-write (write
+// locks require a writable descriptor on POSIX-backed filesystems) and
+// must start with no active locks; Tgetlock on an un-held file must
+// return LockTypeUnlck.
 var LockExpectedTree = map[string]string{
-	"lockfile": "implements NodeOpener + NodeLocker; starts un-held",
+	"lockfile": "NodeOpener + FileLocker/NodeLocker; opens O_RDWR; starts un-held",
 }
 
 // LockCases is the exported slice of single-connection lock test cases.
 //
 // Multi-connection contention is NOT covered here: CheckLock verifies
-// protocol plumbing between a single client and the NodeLocker
+// protocol plumbing between a single client and the lock
 // implementation. For multi-client contention, use newConnPair-based
 // tests directly (see server/lock_test.go).
 //
@@ -59,7 +63,7 @@ func testLockAcquireWrite(t *testing.T, root server.Node) {
 	msg := walk(t, tc, 2, 0, 1, "lockfile")
 	expectRwalk(t, msg)
 
-	msg = lopen(t, tc, 3, 1, 0)
+	msg = lopen(t, tc, 3, 1, syscall.O_RDWR)
 	if _, ok := msg.(*p9l.Rlopen); !ok {
 		t.Fatalf("expected Rlopen, got %T: %+v", msg, msg)
 	}
@@ -79,7 +83,7 @@ func testLockRelease(t *testing.T, root server.Node) {
 	msg := walk(t, tc, 2, 0, 1, "lockfile")
 	expectRwalk(t, msg)
 
-	if _, ok := lopen(t, tc, 3, 1, 0).(*p9l.Rlopen); !ok {
+	if _, ok := lopen(t, tc, 3, 1, syscall.O_RDWR).(*p9l.Rlopen); !ok {
 		t.Fatalf("open failed")
 	}
 
@@ -102,7 +106,7 @@ func testLockGetlockNoConflict(t *testing.T, root server.Node) {
 	msg := walk(t, tc, 2, 0, 1, "lockfile")
 	expectRwalk(t, msg)
 
-	if _, ok := lopen(t, tc, 3, 1, 0).(*p9l.Rlopen); !ok {
+	if _, ok := lopen(t, tc, 3, 1, syscall.O_RDWR).(*p9l.Rlopen); !ok {
 		t.Fatalf("open failed")
 	}
 

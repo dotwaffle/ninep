@@ -5,6 +5,7 @@ package passthrough
 import (
 	"bytes"
 	"context"
+	"errors"
 
 	"golang.org/x/sys/unix"
 
@@ -24,17 +25,23 @@ var (
 // is tried first, and if the value is larger, a second call with the exact
 // size is made.
 func (n *Node) GetXattr(_ context.Context, name string) ([]byte, error) {
+	fd, err := n.xattrFd()
+	if err != nil {
+		return nil, toProtoErr(err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+
 	// First attempt with small buffer.
 	buf := make([]byte, 256)
-	sz, err := unix.Fgetxattr(n.fd, name, buf)
-	if err == unix.ERANGE {
+	sz, err := unix.Fgetxattr(fd, name, buf)
+	if errors.Is(err, unix.ERANGE) {
 		// Query exact size.
-		sz, err = unix.Fgetxattr(n.fd, name, nil)
+		sz, err = unix.Fgetxattr(fd, name, nil)
 		if err != nil {
 			return nil, toProtoErr(err)
 		}
 		buf = make([]byte, sz)
-		sz, err = unix.Fgetxattr(n.fd, name, buf)
+		sz, err = unix.Fgetxattr(fd, name, buf)
 	}
 	if err != nil {
 		return nil, toProtoErr(err)
@@ -44,7 +51,13 @@ func (n *Node) GetXattr(_ context.Context, name string) ([]byte, error) {
 
 // SetXattr sets an extended attribute value using Fsetxattr.
 func (n *Node) SetXattr(_ context.Context, name string, data []byte, flags uint32) error {
-	if err := unix.Fsetxattr(n.fd, name, data, int(flags)); err != nil {
+	fd, err := n.xattrFd()
+	if err != nil {
+		return toProtoErr(err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+
+	if err := unix.Fsetxattr(fd, name, data, int(flags)); err != nil {
 		return toProtoErr(err)
 	}
 	return nil
@@ -53,8 +66,14 @@ func (n *Node) SetXattr(_ context.Context, name string, data []byte, flags uint3
 // ListXattrs lists all extended attribute names using Flistxattr.
 // The kernel returns null-separated names.
 func (n *Node) ListXattrs(_ context.Context) ([]string, error) {
+	fd, err := n.xattrFd()
+	if err != nil {
+		return nil, toProtoErr(err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+
 	// Query size first.
-	sz, err := unix.Flistxattr(n.fd, nil)
+	sz, err := unix.Flistxattr(fd, nil)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
@@ -63,7 +82,7 @@ func (n *Node) ListXattrs(_ context.Context) ([]string, error) {
 	}
 
 	buf := make([]byte, sz)
-	sz, err = unix.Flistxattr(n.fd, buf)
+	sz, err = unix.Flistxattr(fd, buf)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
@@ -81,7 +100,13 @@ func (n *Node) ListXattrs(_ context.Context) ([]string, error) {
 
 // RemoveXattr removes an extended attribute using Fremovexattr.
 func (n *Node) RemoveXattr(_ context.Context, name string) error {
-	if err := unix.Fremovexattr(n.fd, name); err != nil {
+	fd, err := n.xattrFd()
+	if err != nil {
+		return toProtoErr(err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+
+	if err := unix.Fremovexattr(fd, name); err != nil {
 		return toProtoErr(err)
 	}
 	return nil

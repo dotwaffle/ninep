@@ -3,6 +3,8 @@
 package passthrough
 
 import (
+	"golang.org/x/sys/unix"
+
 	"github.com/dotwaffle/ninep/server"
 )
 
@@ -68,4 +70,14 @@ func WithDeviceNodes() Option {
 // using Pread/Pwrite for offset-based I/O without shared seek position.
 type fileHandle struct {
 	fd int
+}
+
+// xattrFd opens a short-lived real fd for xattr syscalls via openResolved.
+// The node fd is O_PATH for regular files, and the fd-based xattr syscalls
+// reject O_PATH descriptors with EBADF. The bridge snapshots xattr data per
+// operation (Txattrwalk reads the whole value up front; Tclunk commits
+// writes), so a transient fd is sufficient. Callers must close the
+// returned fd.
+func (n *Node) xattrFd() (int, error) {
+	return n.openResolved(unix.O_RDONLY)
 }

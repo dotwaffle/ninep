@@ -61,6 +61,27 @@ type FileSyncer interface {
 	Fsync(ctx context.Context) error
 }
 
+// FileLocker is implemented by file handles that support POSIX byte-range
+// locking on the open file. Checked before NodeLocker by the bridge: Tlock
+// and Tgetlock on an opened fid with a handle that implements FileLocker
+// take the handle path; only if the handle does not implement FileLocker
+// does the bridge fall back to NodeLocker on the underlying node.
+//
+// Prefer this over NodeLocker for filesystems backed by OS file
+// descriptors: POSIX record locks are dropped when any descriptor for the
+// file is closed by the process, so a lock taken on a transient fd is lost
+// the moment that fd closes. The open handle's descriptor lives exactly as
+// long as the fid stays open, giving the lock the lifetime the client
+// expects. Like NodeLocker, Lock and GetLock are two halves of the same
+// Tlock/Tgetlock pair and are always co-implemented.
+type FileLocker interface {
+	// Lock acquires, tests, or releases a POSIX byte-range lock.
+	Lock(ctx context.Context, lockType proto.LockType, flags proto.LockFlags, start, length uint64, procID uint32, clientID string) (proto.LockStatus, error)
+	// GetLock tests whether a lock could be placed, returning the conflicting
+	// lock parameters if one exists.
+	GetLock(ctx context.Context, lockType proto.LockType, start, length uint64, procID uint32, clientID string) (proto.LockType, uint64, uint64, uint32, string, error)
+}
+
 // FileReaddirer is implemented by file handles that support reading directory entries.
 type FileReaddirer interface {
 	// Readdir returns all directory entries for the open handle.

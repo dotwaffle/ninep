@@ -12,10 +12,16 @@ import (
 	"github.com/dotwaffle/ninep/server"
 )
 
-// Compile-time interface assertion for lock operations.
-var _ server.NodeLocker = (*Node)(nil)
+// Compile-time interface assertion for lock operations. Locks live on the
+// open file handle, not the node: the node's fd is O_PATH for regular
+// files, which fcntl locking rejects with EBADF, and POSIX record locks
+// are dropped when any fd for the file is closed by the process, so only
+// the handle fd -- which lives exactly as long as the fid stays open --
+// gives locks the lifetime the client expects.
+var _ server.FileLocker = (*fileHandle)(nil)
 
-// Lock acquires, tests, or releases a POSIX byte-range lock via fcntl.
+// Lock acquires, tests, or releases a POSIX byte-range lock via fcntl on
+// the open handle's fd.
 //
 // It always issues the non-blocking F_SETLK. A contended lock returns
 // LockStatusBlocked so the client retries, rather than parking a bounded
@@ -23,7 +29,7 @@ var _ server.NodeLocker = (*Node)(nil)
 // could pin every worker on the connection. This follows the 9P2000.L model,
 // in which the client implements blocking by re-issuing Tlock after a BLOCKED
 // response; the LockFlagBlock flag is therefore advisory here.
-func (n *Node) Lock(_ context.Context, lockType proto.LockType, _ proto.LockFlags, start, length uint64, _ uint32, _ string) (proto.LockStatus, error) {
+func (h *fileHandle) Lock(_ context.Context, lockType proto.LockType, _ proto.LockFlags, start, length uint64, _ uint32, _ string) (proto.LockStatus, error) {
 	flock := unix.Flock_t{
 		Type:   lockTypeToFcntl(lockType),
 		Whence: 0, // SEEK_SET
@@ -31,7 +37,7 @@ func (n *Node) Lock(_ context.Context, lockType proto.LockType, _ proto.LockFlag
 		Len:    int64(length),
 	}
 
-	if err := unix.FcntlFlock(uintptr(n.fd), unix.F_SETLK, &flock); err != nil {
+	if err := unix.FcntlFlock(uintptr(h.fd), unix.F_SETLK, &flock); err != nil {
 		if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EACCES) {
 			return proto.LockStatusBlocked, nil
 		}
@@ -43,7 +49,7 @@ func (n *Node) Lock(_ context.Context, lockType proto.LockType, _ proto.LockFlag
 
 // GetLock tests whether a lock could be placed, returning the conflicting
 // lock parameters if one exists.
-func (n *Node) GetLock(_ context.Context, lockType proto.LockType, start, length uint64, procID uint32, clientID string) (proto.LockType, uint64, uint64, uint32, string, error) {
+func (h *fileHandle) GetLock(_ context.Context, lockType proto.LockType, start, length uint64, procID uint32, clientID string) (proto.LockType, uint64, uint64, uint32, string, error) {
 	flock := unix.Flock_t{
 		Type:   lockTypeToFcntl(lockType),
 		Whence: 0, // SEEK_SET
@@ -52,7 +58,7 @@ func (n *Node) GetLock(_ context.Context, lockType proto.LockType, start, length
 		Pid:    int32(procID),
 	}
 
-	if err := unix.FcntlFlock(uintptr(n.fd), unix.F_GETLK, &flock); err != nil {
+	if err := unix.FcntlFlock(uintptr(h.fd), unix.F_GETLK, &flock); err != nil {
 		return 0, 0, 0, 0, "", toProtoErr(err)
 	}
 

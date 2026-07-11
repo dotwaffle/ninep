@@ -4,6 +4,7 @@ package fstest
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -104,6 +105,67 @@ func TestCheckPassthrough(t *testing.T) {
 	}
 
 	CheckFactory(t, func(_ *testing.T) server.Node {
+		root, err := passthrough.NewRoot(tmp)
+		if err != nil {
+			t.Fatalf("NewRoot(%s): %v", tmp, err)
+		}
+		return root
+	})
+}
+
+// TestCheckPassthroughXattr runs the xattr harness against passthrough.
+// Regression coverage for xattr syscalls on O_PATH node fds: before
+// routing through a reopened fd, every xattr operation on a passthrough
+// file returned EBADF. Skips when the backing filesystem does not
+// support user xattrs.
+func TestCheckPassthroughXattr(t *testing.T) {
+	t.Parallel()
+
+	CheckXattr(t, func(t *testing.T) server.Node {
+		tmp := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tmp, "xfile"), []byte("data"), 0o644); err != nil {
+			t.Fatalf("write xfile: %v", err)
+		}
+		root, err := passthrough.NewRoot(tmp)
+		if err != nil {
+			t.Fatalf("NewRoot(%s): %v", tmp, err)
+		}
+
+		// Seed the expected xattr through the node's own SetXattr, which
+		// also serves as the support probe for the backing filesystem.
+		node, err := root.Lookup(t.Context(), "xfile")
+		if err != nil {
+			t.Fatalf("lookup xfile: %v", err)
+		}
+		if closer, ok := node.(server.NodeCloser); ok {
+			t.Cleanup(func() { _ = closer.Close(context.Background()) })
+		}
+		setter, ok := node.(server.NodeXattrSetter)
+		if !ok {
+			t.Fatal("passthrough node does not implement NodeXattrSetter")
+		}
+		if err := setter.SetXattr(t.Context(), "user.existing", []byte("existing-value"), 0); err != nil {
+			if errors.Is(err, proto.ENOTSUP) {
+				t.Skipf("backing filesystem does not support user xattrs: %v", err)
+			}
+			t.Fatalf("seed user.existing: %v", err)
+		}
+		return root
+	})
+}
+
+// TestCheckPassthroughLock runs the lock harness against passthrough.
+// Regression coverage for fcntl locks on O_PATH node fds: before locks
+// moved to the open handle's fd (FileLocker), every Tlock/Tgetlock on a
+// passthrough file returned EBADF.
+func TestCheckPassthroughLock(t *testing.T) {
+	t.Parallel()
+
+	CheckLock(t, func(t *testing.T) server.Node {
+		tmp := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tmp, "lockfile"), []byte("data"), 0o644); err != nil {
+			t.Fatalf("write lockfile: %v", err)
+		}
 		root, err := passthrough.NewRoot(tmp)
 		if err != nil {
 			t.Fatalf("NewRoot(%s): %v", tmp, err)
