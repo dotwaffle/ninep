@@ -142,7 +142,7 @@ func TestError_SentinelsAreFourDistinctValues(t *testing.T) {
 // compose the Rflush-first error chain.
 func TestErrorChain_FlushAndCtx_Canceled(t *testing.T) {
 	t.Parallel()
-	err := fmt.Errorf("9p: flushed tag 1: %w",
+	err := fmt.Errorf("client: flushed tag 1: %w",
 		errors.Join(context.Canceled, ErrFlushed))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("errors.Is(err, context.Canceled) = false, want true")
@@ -160,7 +160,7 @@ func TestErrorChain_FlushAndCtx_Canceled(t *testing.T) {
 // place of context.Canceled.
 func TestErrorChain_FlushAndCtx_DeadlineExceeded(t *testing.T) {
 	t.Parallel()
-	err := fmt.Errorf("9p: flushed tag 1: %w",
+	err := fmt.Errorf("client: flushed tag 1: %w",
 		errors.Join(context.DeadlineExceeded, ErrFlushed))
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("errors.Is(err, context.DeadlineExceeded) = false, want true")
@@ -180,7 +180,7 @@ func TestErrorChain_FlushAndCtx_DeadlineExceeded(t *testing.T) {
 // beat the flush".
 func TestErrorChain_FlushOnly_NoCtx(t *testing.T) {
 	t.Parallel()
-	err := fmt.Errorf("9p: flushed tag 1: %w", context.Canceled)
+	err := fmt.Errorf("client: flushed tag 1: %w", context.Canceled)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("errors.Is(err, context.Canceled) = false, want true")
 	}

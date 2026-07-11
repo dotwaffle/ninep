@@ -23,7 +23,7 @@ var (
 	// acknowledged the Tflush and aborted the original request. The
 	// chain is constructed via
 	//
-	//	fmt.Errorf("9p: flushed tag %d: %w", oldTag,
+	//	fmt.Errorf("client: flushed tag %d: %w", oldTag,
 	//	    errors.Join(ctx.Err(), ErrFlushed))
 	//
 	// so callers can discriminate:

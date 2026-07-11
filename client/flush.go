@@ -56,7 +56,7 @@ func flushTagFor(oldTag proto.Tag) proto.Tag {
 //   - The returned error chain satisfies [errors.Is] for the
 //     appropriate sentinels:
 //
-//     R-first: fmt.Errorf("9p: flushed tag %d: %w", oldTag, ctx.Err())
+//     R-first: fmt.Errorf("client: flushed tag %d: %w", oldTag, ctx.Err())
 //     Rflush-first: wraps errors.Join(ctx.Err(), ErrFlushed)
 //     closeCh: returns ErrClosed unwrapped (losing the ctx cause on
 //     the close race is acceptable).
@@ -171,7 +171,7 @@ func (c *Conn) flushAndWait(
 		default:
 		}
 		return nil, fmt.Errorf(
-			"9p: flushed tag %d: %w", oldTag, ctx.Err(),
+			"client: flushed tag %d: %w", oldTag, ctx.Err(),
 		)
 
 	case r, ok := <-flushCh:
@@ -196,7 +196,7 @@ func (c *Conn) flushAndWait(
 		default:
 		}
 		return nil, fmt.Errorf(
-			"9p: flushed tag %d: %w", oldTag,
+			"client: flushed tag %d: %w", oldTag,
 			errors.Join(ctx.Err(), ErrFlushed),
 		)
 
@@ -212,7 +212,7 @@ func (c *Conn) flushAndWait(
 		// the caller is released and the tag is reclaimed via cancelAll.
 		c.signalShutdown()
 		return nil, fmt.Errorf(
-			"9p: flush tag %d: %w (no server response within grace)", oldTag, ctx.Err(),
+			"client: flush tag %d: %w (no server response within grace)", oldTag, ctx.Err(),
 		)
 	}
 }
