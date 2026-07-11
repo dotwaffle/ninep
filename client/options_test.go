@@ -59,9 +59,9 @@ func TestWithMaxInflight(t *testing.T) {
 		{"negative-clamps-to-1", -5, 1},
 		{"one-accepted", 1, 1},
 		{"default", 64, 64},
-		{"upper-boundary", 65534, 65534},
-		{"above-upper-clamps", 65535, 65534},
-		{"way-above-clamps", 1 << 20, 65534},
+		{"upper-boundary", 32766, 32766},
+		{"above-upper-clamps", 32767, 32766},
+		{"way-above-clamps", 1 << 20, 32766},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -75,13 +75,17 @@ func TestWithMaxInflight(t *testing.T) {
 	}
 }
 
-// Ensure the NoTag exclusion bound is computed from proto.NoTag, not a hardcoded
-// duplicate. If proto.NoTag ever changes, the clamp must track it.
+// Ensure the NoTag exclusion bound is computed from proto.NoTag, not a
+// hardcoded duplicate. The highest possible flush mirror tag
+// (flushTagBit | maxMaxInflight) must stay strictly below NoTag so a
+// Tflush can never masquerade as a Tversion exchange.
 func TestWithMaxInflight_NoTagBoundTracksProto(t *testing.T) {
 	t.Parallel()
-	want := int(uint16(proto.NoTag)) - 1
-	if maxMaxInflight != want {
-		t.Fatalf("maxMaxInflight = %d, want %d (= uint16(proto.NoTag)-1)", maxMaxInflight, want)
+	if got, limit := flushTagBit|maxMaxInflight, int(uint16(proto.NoTag)); got >= limit {
+		t.Fatalf("flushTagBit|maxMaxInflight = %d, must be < NoTag (%d)", got, limit)
+	}
+	if maxMaxInflight != flushTagBit-2 {
+		t.Fatalf("maxMaxInflight = %d, want %d (= flushTagBit-2, leaving the top mirror slot clear of NoTag)", maxMaxInflight, flushTagBit-2)
 	}
 }
 

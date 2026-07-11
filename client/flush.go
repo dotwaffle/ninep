@@ -14,6 +14,24 @@ import (
 // healthy server answers near-instantly; this only fires for a wedged peer.
 const defaultFlushGrace = 30 * time.Second
 
+// flushTagBit marks the reserved upper half of the tag space used for
+// Tflush frames. Request tags come from the allocator range
+// [1..maxMaxInflight]; each request's Tflush uses the mirror tag
+// oldTag|flushTagBit. WithMaxInflight's clamp to 32766 keeps the mirror
+// range below NoTag (compile-time checked in options.go).
+const flushTagBit = 0x8000
+
+// flushTagFor returns the reserved Tflush tag for a request tag. Deriving
+// the flush tag instead of drawing it from the allocator is what makes
+// mass cancellation deadlock-free: when every allocator tag is held by a
+// cancelled request, each flushAndWait would otherwise block in acquire
+// waiting for a tag that only another blocked flushAndWait could release.
+// Each in-flight request sends at most one Tflush, and in-flight request
+// tags are unique, so the mirror tag is collision-free by construction.
+func flushTagFor(oldTag proto.Tag) proto.Tag {
+	return oldTag | flushTagBit
+}
+
 // flushAndWait is called from [Conn.roundTrip] when the caller's ctx
 // cancels mid-request. It sends Tflush(oldTag) and blocks until the
 // FIRST of (original R, Rflush, closeCh) arrives - discarding the
@@ -32,7 +50,8 @@ const defaultFlushGrace = 30 * time.Second
 //
 //   - oldTag is unregister()'d BEFORE release()'d.
 //
-//   - flushTag (if acquired) is unregister()'d BEFORE release()'d.
+//   - flushTag is unregister()'d (it is a derived mirror tag, never
+//     drawn from the allocator, so there is nothing to release).
 //
 //   - The returned error chain satisfies [errors.Is] for the
 //     appropriate sentinels:
@@ -43,11 +62,10 @@ const defaultFlushGrace = 30 * time.Second
 //     the close race is acceptable).
 //
 // Defer ordering: oldTag's cleanup defer is registered FIRST (outer);
-// flushTag's cleanup defer is registered SECOND (inner). Because
-// defers run LIFO, flushTag is released before oldTag. This is
-// intentional - the newer tag (flushTag) returns to the allocator
-// first so there's no window where a recycled oldTag could collide
-// with a still-registered flushTag.
+// flushTag's unregister is registered SECOND (inner). Because defers
+// run LIFO, flushTag leaves the inflight map before oldTag returns to
+// the allocator, so a recycled oldTag can never coexist with its own
+// still-registered mirror tag.
 //
 // Anti-patterns (documented here because they have bitten similar
 // helpers elsewhere):
@@ -55,10 +73,11 @@ const defaultFlushGrace = 30 * time.Second
 //   - Do NOT call [Conn.Flush] (the public wire-op wrapper). It goes
 //     through [Conn.roundTrip], which re-enters the ctx.Done arm on
 //     an already-Done ctx and would recurse.
-//   - Do NOT pass ctx to [tagAllocator.acquire]. ctx is already Done
-//     here - acquire would return ctx.Err immediately without ever
-//     handing out a tag. Use [context.Background] with c.closeCh as
-//     the abort channel.
+//   - Do NOT draw flushTag from [tagAllocator.acquire]. Under mass
+//     cancellation with a saturated allocator, every flushAndWait
+//     blocks in acquire waiting for a tag that only another blocked
+//     flushAndWait could release: a deadlock held until closeCh. The
+//     reserved mirror range (flushTagFor) exists for exactly this.
 //   - Do NOT add a raw ctx.Done arm to the inner select: ctx is already
 //     Done, so it would fire immediately and release oldTag before the
 //     server acknowledges the flush, risking tag-reuse aliasing. The
@@ -78,28 +97,16 @@ func (c *Conn) flushAndWait(
 		c.tags.release(oldTag)
 	}()
 
-	// Acquire a tag for the Tflush frame itself. Per the 9P spec,
-	// Tflush carries its own tag; the server's Rflush echoes Tflush's
-	// tag, NOT oldTag. We cannot reuse oldTag here.
-	//
-	// ctx parent is context.Background, NOT the caller's ctx: the
-	// caller's ctx is ALREADY Done and acquire's select would return
-	// ctx.Err immediately before handing out a tag. closeCh remains
-	// the only abort path - if the Conn is shutting
-	// down during flush setup, acquire returns ErrClosed.
-	flushTag, err := c.tags.acquire(context.Background(), c.closeCh)
-	if err != nil {
-		// Only failure mode: closeCh fired during acquire. Return the
-		// allocator's error (ErrClosed) unwrapped; deferred oldTag
-		// cleanup still runs.
-		return nil, err
-	}
+	// Per the 9P spec, Tflush carries its own tag; the server's Rflush
+	// echoes Tflush's tag, NOT oldTag. The tag comes from the reserved
+	// mirror range (see flushTagFor), never the allocator: drawing it
+	// from the shared free-list deadlocked under mass cancellation, with
+	// every saturated caller's flushAndWait blocked in acquire waiting
+	// for a tag only another blocked flushAndWait could release.
+	flushTag := flushTagFor(oldTag)
 	flushCh := c.inflight.register(flushTag)
 	// Registered AFTER oldTag defer so it runs FIRST (LIFO).
-	defer func() {
-		c.inflight.unregister(flushTag)
-		c.tags.release(flushTag)
-	}()
+	defer c.inflight.unregister(flushTag)
 
 	// Send the Tflush frame. writeT handles the isClosed pre-flight
 	// + the signalShutdown race at write time. We use writeT directly

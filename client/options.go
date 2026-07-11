@@ -43,18 +43,23 @@ const (
 	// per Conn. Mirrors server.WithMaxInflight's default.
 	defaultMaxInflight int = 64
 
-	// maxMaxInflight is the upper bound on maxInflight. NoTag (0xFFFF) is
-	// reserved for Tversion and is excluded from the free-list, so the
-	// allocator can hold at most uint16(proto.NoTag)-1 = 65534 tags. A
-	// package-level compile-time check below pins this to proto.NoTag so
-	// any change to the proto constant surfaces here immediately.
-	maxMaxInflight int = 65534
+	// maxMaxInflight is the upper bound on maxInflight. The tag space is
+	// split in half: request tags live in [1..maxMaxInflight] and each
+	// request's Tflush uses the reserved mirror tag oldTag|flushTagBit
+	// (see flushTagFor), so flush tags occupy [flushTagBit+1 ..
+	// flushTagBit+maxMaxInflight]. The top mirror slot is left unused so
+	// no flush tag can collide with NoTag (0xFFFF, reserved for
+	// Tversion): flushTagBit + maxMaxInflight = 65534 < NoTag. A
+	// package-level compile-time check below pins this relation so any
+	// change to the proto constant or the bit surfaces immediately.
+	maxMaxInflight int = 32766
 )
 
-// Compile-time assertion: maxMaxInflight must equal uint16(proto.NoTag)-1.
-// If proto.NoTag ever changes from math.MaxUint16, this array's size goes
-// negative and the package fails to build.
-var _ = [1]struct{}{}[int(uint16(proto.NoTag))-1-maxMaxInflight]
+// Compile-time assertion: the highest flush tag (flushTagBit +
+// maxMaxInflight) must stay below NoTag. If proto.NoTag ever changes from
+// math.MaxUint16, this array's size goes negative and the package fails
+// to build.
+var _ = [1]struct{}{}[int(uint16(proto.NoTag))-1-(flushTagBit+maxMaxInflight)]
 
 // newConfig returns a config populated with defaults. Options applied on top
 // of the returned config mutate it in place.
@@ -94,9 +99,10 @@ func WithMsize(n uint32) Option {
 // so back-pressure kicks in at this value -- once saturated, new requests
 // block until an in-flight tag is released.
 //
-// Values less than 1 are clamped to 1. Values greater than 65534 are clamped
-// to 65534: NoTag (0xFFFF) is reserved for Tversion and is excluded from the
-// free-list. Default: 64.
+// Values less than 1 are clamped to 1. Values greater than 32766 are clamped
+// to 32766: the upper half of the tag space is reserved for the Tflush
+// mirror tags that cancellation sends (see flushTagFor), and NoTag (0xFFFF)
+// is reserved for Tversion. Default: 64.
 func WithMaxInflight(n int) Option {
 	return func(c *config) {
 		if n < 1 {
