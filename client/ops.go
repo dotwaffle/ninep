@@ -207,24 +207,15 @@ func (c *Conn) AttachFid(ctx context.Context, fid proto.Fid, uname, aname string
 		Uname: uname,
 		Aname: aname,
 	}
-	resp, err := c.roundTrip(ctx, req)
+	r, err := rtrip[*proto.Rattach](ctx, c, req)
 	if err != nil {
-		return proto.QID{}, err
-	}
-	if err := toError(resp); err != nil {
-		return proto.QID{}, err
-	}
-	r, ok := resp.(*proto.Rattach)
-	if !ok {
-		err := fmt.Errorf("client: expected Rattach, got %v", resp.Type())
-		putCachedRMsg(resp)
 		return proto.QID{}, err
 	}
 	// Rattach is not cached (cold path; once per Attach) but go through
 	// putCachedRMsg anyway so future cache-additions do not silently miss
 	// this return path.
 	qid := r.QID
-	putCachedRMsg(resp)
+	putCachedRMsg(r)
 	return qid, nil
 }
 
@@ -237,24 +228,15 @@ func (c *Conn) AttachFid(ctx context.Context, fid proto.Fid, uname, aname string
 // retain the slice indefinitely.
 func (c *Conn) Walk(ctx context.Context, fid, newFid proto.Fid, names []string) ([]proto.QID, error) {
 	req := &proto.Twalk{Fid: fid, NewFid: newFid, Names: names}
-	resp, err := c.roundTrip(ctx, req)
+	r, err := rtrip[*proto.Rwalk](ctx, c, req)
 	if err != nil {
-		return nil, err
-	}
-	if err := toError(resp); err != nil {
-		return nil, err
-	}
-	r, ok := resp.(*proto.Rwalk)
-	if !ok {
-		err := fmt.Errorf("client: expected Rwalk, got %v", resp.Type())
-		putCachedRMsg(resp)
 		return nil, err
 	}
 	// Copy out before cache return -- Rwalk.QIDs aliases a decoder-allocated
 	// slice that the cache returns to a zero-reset state on next Get.
 	qids := make([]proto.QID, len(r.QIDs))
 	copy(qids, r.QIDs)
-	putCachedRMsg(resp)
+	putCachedRMsg(r)
 	return qids, nil
 }
 
@@ -262,20 +244,11 @@ func (c *Conn) Walk(ctx context.Context, fid, newFid proto.Fid, names []string) 
 // the server deallocates any associated state. Errors from Rlerror/Rerror
 // surface as *Error; type-mismatch as a descriptive error.
 func (c *Conn) Clunk(ctx context.Context, fid proto.Fid) error {
-	req := &proto.Tclunk{Fid: fid}
-	resp, err := c.roundTrip(ctx, req)
+	r, err := rtrip[*proto.Rclunk](ctx, c, &proto.Tclunk{Fid: fid})
 	if err != nil {
 		return err
 	}
-	if err := toError(resp); err != nil {
-		return err
-	}
-	if _, ok := resp.(*proto.Rclunk); !ok {
-		err := fmt.Errorf("client: expected Rclunk, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return err
-	}
-	putCachedRMsg(resp)
+	putCachedRMsg(r)
 	return nil
 }
 
@@ -288,23 +261,14 @@ func (c *Conn) Clunk(ctx context.Context, fid proto.Fid) error {
 // Flush is a raw wire-level primitive; high-level callers usually let
 // roundTrip drive auto-flush on ctx cancellation.
 func (c *Conn) Flush(ctx context.Context, oldTag proto.Tag) error {
-	req := &proto.Tflush{OldTag: oldTag}
-	resp, err := c.roundTrip(ctx, req)
+	r, err := rtrip[*proto.Rflush](ctx, c, &proto.Tflush{OldTag: oldTag})
 	if err != nil {
-		return err
-	}
-	if err := toError(resp); err != nil {
-		return err
-	}
-	if _, ok := resp.(*proto.Rflush); !ok {
-		err := fmt.Errorf("client: expected Rflush, got %v", resp.Type())
-		putCachedRMsg(resp)
 		return err
 	}
 	// Rflush is not cached today (it falls to the default arm of
 	// putCachedRMsg), but route it through anyway so a future
 	// cache addition does not silently miss this success path.
-	putCachedRMsg(resp)
+	putCachedRMsg(r)
 	return nil
 }
 
@@ -323,22 +287,13 @@ func (c *Conn) Flush(ctx context.Context, oldTag proto.Tag) error {
 // servers clamp silently).
 func (c *Conn) Read(ctx context.Context, fid proto.Fid, offset uint64, count uint32) ([]byte, error) {
 	req := &proto.Tread{Fid: fid, Offset: offset, Count: count}
-	resp, err := c.roundTrip(ctx, req)
+	r, err := rtrip[*proto.Rread](ctx, c, req)
 	if err != nil {
-		return nil, err
-	}
-	if err := toError(resp); err != nil {
-		return nil, err
-	}
-	r, ok := resp.(*proto.Rread)
-	if !ok {
-		err := fmt.Errorf("client: expected Rread, got %v", resp.Type())
-		putCachedRMsg(resp)
 		return nil, err
 	}
 	if uint64(len(r.Data)) > uint64(count) {
 		err := fmt.Errorf("client: Rread count %d exceeds requested count %d", len(r.Data), count)
-		putCachedRMsg(resp)
+		putCachedRMsg(r)
 		c.signalShutdown()
 		return nil, err
 	}
@@ -347,7 +302,7 @@ func (c *Conn) Read(ctx context.Context, fid proto.Fid, offset uint64, count uin
 	// reusable by the next Rread borrower immediately.
 	data := make([]byte, len(r.Data))
 	copy(data, r.Data)
-	putCachedRMsg(resp)
+	putCachedRMsg(r)
 	return data, nil
 }
 
@@ -490,27 +445,18 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 // the server reports as written (may be fewer than len(data)).
 func (c *Conn) Write(ctx context.Context, fid proto.Fid, offset uint64, data []byte) (uint32, error) {
 	req := &proto.Twrite{Fid: fid, Offset: offset, Data: data}
-	resp, err := c.roundTrip(ctx, req)
+	r, err := rtrip[*proto.Rwrite](ctx, c, req)
 	if err != nil {
-		return 0, err
-	}
-	if err := toError(resp); err != nil {
-		return 0, err
-	}
-	r, ok := resp.(*proto.Rwrite)
-	if !ok {
-		err := fmt.Errorf("client: expected Rwrite, got %v", resp.Type())
-		putCachedRMsg(resp)
 		return 0, err
 	}
 	count := r.Count
 	if uint64(count) > uint64(len(data)) {
 		err := fmt.Errorf("client: Rwrite count %d exceeds write size %d", count, len(data))
-		putCachedRMsg(resp)
+		putCachedRMsg(r)
 		c.signalShutdown()
 		return 0, err
 	}
-	putCachedRMsg(resp)
+	putCachedRMsg(r)
 	return count, nil
 }
 
@@ -526,22 +472,12 @@ func (c *Conn) Lopen(ctx context.Context, fid proto.Fid, flags uint32) (proto.QI
 	if err := c.requireDialect(protocolL, "Lopen"); err != nil {
 		return proto.QID{}, 0, err
 	}
-	req := &p9l.Tlopen{Fid: fid, Flags: flags}
-	resp, err := c.roundTrip(ctx, req)
+	r, err := rtrip[*p9l.Rlopen](ctx, c, &p9l.Tlopen{Fid: fid, Flags: flags})
 	if err != nil {
 		return proto.QID{}, 0, err
 	}
-	if err := toError(resp); err != nil {
-		return proto.QID{}, 0, err
-	}
-	r, ok := resp.(*p9l.Rlopen)
-	if !ok {
-		err := fmt.Errorf("client: expected Rlopen, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return proto.QID{}, 0, err
-	}
 	qid, iou := r.QID, r.IOUnit
-	putCachedRMsg(resp)
+	putCachedRMsg(r)
 	return qid, iou, nil
 }
 
@@ -565,21 +501,12 @@ func (c *Conn) Lcreate(ctx context.Context, fid proto.Fid, name string, flags ui
 		Mode:  mode,
 		GID:   gid,
 	}
-	resp, err := c.roundTrip(ctx, req)
+	r, err := rtrip[*p9l.Rlcreate](ctx, c, req)
 	if err != nil {
 		return proto.QID{}, 0, err
 	}
-	if err := toError(resp); err != nil {
-		return proto.QID{}, 0, err
-	}
-	r, ok := resp.(*p9l.Rlcreate)
-	if !ok {
-		err := fmt.Errorf("client: expected Rlcreate, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return proto.QID{}, 0, err
-	}
 	qid, iou := r.QID, r.IOUnit
-	putCachedRMsg(resp)
+	putCachedRMsg(r)
 	return qid, iou, nil
 }
 
@@ -592,23 +519,15 @@ func (c *Conn) Open(ctx context.Context, fid proto.Fid, mode uint8) (proto.QID, 
 	if err := c.requireDialect(protocolU, "Open"); err != nil {
 		return proto.QID{}, 0, err
 	}
-	req := &p9u.Topen{Fid: fid, Mode: mode}
-	resp, err := c.roundTrip(ctx, req)
+	r, err := rtrip[*p9u.Ropen](ctx, c, &p9u.Topen{Fid: fid, Mode: mode})
 	if err != nil {
-		return proto.QID{}, 0, err
-	}
-	if err := toError(resp); err != nil {
-		return proto.QID{}, 0, err
-	}
-	r, ok := resp.(*p9u.Ropen)
-	if !ok {
-		err := fmt.Errorf("client: expected Ropen, got %v", resp.Type())
-		putCachedRMsg(resp)
 		return proto.QID{}, 0, err
 	}
 	// p9u.Ropen is not cached (cold compared to Rread/Rwrite); passing through
 	// putCachedRMsg is a no-op for unknown types per msgcache.go.
-	return r.QID, r.IOUnit, nil
+	qid, iou := r.QID, r.IOUnit
+	putCachedRMsg(r)
+	return qid, iou, nil
 }
 
 // CreateFid is the 9P2000.u create-and-open wire operation. Requires
@@ -631,18 +550,11 @@ func (c *Conn) CreateFid(ctx context.Context, fid proto.Fid, name string, perm p
 		Mode:      mode,
 		Extension: extension,
 	}
-	resp, err := c.roundTrip(ctx, req)
+	r, err := rtrip[*p9u.Rcreate](ctx, c, req)
 	if err != nil {
 		return proto.QID{}, 0, err
 	}
-	if err := toError(resp); err != nil {
-		return proto.QID{}, 0, err
-	}
-	r, ok := resp.(*p9u.Rcreate)
-	if !ok {
-		err := fmt.Errorf("client: expected Rcreate, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return proto.QID{}, 0, err
-	}
-	return r.QID, r.IOUnit, nil
+	qid, iou := r.QID, r.IOUnit
+	putCachedRMsg(r)
+	return qid, iou, nil
 }

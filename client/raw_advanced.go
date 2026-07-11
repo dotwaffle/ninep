@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/dotwaffle/ninep/proto"
 	"github.com/dotwaffle/ninep/proto/p9l"
@@ -13,13 +12,12 @@ import (
 // [Conn.Clunk] template from ops.go:
 //
 //  1. requireDialect(protocolL/U, "T<op>") where dialect-gated.
-//  2. Build the T-body struct and dispatch via c.roundTrip.
-//  3. toError translates Rlerror/Rerror into a *Error and releases the
-//     pooled R-message on that path; callers observe a non-nil error
-//     and never touch the pooled struct.
-//  4. Type-assert the expected concrete R struct. On mismatch, release
-//     the pooled R and surface a descriptive error.
-//  5. Copy out the wire fields the caller needs; putCachedRMsg the
+//  2. Build the T-body struct and dispatch via rtrip, which round-trips,
+//     translates Rlerror/Rerror into a *Error (releasing the pooled
+//     R-message on that path), and type-asserts the expected concrete
+//     R struct - releasing the pooled R and surfacing a descriptive
+//     error on mismatch.
+//  3. Copy out the wire fields the caller needs; putCachedRMsg the
 //     pooled struct exactly once on the happy path.
 //
 // Higher-level *File and *Conn surface methods compose on top of
@@ -35,21 +33,12 @@ func (r *Raw) Tsymlink(ctx context.Context, dfid proto.Fid, name, target string,
 		return proto.QID{}, err
 	}
 	req := &p9l.Tsymlink{DirFid: dfid, Name: name, Target: target, GID: gid}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rsymlink](ctx, r.c, req)
 	if err != nil {
 		return proto.QID{}, err
 	}
-	if err := toError(resp); err != nil {
-		return proto.QID{}, err
-	}
-	rr, ok := resp.(*p9l.Rsymlink)
-	if !ok {
-		err := fmt.Errorf("client: expected Rsymlink, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return proto.QID{}, err
-	}
 	qid := rr.QID
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return qid, nil
 }
 
@@ -62,22 +51,12 @@ func (r *Raw) Treadlink(ctx context.Context, fid proto.Fid) (string, error) {
 	if err := r.c.requireDialect(protocolL, "Treadlink"); err != nil {
 		return "", err
 	}
-	req := &p9l.Treadlink{Fid: fid}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rreadlink](ctx, r.c, &p9l.Treadlink{Fid: fid})
 	if err != nil {
 		return "", err
 	}
-	if err := toError(resp); err != nil {
-		return "", err
-	}
-	rr, ok := resp.(*p9l.Rreadlink)
-	if !ok {
-		err := fmt.Errorf("client: expected Rreadlink, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return "", err
-	}
 	target := rr.Target
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return target, nil
 }
 
@@ -93,21 +72,12 @@ func (r *Raw) Txattrwalk(ctx context.Context, fid, newFid proto.Fid, name string
 		return 0, err
 	}
 	req := &p9l.Txattrwalk{Fid: fid, NewFid: newFid, Name: name}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rxattrwalk](ctx, r.c, req)
 	if err != nil {
 		return 0, err
 	}
-	if err := toError(resp); err != nil {
-		return 0, err
-	}
-	rr, ok := resp.(*p9l.Rxattrwalk)
-	if !ok {
-		err := fmt.Errorf("client: expected Rxattrwalk, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return 0, err
-	}
 	size := rr.Size
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return size, nil
 }
 
@@ -125,19 +95,11 @@ func (r *Raw) Txattrcreate(ctx context.Context, fid proto.Fid, name string, attr
 		return err
 	}
 	req := &p9l.Txattrcreate{Fid: fid, Name: name, AttrSize: attrSize, Flags: flags}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rxattrcreate](ctx, r.c, req)
 	if err != nil {
 		return err
 	}
-	if err := toError(resp); err != nil {
-		return err
-	}
-	if _, ok := resp.(*p9l.Rxattrcreate); !ok {
-		err := fmt.Errorf("client: expected Rxattrcreate, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return err
-	}
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return nil
 }
 
@@ -162,21 +124,12 @@ func (r *Raw) Tlock(ctx context.Context, fid proto.Fid, lt proto.LockType, flags
 		ProcID:   procID,
 		ClientID: clientID,
 	}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rlock](ctx, r.c, req)
 	if err != nil {
 		return 0, err
 	}
-	if err := toError(resp); err != nil {
-		return 0, err
-	}
-	rr, ok := resp.(*p9l.Rlock)
-	if !ok {
-		err := fmt.Errorf("client: expected Rlock, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return 0, err
-	}
 	status := rr.Status
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return status, nil
 }
 
@@ -203,21 +156,12 @@ func (r *Raw) Tgetlock(ctx context.Context, fid proto.Fid, lt proto.LockType, st
 		ProcID:   procID,
 		ClientID: clientID,
 	}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rgetlock](ctx, r.c, req)
 	if err != nil {
 		return p9l.Rgetlock{}, err
 	}
-	if err := toError(resp); err != nil {
-		return p9l.Rgetlock{}, err
-	}
-	rr, ok := resp.(*p9l.Rgetlock)
-	if !ok {
-		err := fmt.Errorf("client: expected Rgetlock, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return p9l.Rgetlock{}, err
-	}
 	out := *rr
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return out, nil
 }
 
@@ -232,22 +176,12 @@ func (r *Raw) Tstatfs(ctx context.Context, fid proto.Fid) (proto.FSStat, error) 
 	if err := r.c.requireDialect(protocolL, "Tstatfs"); err != nil {
 		return proto.FSStat{}, err
 	}
-	req := &p9l.Tstatfs{Fid: fid}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rstatfs](ctx, r.c, &p9l.Tstatfs{Fid: fid})
 	if err != nil {
 		return proto.FSStat{}, err
 	}
-	if err := toError(resp); err != nil {
-		return proto.FSStat{}, err
-	}
-	rr, ok := resp.(*p9l.Rstatfs)
-	if !ok {
-		err := fmt.Errorf("client: expected Rstatfs, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return proto.FSStat{}, err
-	}
 	stat := rr.Stat
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return stat, nil
 }
 
@@ -266,19 +200,11 @@ func (r *Raw) Tfsync(ctx context.Context, fid proto.Fid, dataSync bool) error {
 		ds = 1
 	}
 	req := &p9l.Tfsync{Fid: fid, DataSync: ds}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rfsync](ctx, r.c, req)
 	if err != nil {
 		return err
 	}
-	if err := toError(resp); err != nil {
-		return err
-	}
-	if _, ok := resp.(*p9l.Rfsync); !ok {
-		err := fmt.Errorf("client: expected Rfsync, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return err
-	}
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return nil
 }
 
@@ -294,21 +220,12 @@ func (r *Raw) Tgetattr(ctx context.Context, fid proto.Fid, mask proto.AttrMask) 
 		return proto.Attr{}, err
 	}
 	req := &p9l.Tgetattr{Fid: fid, RequestMask: mask}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rgetattr](ctx, r.c, req)
 	if err != nil {
 		return proto.Attr{}, err
 	}
-	if err := toError(resp); err != nil {
-		return proto.Attr{}, err
-	}
-	rr, ok := resp.(*p9l.Rgetattr)
-	if !ok {
-		err := fmt.Errorf("client: expected Rgetattr, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return proto.Attr{}, err
-	}
 	attr := rr.Attr
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return attr, nil
 }
 
@@ -322,19 +239,11 @@ func (r *Raw) Tsetattr(ctx context.Context, fid proto.Fid, attr proto.SetAttr) e
 		return err
 	}
 	req := &p9l.Tsetattr{Fid: fid, Attr: attr}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rsetattr](ctx, r.c, req)
 	if err != nil {
 		return err
 	}
-	if err := toError(resp); err != nil {
-		return err
-	}
-	if _, ok := resp.(*p9l.Rsetattr); !ok {
-		err := fmt.Errorf("client: expected Rsetattr, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return err
-	}
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return nil
 }
 
@@ -349,19 +258,11 @@ func (r *Raw) Trename(ctx context.Context, fid, dfid proto.Fid, name string) err
 		return err
 	}
 	req := &p9l.Trename{Fid: fid, DirFid: dfid, Name: name}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rrename](ctx, r.c, req)
 	if err != nil {
 		return err
 	}
-	if err := toError(resp); err != nil {
-		return err
-	}
-	if _, ok := resp.(*p9l.Rrename); !ok {
-		err := fmt.Errorf("client: expected Rrename, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return err
-	}
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return nil
 }
 
@@ -381,19 +282,11 @@ func (r *Raw) Trenameat(ctx context.Context, oldDirFid proto.Fid, oldName string
 		NewDirFid: newDirFid,
 		NewName:   newName,
 	}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rrenameat](ctx, r.c, req)
 	if err != nil {
 		return err
 	}
-	if err := toError(resp); err != nil {
-		return err
-	}
-	if _, ok := resp.(*p9l.Rrenameat); !ok {
-		err := fmt.Errorf("client: expected Rrenameat, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return err
-	}
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return nil
 }
 
@@ -408,19 +301,11 @@ func (r *Raw) Tunlinkat(ctx context.Context, dirFid proto.Fid, name string, flag
 		return err
 	}
 	req := &p9l.Tunlinkat{DirFid: dirFid, Name: name, Flags: flags}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Runlinkat](ctx, r.c, req)
 	if err != nil {
 		return err
 	}
-	if err := toError(resp); err != nil {
-		return err
-	}
-	if _, ok := resp.(*p9l.Runlinkat); !ok {
-		err := fmt.Errorf("client: expected Runlinkat, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return err
-	}
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return nil
 }
 
@@ -435,19 +320,11 @@ func (r *Raw) Tlink(ctx context.Context, dfid, fid proto.Fid, name string) error
 		return err
 	}
 	req := &p9l.Tlink{DirFid: dfid, Fid: fid, Name: name}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rlink](ctx, r.c, req)
 	if err != nil {
 		return err
 	}
-	if err := toError(resp); err != nil {
-		return err
-	}
-	if _, ok := resp.(*p9l.Rlink); !ok {
-		err := fmt.Errorf("client: expected Rlink, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return err
-	}
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return nil
 }
 
@@ -469,21 +346,12 @@ func (r *Raw) Tmknod(ctx context.Context, dfid proto.Fid, name string, mode, maj
 		Minor:  minor,
 		GID:    gid,
 	}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rmknod](ctx, r.c, req)
 	if err != nil {
 		return proto.QID{}, err
 	}
-	if err := toError(resp); err != nil {
-		return proto.QID{}, err
-	}
-	rr, ok := resp.(*p9l.Rmknod)
-	if !ok {
-		err := fmt.Errorf("client: expected Rmknod, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return proto.QID{}, err
-	}
 	qid := rr.QID
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return qid, nil
 }
 
@@ -498,21 +366,12 @@ func (r *Raw) Tmkdir(ctx context.Context, dfid proto.Fid, name string, mode prot
 		return proto.QID{}, err
 	}
 	req := &p9l.Tmkdir{DirFid: dfid, Name: name, Mode: mode, GID: gid}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9l.Rmkdir](ctx, r.c, req)
 	if err != nil {
 		return proto.QID{}, err
 	}
-	if err := toError(resp); err != nil {
-		return proto.QID{}, err
-	}
-	rr, ok := resp.(*p9l.Rmkdir)
-	if !ok {
-		err := fmt.Errorf("client: expected Rmkdir, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return proto.QID{}, err
-	}
 	qid := rr.QID
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return qid, nil
 }
 
@@ -525,20 +384,11 @@ func (r *Raw) Tmkdir(ctx context.Context, dfid proto.Fid, name string, mode prot
 // Dialect-neutral - Tremove ships on both 9P2000.L and 9P2000.u wire
 // sets (see proto/messages.go).
 func (r *Raw) Tremove(ctx context.Context, fid proto.Fid) error {
-	req := &proto.Tremove{Fid: fid}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*proto.Rremove](ctx, r.c, &proto.Tremove{Fid: fid})
 	if err != nil {
 		return err
 	}
-	if err := toError(resp); err != nil {
-		return err
-	}
-	if _, ok := resp.(*proto.Rremove); !ok {
-		err := fmt.Errorf("client: expected Rremove, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return err
-	}
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return nil
 }
 
@@ -554,21 +404,11 @@ func (r *Raw) Tstat(ctx context.Context, fid proto.Fid) (p9u.Stat, error) {
 	if err := r.c.requireDialect(protocolU, "Tstat"); err != nil {
 		return p9u.Stat{}, err
 	}
-	req := &p9u.Tstat{Fid: fid}
-	resp, err := r.c.roundTrip(ctx, req)
+	rr, err := rtrip[*p9u.Rstat](ctx, r.c, &p9u.Tstat{Fid: fid})
 	if err != nil {
 		return p9u.Stat{}, err
 	}
-	if err := toError(resp); err != nil {
-		return p9u.Stat{}, err
-	}
-	rr, ok := resp.(*p9u.Rstat)
-	if !ok {
-		err := fmt.Errorf("client: expected Rstat, got %v", resp.Type())
-		putCachedRMsg(resp)
-		return p9u.Stat{}, err
-	}
 	stat := rr.Stat
-	putCachedRMsg(resp)
+	putCachedRMsg(rr)
 	return stat, nil
 }
