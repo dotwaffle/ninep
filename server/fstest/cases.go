@@ -2,6 +2,7 @@ package fstest
 
 import (
 	"bytes"
+	"fmt"
 	"syscall"
 	"testing"
 
@@ -34,6 +35,10 @@ func init() {
 		// Directory cases
 		{Name: "readdir/basic", Run: testReaddirBasic},
 		{Name: "readdir/empty", Run: testReaddirEmpty},
+		{Name: "readdir/paginated", Run: testReaddirPaginated},
+
+		// Rename cases
+		{Name: "rename/file", Run: testRenameFile},
 
 		// Create/Mkdir cases
 		{Name: "create/file", Run: testCreateFile},
@@ -407,6 +412,122 @@ func testReaddirEmpty(t *testing.T, root server.Node) {
 	dirents := parseDirents(rdr.Data)
 	if len(dirents) != 0 {
 		t.Errorf("readdir on empty dir returned %d entries, want 0", len(dirents))
+	}
+}
+
+// testReaddirPaginated verifies that a client resuming Treaddir with the
+// previous batch's last-entry Offset as its next request's Offset (and a
+// count too small to fit every entry in one round trip) eventually
+// enumerates the whole directory exactly once, in whatever number of
+// round trips the small count forces.
+func testReaddirPaginated(t *testing.T, root server.Node) {
+	tc := newTestConn(t, root)
+	attach(t, tc, 1, 0, "test", "")
+
+	msg := mkdir(t, tc, 2, 0, "paginated", 0o755, 0)
+	if _, ok := msg.(*p9l.Rmkdir); !ok {
+		t.Fatalf("expected Rmkdir, got %T: %+v", msg, msg)
+	}
+	expectRwalk(t, walk(t, tc, 3, 0, 1, "paginated"))
+
+	const numEntries = 25
+	want := make(map[string]bool, numEntries)
+	var tag proto.Tag = 4
+	for i := range numEntries {
+		name := fmt.Sprintf("f%02d", i)
+		want[name] = true
+
+		// Clone the directory fid (1) to a fresh fid (2) for Tlcreate,
+		// which consumes whatever fid it is given -- fid 1 must survive
+		// for the next iteration and the final Readdir.
+		expectRwalk(t, walk(t, tc, tag, 1, 2))
+		tag++
+		msg = create(t, tc, tag, 2, name, syscall.O_RDWR, 0o644, 0)
+		tag++
+		if _, ok := msg.(*p9l.Rlcreate); !ok {
+			t.Fatalf("create %q: expected Rlcreate, got %T: %+v", name, msg, msg)
+		}
+		clunk(t, tc, tag, 2)
+		tag++
+	}
+
+	msg = open(t, tc, tag, 1, syscall.O_RDONLY)
+	tag++
+	if _, ok := msg.(*p9l.Rlopen); !ok {
+		t.Fatalf("expected Rlopen, got %T: %+v", msg, msg)
+	}
+
+	// count=96 fits only a few of these short-named entries per Rreaddir,
+	// forcing several round trips to drain the directory.
+	got := make(map[string]bool, numEntries)
+	var offset uint64
+	for range numEntries + 2 {
+		msg = readdir(t, tc, tag, 1, offset, 96)
+		tag++
+		rdr, ok := msg.(*p9l.Rreaddir)
+		if !ok {
+			t.Fatalf("expected Rreaddir, got %T: %+v", msg, msg)
+		}
+		dirents := parseDirents(rdr.Data)
+		if len(dirents) == 0 {
+			break
+		}
+		for _, d := range dirents {
+			if got[d.Name] {
+				t.Errorf("paginated readdir returned duplicate entry %q", d.Name)
+			}
+			got[d.Name] = true
+			offset = d.Offset
+		}
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("paginated readdir returned %d entries, want %d (got=%v)", len(got), len(want), got)
+	}
+	for name := range want {
+		if !got[name] {
+			t.Errorf("paginated readdir missing entry %q", name)
+		}
+	}
+}
+
+// --- Rename test cases ---
+
+// testRenameFile exercises Trenameat on a scratch file created for this
+// case, moving it to a new name in the same directory. NodeRenamer is an
+// optional capability (memfs.MemDir does not implement it): a root that
+// returns ENOSYS is treated as "capability not implemented" rather than
+// a failure, matching this project's opt-in capability pattern.
+func testRenameFile(t *testing.T, root server.Node) {
+	tc := newTestConn(t, root)
+	attach(t, tc, 1, 0, "test", "")
+
+	// Clone root fid for create, then create the scratch file to rename.
+	expectRwalk(t, walk(t, tc, 2, 0, 1))
+	msg := create(t, tc, 3, 1, "rename-src", syscall.O_RDWR, 0o644, 0)
+	if _, ok := msg.(*p9l.Rlcreate); !ok {
+		t.Fatalf("expected Rlcreate, got %T: %+v", msg, msg)
+	}
+	clunk(t, tc, 4, 1)
+
+	msg = renameat(t, tc, 5, 0, "rename-src", 0, "rename-dst")
+	if rlerr, ok := msg.(*p9l.Rlerror); ok {
+		if rlerr.Ecode == proto.ENOSYS {
+			t.Skip("root does not implement NodeRenamer")
+		}
+		t.Fatalf("Trenameat: unexpected error %v", rlerr.Ecode)
+	}
+	if _, ok := msg.(*p9l.Rrenameat); !ok {
+		t.Fatalf("expected Rrenameat, got %T: %+v", msg, msg)
+	}
+
+	// Old name is gone.
+	expectRlerror(t, walk(t, tc, 6, 0, 2, "rename-src"), proto.ENOENT)
+
+	// New name resolves to the same file.
+	rw := expectRwalk(t, walk(t, tc, 7, 0, 3, "rename-dst"))
+	if len(rw.QIDs) != 1 {
+		t.Fatalf("walk to rename-dst: QIDs = %d, want 1", len(rw.QIDs))
 	}
 }
 

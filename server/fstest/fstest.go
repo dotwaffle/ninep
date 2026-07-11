@@ -263,6 +263,19 @@ func unlink(t *testing.T, tc *testConn, tag proto.Tag, dirFid proto.Fid, name st
 	return msg
 }
 
+// renameat sends Trenameat and returns the raw response.
+func renameat(t *testing.T, tc *testConn, tag proto.Tag, oldDirFid proto.Fid, oldName string, newDirFid proto.Fid, newName string) proto.Message {
+	t.Helper()
+	sendMsg(t, tc.client, tag, &p9l.Trenameat{
+		OldDirFid: oldDirFid,
+		OldName:   oldName,
+		NewDirFid: newDirFid,
+		NewName:   newName,
+	})
+	_, msg := readMsg(t, tc.client)
+	return msg
+}
+
 // setattr sends Tsetattr and returns the raw response.
 func setattr(t *testing.T, tc *testConn, tag proto.Tag, fid proto.Fid, attr proto.SetAttr) proto.Message {
 	t.Helper()
@@ -502,6 +515,22 @@ func (d *testDir) Mkdir(_ context.Context, name string, _ proto.FileMode, _ uint
 
 func (d *testDir) Unlink(_ context.Context, name string, _ uint32) error {
 	d.EmbeddedInode().RemoveChild(name)
+	return nil
+}
+
+// Rename implements server.NodeRenamer by moving oldName's child Inode
+// from this directory to newDir's, re-adding it under newName.
+func (d *testDir) Rename(_ context.Context, oldName string, newDir server.Node, newName string) error {
+	child, ok := d.Children()[oldName]
+	if !ok {
+		return proto.ENOENT
+	}
+	newDirIE, ok := newDir.(server.InodeEmbedder)
+	if !ok {
+		return proto.ENOTSUP
+	}
+	d.EmbeddedInode().RemoveChild(oldName)
+	newDirIE.EmbeddedInode().AddChild(newName, child)
 	return nil
 }
 
