@@ -1,0 +1,7 @@
+# Editor and IDE state
+.idea
+.vscode
+
+# Test and profiling artifacts
+*.prof
+*.test
