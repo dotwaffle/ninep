@@ -124,7 +124,7 @@ func TestKernelMountWriteFile(t *testing.T) {
 
 	hostDir := t.TempDir()
 
-	root, err := NewRoot(hostDir)
+	root, err := NewRoot(hostDir, WithOwnershipChanges())
 	if err != nil {
 		t.Fatalf("NewRoot: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestKernelMountCreateFile(t *testing.T) {
 
 	hostDir := t.TempDir()
 
-	root, err := NewRoot(hostDir)
+	root, err := NewRoot(hostDir, WithOwnershipChanges())
 	if err != nil {
 		t.Fatalf("NewRoot: %v", err)
 	}
