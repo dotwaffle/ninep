@@ -473,6 +473,23 @@ func (c *conn) readdirSimple(ctx context.Context, fs *fidState, m *p9l.Treaddir,
 	return &pooledRreaddir{Rreaddir: p9l.Rreaddir{Data: buf[:n]}, bufPtr: bufPtr}
 }
 
+// registerChild adds child to parent's Inode tree under name, if both
+// implement InodeEmbedder. No-op otherwise: Inode-tree bookkeeping is
+// opt-in per the capability pattern, and a node that doesn't embed
+// Inode has no forward-lookup path to register into -- the create/link
+// operation that produced child still succeeds server-side regardless.
+func registerChild(parent, child Node, name string) {
+	parentIE, ok := parent.(InodeEmbedder)
+	if !ok {
+		return
+	}
+	childIE, ok := child.(InodeEmbedder)
+	if !ok {
+		return
+	}
+	parentIE.EmbeddedInode().AddChild(name, childIE.EmbeddedInode())
+}
+
 // handleLcreate dispatches to NodeCreater, mutates fid to the new child in
 // opened state per 9P spec.
 func (c *conn) handleLcreate(ctx context.Context, m *p9l.Tlcreate) proto.Message {
@@ -513,12 +530,7 @@ func (c *conn) handleLcreate(ctx context.Context, m *p9l.Tlcreate) proto.Message
 	decRefNode(parentNode)
 	incRefNode(child)
 
-	// Register child in parent Inode tree if both implement InodeEmbedder.
-	if parentIE, ok := parentNode.(InodeEmbedder); ok {
-		if childIE, ok := child.(InodeEmbedder); ok {
-			parentIE.EmbeddedInode().AddChild(m.Name, childIE.EmbeddedInode())
-		}
-	}
+	registerChild(parentNode, child, m.Name)
 
 	qid := nodeQID(child)
 	return &p9l.Rlcreate{QID: qid, IOUnit: c.clampIOUnit(iounitHint)}
@@ -567,11 +579,7 @@ func (c *conn) handleUCreate(ctx context.Context, m *p9u.Tcreate) proto.Message 
 	decRefNode(parentNode)
 	incRefNode(child)
 
-	if parentIE, ok := parentNode.(InodeEmbedder); ok {
-		if childIE, ok := child.(InodeEmbedder); ok {
-			parentIE.EmbeddedInode().AddChild(m.Name, childIE.EmbeddedInode())
-		}
-	}
+	registerChild(parentNode, child, m.Name)
 
 	qid := nodeQID(child)
 	return &p9u.Rcreate{QID: qid, IOUnit: c.clampIOUnit(iounitHint)}
@@ -598,12 +606,7 @@ func (c *conn) handleMkdir(ctx context.Context, m *p9l.Tmkdir) proto.Message {
 		return c.errorMsg(errnoFromError(err))
 	}
 
-	// Register child in parent Inode tree if both implement InodeEmbedder.
-	if parentIE, ok := fs.currentNode().(InodeEmbedder); ok {
-		if childIE, ok := child.(InodeEmbedder); ok {
-			parentIE.EmbeddedInode().AddChild(m.Name, childIE.EmbeddedInode())
-		}
-	}
+	registerChild(fs.currentNode(), child, m.Name)
 
 	return &p9l.Rmkdir{QID: nodeQID(child)}
 }
@@ -630,12 +633,7 @@ func (c *conn) handleSymlink(ctx context.Context, m *p9l.Tsymlink) proto.Message
 		return c.errorMsg(errnoFromError(err))
 	}
 
-	// Register child in parent Inode tree if both implement InodeEmbedder.
-	if parentIE, ok := fs.currentNode().(InodeEmbedder); ok {
-		if childIE, ok := child.(InodeEmbedder); ok {
-			parentIE.EmbeddedInode().AddChild(m.Name, childIE.EmbeddedInode())
-		}
-	}
+	registerChild(fs.currentNode(), child, m.Name)
 
 	return &p9l.Rsymlink{QID: nodeQID(child)}
 }
@@ -666,12 +664,7 @@ func (c *conn) handleLink(ctx context.Context, m *p9l.Tlink) proto.Message {
 		return c.errorMsg(errnoFromError(err))
 	}
 
-	// Register link in parent Inode tree if both implement InodeEmbedder.
-	if parentIE, ok := dirFS.currentNode().(InodeEmbedder); ok {
-		if targetIE, ok := targetFS.currentNode().(InodeEmbedder); ok {
-			parentIE.EmbeddedInode().AddChild(m.Name, targetIE.EmbeddedInode())
-		}
-	}
+	registerChild(dirFS.currentNode(), targetFS.currentNode(), m.Name)
 
 	return &p9l.Rlink{}
 }
@@ -698,12 +691,7 @@ func (c *conn) handleMknod(ctx context.Context, m *p9l.Tmknod) proto.Message {
 		return c.errorMsg(errnoFromError(err))
 	}
 
-	// Register child in parent Inode tree if both implement InodeEmbedder.
-	if parentIE, ok := fs.currentNode().(InodeEmbedder); ok {
-		if childIE, ok := child.(InodeEmbedder); ok {
-			parentIE.EmbeddedInode().AddChild(m.Name, childIE.EmbeddedInode())
-		}
-	}
+	registerChild(fs.currentNode(), child, m.Name)
 
 	return &p9l.Rmknod{QID: nodeQID(child)}
 }
