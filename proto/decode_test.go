@@ -2,6 +2,7 @@ package proto
 
 import (
 	"bytes"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -34,6 +35,61 @@ func TestReadString_Correctness(t *testing.T) {
 			t.Errorf("roundtrip len=%d: got %q want %q", len(want), clip(got), clip(want))
 		}
 	}
+}
+
+func TestReadData(t *testing.T) {
+	// No t.Parallel(): the reject-path subtest measures allocated bytes
+	// via runtime.MemStats and needs a quiet heap.
+	t.Run("zero count", func(t *testing.T) {
+		got, err := ReadData(bytes.NewReader(nil), 0)
+		if err != nil {
+			t.Fatalf("ReadData(0): %v", err)
+		}
+		if got == nil || len(got) != 0 {
+			t.Errorf("ReadData(0) = %v, want non-nil empty slice", got)
+		}
+	})
+
+	t.Run("exact fit", func(t *testing.T) {
+		want := []byte{1, 2, 3, 4}
+		got, err := ReadData(bytes.NewReader(want), 4)
+		if err != nil {
+			t.Fatalf("ReadData: %v", err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("ReadData = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("count exceeds bytes.Reader remainder", func(t *testing.T) {
+		// The count must be rejected before the allocation happens; assert
+		// no per-call allocation grows with the claimed count.
+		r := bytes.NewReader([]byte{1, 2, 3})
+		if _, err := ReadData(r, MaxDataSize); err == nil {
+			t.Fatal("expected error for count exceeding remaining bytes")
+		}
+		// Alloc counts cannot tell a 16 MiB buffer from an error wrap, so
+		// measure allocated bytes: 10 rejected calls must stay far below a
+		// single MaxDataSize buffer.
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		for range 10 {
+			if _, err := r.Seek(0, 0); err != nil {
+				t.Fatalf("seek: %v", err)
+			}
+			_, _ = ReadData(r, MaxDataSize)
+		}
+		runtime.ReadMemStats(&after)
+		if delta := after.TotalAlloc - before.TotalAlloc; delta > 1<<20 {
+			t.Errorf("ReadData reject path allocated %d bytes over 10 calls; count is not being checked before allocation", delta)
+		}
+	})
+
+	t.Run("short generic reader", func(t *testing.T) {
+		if _, err := ReadData(strings.NewReader("ab"), 4); err == nil {
+			t.Fatal("expected error for short generic reader")
+		}
+	})
 }
 
 func TestReadString_PooledAllocs(t *testing.T) {

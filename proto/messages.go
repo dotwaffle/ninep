@@ -476,11 +476,8 @@ func (m *Rread) DecodeFrom(r io.Reader) error {
 	if count > MaxDataSize {
 		return fmt.Errorf("decode rread count %d exceeds maximum %d", count, MaxDataSize)
 	}
-	m.Data = make([]byte, count)
-	if count > 0 {
-		if _, err := io.ReadFull(r, m.Data); err != nil {
-			return fmt.Errorf("decode rread data: %w", err)
-		}
+	if m.Data, err = ReadData(r, count); err != nil {
+		return fmt.Errorf("decode rread data: %w", err)
 	}
 	return nil
 }
@@ -554,11 +551,8 @@ func (m *Twrite) DecodeFrom(r io.Reader) error {
 	if count > MaxDataSize {
 		return fmt.Errorf("decode twrite count %d exceeds maximum %d", count, MaxDataSize)
 	}
-	m.Data = make([]byte, count)
-	if count > 0 {
-		if _, err := io.ReadFull(r, m.Data); err != nil {
-			return fmt.Errorf("decode twrite data: %w", err)
-		}
+	if m.Data, err = ReadData(r, count); err != nil {
+		return fmt.Errorf("decode twrite data: %w", err)
 	}
 	return nil
 }

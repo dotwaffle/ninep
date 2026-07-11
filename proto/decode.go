@@ -117,6 +117,28 @@ func ReadString(r io.Reader) (string, error) {
 	return string(*scratch), nil
 }
 
+// ReadData reads exactly count bytes from r into a freshly allocated slice.
+// Callers must bound count (e.g. against MaxDataSize) before calling.
+//
+// When r is a *bytes.Reader -- the path DecodeFrame always uses -- a count
+// exceeding the remaining bytes is rejected before the allocation, so a
+// crafted frame with an inflated count cannot force a large transient
+// allocation from a few bytes of input.
+func ReadData(r io.Reader, count uint32) ([]byte, error) {
+	if count == 0 {
+		return []byte{}, nil
+	}
+	if br, ok := r.(*bytes.Reader); ok && uint64(count) > uint64(br.Len()) {
+		return nil, fmt.Errorf("read data: count %d exceeds remaining %d bytes: %w",
+			count, br.Len(), io.ErrUnexpectedEOF)
+	}
+	data := make([]byte, count)
+	if _, err := io.ReadFull(r, data); err != nil {
+		return nil, fmt.Errorf("read data: %w", err)
+	}
+	return data, nil
+}
+
 // ReadQID reads a QID from r in wire format: type[1] + version[4] + path[8].
 func ReadQID(r io.Reader) (QID, error) {
 	t, err := ReadUint8(r)
