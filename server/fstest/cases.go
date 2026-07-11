@@ -53,6 +53,14 @@ func init() {
 		{Name: "error/walk-from-file", Run: testErrorWalkFromFile},
 		{Name: "error/read-dir", Run: testErrorReadDir},
 
+		// Symlink/link cases
+		{Name: "symlink/roundtrip", Run: testSymlinkRoundtrip},
+		{Name: "link/hardlink", Run: testHardlink},
+
+		// Filesystem-level cases
+		{Name: "statfs", Run: testStatfs},
+		{Name: "fsync", Run: testFsync},
+
 		// Unlink cases
 		{Name: "unlink/file", Run: testUnlinkFile},
 
@@ -783,5 +791,94 @@ func testConcurrentRead(t *testing.T, root server.Node) {
 		if !bytes.Equal(data, expected) {
 			t.Errorf("read %d: data = %q, want %q", i, data, expected)
 		}
+	}
+}
+
+// testSymlinkRoundtrip: Tsymlink creates a link, walking to it yields a
+// QTSYMLINK qid, and Treadlink returns the original target verbatim.
+func testSymlinkRoundtrip(t *testing.T, root server.Node) {
+	tc := newTestConn(t, root)
+	attach(t, tc, 1, 0, "test", "")
+
+	const target = "sub/nested.txt"
+	msg := skipENOSYS(t, symlink(t, tc, 2, 0, "sl", target), "NodeSymlinker")
+	rs, ok := msg.(*p9l.Rsymlink)
+	if !ok {
+		t.Fatalf("expected Rsymlink, got %T: %+v", msg, msg)
+	}
+	if rs.QID.Type != proto.QTSYMLINK {
+		t.Errorf("Rsymlink qid type = %v, want QTSYMLINK", rs.QID.Type)
+	}
+
+	rw := expectRwalk(t, walk(t, tc, 3, 0, 1, "sl"))
+	if len(rw.QIDs) != 1 || rw.QIDs[0].Type != proto.QTSYMLINK {
+		t.Fatalf("walk to symlink: qids = %+v, want one QTSYMLINK", rw.QIDs)
+	}
+
+	msg = readlink(t, tc, 4, 1)
+	rl, ok := msg.(*p9l.Rreadlink)
+	if !ok {
+		t.Fatalf("expected Rreadlink, got %T: %+v", msg, msg)
+	}
+	if rl.Target != target {
+		t.Errorf("readlink target = %q, want %q", rl.Target, target)
+	}
+}
+
+// testHardlink: Tlink adds a second name for a file; both names resolve to
+// the same qid path and content, and getattr reports nlink 2 (when the
+// filesystem tracks link counts).
+func testHardlink(t *testing.T, root server.Node) {
+	tc := newTestConn(t, root)
+	createScratch(t, tc, "linksrc")
+	expectRwrite(t, write(t, tc, 4, 1, 0, []byte("payload")))
+	clunk(t, tc, 5, 1)
+
+	// Re-walk to the file for a clean (unopened) fid to link from.
+	expectRwalk(t, walk(t, tc, 6, 0, 1, "linksrc"))
+	msg := skipENOSYS(t, link(t, tc, 7, 0, 1, "linkdst"), "NodeLinker")
+	if _, ok := msg.(*p9l.Rlink); !ok {
+		t.Fatalf("expected Rlink, got %T: %+v", msg, msg)
+	}
+
+	rwSrc := expectRwalk(t, walk(t, tc, 8, 0, 2, "linksrc"))
+	rwDst := expectRwalk(t, walk(t, tc, 9, 0, 3, "linkdst"))
+	if rwSrc.QIDs[0].Path != rwDst.QIDs[0].Path {
+		t.Errorf("hardlink qid path = %d, want %d (same inode)", rwDst.QIDs[0].Path, rwSrc.QIDs[0].Path)
+	}
+
+	if _, ok := lopen(t, tc, 10, 3, 0).(*p9l.Rlopen); !ok {
+		t.Fatalf("open linkdst failed")
+	}
+	if data := expectRread(t, read(t, tc, 11, 3, 0, 4096)); string(data) != "payload" {
+		t.Errorf("read via hardlink = %q, want %q", data, "payload")
+	}
+}
+
+// testStatfs: Tstatfs on the root fid returns filesystem statistics with a
+// sane block size.
+func testStatfs(t *testing.T, root server.Node) {
+	tc := newTestConn(t, root)
+	attach(t, tc, 1, 0, "test", "")
+
+	msg := skipENOSYS(t, statfs(t, tc, 2, 0), "NodeStatFSer")
+	rs, ok := msg.(*p9l.Rstatfs)
+	if !ok {
+		t.Fatalf("expected Rstatfs, got %T: %+v", msg, msg)
+	}
+	if rs.Stat.BSize == 0 {
+		t.Errorf("statfs bsize = 0, want non-zero")
+	}
+}
+
+// testFsync: Tfsync on an opened, written fid succeeds.
+func testFsync(t *testing.T, root server.Node) {
+	tc := newTestConn(t, root)
+	createScratch(t, tc, "fsyncfile")
+	expectRwrite(t, write(t, tc, 4, 1, 0, []byte("durable")))
+
+	msg := skipENOSYS(t, fsync(t, tc, 5, 1), "FileSyncer/NodeFsyncer")
+	if _, ok := msg.(*p9l.Rfsync); !ok {
+		t.Fatalf("expected Rfsync, got %T: %+v", msg, msg)
 	}
 }

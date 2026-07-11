@@ -635,3 +635,53 @@ func parseDirents(data []byte) []proto.Dirent {
 	}
 	return dirents
 }
+
+// symlink sends Tsymlink and returns the raw response.
+func symlink(t *testing.T, tc *testConn, tag proto.Tag, dirFid proto.Fid, name, target string) proto.Message {
+	t.Helper()
+	sendMsg(t, tc.client, tag, &p9l.Tsymlink{DirFid: dirFid, Name: name, Target: target})
+	_, msg := readMsg(t, tc.client)
+	return msg
+}
+
+// readlink sends Treadlink and returns the raw response.
+func readlink(t *testing.T, tc *testConn, tag proto.Tag, fid proto.Fid) proto.Message {
+	t.Helper()
+	sendMsg(t, tc.client, tag, &p9l.Treadlink{Fid: fid})
+	_, msg := readMsg(t, tc.client)
+	return msg
+}
+
+// link sends Tlink and returns the raw response.
+func link(t *testing.T, tc *testConn, tag proto.Tag, dirFid, fid proto.Fid, name string) proto.Message {
+	t.Helper()
+	sendMsg(t, tc.client, tag, &p9l.Tlink{DirFid: dirFid, Fid: fid, Name: name})
+	_, msg := readMsg(t, tc.client)
+	return msg
+}
+
+// statfs sends Tstatfs and returns the raw response.
+func statfs(t *testing.T, tc *testConn, tag proto.Tag, fid proto.Fid) proto.Message {
+	t.Helper()
+	sendMsg(t, tc.client, tag, &p9l.Tstatfs{Fid: fid})
+	_, msg := readMsg(t, tc.client)
+	return msg
+}
+
+// fsync sends Tfsync and returns the raw response.
+func fsync(t *testing.T, tc *testConn, tag proto.Tag, fid proto.Fid) proto.Message {
+	t.Helper()
+	sendMsg(t, tc.client, tag, &p9l.Tfsync{Fid: fid})
+	_, msg := readMsg(t, tc.client)
+	return msg
+}
+
+// skipENOSYS skips the test when msg is an Rlerror carrying ENOSYS,
+// reporting the named capability as unimplemented. Returns msg otherwise.
+func skipENOSYS(t *testing.T, msg proto.Message, capability string) proto.Message {
+	t.Helper()
+	if rlerr, ok := msg.(*p9l.Rlerror); ok && rlerr.Ecode == proto.ENOSYS {
+		t.Skipf("root does not implement %s", capability)
+	}
+	return msg
+}
