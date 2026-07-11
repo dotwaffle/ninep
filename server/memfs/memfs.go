@@ -202,30 +202,29 @@ func (d *MemDir) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error
 }
 
 // Create implements server.NodeCreater. It creates a new MemFile child
-// with the given mode and registers it in the Inode tree. If a child of
-// the same name already exists it returns proto.EEXIST, regardless of
-// the open flags, rather than silently replacing the entry.
-func (d *MemDir) Create(ctx context.Context, name string, _ uint32, mode proto.FileMode, _ uint32) (server.Node, server.FileHandle, uint32, error) {
-	if _, err := d.Lookup(ctx, name); err == nil {
-		return nil, nil, 0, proto.EEXIST
-	}
+// with the given mode and registers it in the Inode tree atomically via
+// TryAddChild. If a child of the same name already exists it returns
+// proto.EEXIST, regardless of the open flags, rather than silently
+// replacing the entry.
+func (d *MemDir) Create(_ context.Context, name string, _ uint32, mode proto.FileMode, _ uint32) (server.Node, server.FileHandle, uint32, error) {
 	child := &MemFile{Mode: uint32(mode)}
 	child.Init(d.gen.Next(proto.QTFILE), child)
-	d.AddChild(name, child.EmbeddedInode())
+	if !d.TryAddChild(name, child.EmbeddedInode()) {
+		return nil, nil, 0, proto.EEXIST
+	}
 	return child, nil, 0, nil
 }
 
 // Mkdir implements server.NodeMkdirer. It creates a new MemDir child and
-// registers it in the Inode tree. If a child of the same name already
-// exists it returns proto.EEXIST rather than silently replacing the
-// entry.
-func (d *MemDir) Mkdir(ctx context.Context, name string, mode proto.FileMode, _ uint32) (server.Node, error) {
-	if _, err := d.Lookup(ctx, name); err == nil {
-		return nil, proto.EEXIST
-	}
+// registers it in the Inode tree atomically via TryAddChild. If a child
+// of the same name already exists it returns proto.EEXIST rather than
+// silently replacing the entry.
+func (d *MemDir) Mkdir(_ context.Context, name string, mode proto.FileMode, _ uint32) (server.Node, error) {
 	child := &MemDir{gen: d.gen, Mode: uint32(mode)}
 	child.Init(d.gen.Next(proto.QTDIR), child)
-	d.AddChild(name, child.EmbeddedInode())
+	if !d.TryAddChild(name, child.EmbeddedInode()) {
+		return nil, proto.EEXIST
+	}
 	return child, nil
 }
 

@@ -214,6 +214,27 @@ func (i *Inode) AddChild(name string, child *Inode) {
 	i.children[name] = child
 }
 
+// TryAddChild adds a child inode under the given name only if the name is
+// not already taken, reporting whether the child was added. Create-style
+// handlers should use this instead of a Lookup-then-AddChild sequence,
+// which is a check-then-act race: two concurrent creates of the same name
+// would both pass the Lookup and the second AddChild would silently
+// replace the first entry. Lock ordering matches AddChild.
+func (i *Inode) TryAddChild(name string, child *Inode) bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.children == nil {
+		i.children = make(map[string]*Inode)
+	} else if _, exists := i.children[name]; exists {
+		return false
+	}
+	child.mu.Lock()
+	child.parent = i
+	child.mu.Unlock()
+	i.children[name] = child
+	return true
+}
+
 // RemoveChild removes a child by name.
 func (i *Inode) RemoveChild(name string) {
 	i.mu.Lock()

@@ -2,6 +2,7 @@ package memfs
 
 import (
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -852,5 +853,59 @@ func TestBuilderTreeWalkability(t *testing.T) {
 	}
 	if string(buf[:n]) != "bottom" {
 		t.Errorf("Read = %q, want %q", buf[:n], "bottom")
+	}
+}
+
+// TestCreateMkdir_ConcurrentSameName asserts exactly one of two concurrent
+// creates of the same name wins and the other sees EEXIST. The old
+// Lookup-then-AddChild sequence was a check-then-act race in which both
+// could pass the existence check and the second silently replaced the
+// first entry.
+func TestCreateMkdir_ConcurrentSameName(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		kind string
+		op   func(d *MemDir, name string) error
+	}{
+		{"create", func(d *MemDir, name string) error {
+			_, _, _, err := d.Create(t.Context(), name, 0, 0o644, 0)
+			return err
+		}},
+		{"mkdir", func(d *MemDir, name string) error {
+			_, err := d.Mkdir(t.Context(), name, 0o755, 0)
+			return err
+		}},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			t.Parallel()
+			d := NewDir(newGen())
+
+			const rounds = 200
+			for i := range rounds {
+				name := tc.kind + "-" + strconv.Itoa(i)
+				errs := make([]error, 2)
+				var wg sync.WaitGroup
+				for g := range errs {
+					wg.Go(func() { errs[g] = tc.op(d, name) })
+				}
+				wg.Wait()
+
+				var wins, exists int
+				for _, err := range errs {
+					switch {
+					case err == nil:
+						wins++
+					case errors.Is(err, proto.EEXIST):
+						exists++
+					default:
+						t.Fatalf("round %d: unexpected error %v", i, err)
+					}
+				}
+				if wins != 1 || exists != 1 {
+					t.Fatalf("round %d: wins=%d eexist=%d, want exactly one of each", i, wins, exists)
+				}
+			}
+		})
 	}
 }
