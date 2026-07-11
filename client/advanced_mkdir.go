@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/dotwaffle/ninep/proto"
 )
@@ -42,41 +41,24 @@ func (c *Conn) Mkdir(ctx context.Context, parentPath, name string, mode proto.Fi
 
 	// Walk to the parent directory (zero-step walk for "/" clones the
 	// root fid).
-	dirFid, err := c.fids.acquire()
+	dirFid, dirCleanup, err := c.walkNew(ctx, root.fid, parents, "parent")
 	if err != nil {
 		return nil, err
-	}
-	qids, err := c.Walk(ctx, root.fid, dirFid, parents)
-	if err != nil {
-		c.fids.release(dirFid)
-		return nil, err
-	}
-	if len(parents) > 0 && len(qids) != len(parents) {
-		c.fids.release(dirFid)
-		return nil, fmt.Errorf("client: partial walk to parent (%d of %d steps)", len(qids), len(parents))
 	}
 
 	qid, err := c.Raw().Tmkdir(ctx, dirFid, name, mode, gid)
 	if err != nil {
-		_ = c.Clunk(context.Background(), dirFid)
-		c.fids.release(dirFid)
+		dirCleanup()
 		return nil, err
 	}
 
 	// Walk from dirFid to the new directory via a fresh fid so the
 	// caller gets a *File handle. dirFid is clunked before return
-	// regardless of the walk outcome.
-	newFid, err := c.fids.acquire()
-	if err != nil {
-		_ = c.Clunk(context.Background(), dirFid)
-		c.fids.release(dirFid)
-		return nil, err
-	}
-	_, walkErr := c.Walk(ctx, dirFid, newFid, []string{name})
-	_ = c.Clunk(context.Background(), dirFid)
-	c.fids.release(dirFid)
+	// regardless of the walk outcome; newFid's cleanup is intentionally
+	// unused on success -- ownership moves into the returned *File.
+	newFid, _, walkErr := c.walkNew(ctx, dirFid, []string{name}, "new directory")
+	dirCleanup()
 	if walkErr != nil {
-		c.fids.release(newFid)
 		return nil, walkErr
 	}
 	// iounit=0: the node is stat-only; no negotiated chunk size.

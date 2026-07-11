@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"errors"
-	"fmt"
 )
 
 // Link creates a hard link at newPath pointing at the existing file at
@@ -37,48 +36,23 @@ func (c *Conn) Link(ctx context.Context, existingPath, newPath string) error {
 	dstName := dstFull[len(dstFull)-1]
 
 	// Walk to the source file fid.
-	srcFid, err := c.fids.acquire()
+	srcFid, srcCleanup, err := c.walkNew(ctx, root.fid, srcFull, "source")
 	if err != nil {
 		return err
-	}
-	qids, err := c.Walk(ctx, root.fid, srcFid, srcFull)
-	if err != nil {
-		c.fids.release(srcFid)
-		return err
-	}
-	if len(qids) != len(srcFull) {
-		c.fids.release(srcFid)
-		return fmt.Errorf("client: partial walk to source (%d of %d steps)", len(qids), len(srcFull))
 	}
 
 	// Walk to the dest parent dir. On any failure here, srcFid must be
 	// clunked + released.
-	dstDirFid, err := c.fids.acquire()
+	dstDirFid, dstCleanup, err := c.walkNew(ctx, root.fid, dstParents, "dest-parent")
 	if err != nil {
-		_ = c.Clunk(context.Background(), srcFid)
-		c.fids.release(srcFid)
+		srcCleanup()
 		return err
-	}
-	qids, err = c.Walk(ctx, root.fid, dstDirFid, dstParents)
-	if err != nil {
-		c.fids.release(dstDirFid)
-		_ = c.Clunk(context.Background(), srcFid)
-		c.fids.release(srcFid)
-		return err
-	}
-	if len(dstParents) > 0 && len(qids) != len(dstParents) {
-		c.fids.release(dstDirFid)
-		_ = c.Clunk(context.Background(), srcFid)
-		c.fids.release(srcFid)
-		return fmt.Errorf("client: partial walk to dest-parent (%d of %d steps)", len(qids), len(dstParents))
 	}
 
 	// Tlink wire order is (dfid, fid, name): dfid is the parent dir of
 	// the new link, fid is the target being linked.
 	linkErr := c.Raw().Tlink(ctx, dstDirFid, srcFid, dstName)
-	_ = c.Clunk(context.Background(), dstDirFid)
-	c.fids.release(dstDirFid)
-	_ = c.Clunk(context.Background(), srcFid)
-	c.fids.release(srcFid)
+	dstCleanup()
+	srcCleanup()
 	return linkErr
 }

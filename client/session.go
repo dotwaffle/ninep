@@ -153,18 +153,9 @@ func (c *Conn) Create(ctx context.Context, p string, flags int, mode os.FileMode
 	parents := full[:len(full)-1]
 	name := full[len(full)-1]
 
-	dirFid, err := c.fids.acquire()
+	dirFid, dirCleanup, err := c.walkNew(ctx, root.fid, parents, "parent")
 	if err != nil {
 		return nil, err
-	}
-	qids, err := c.Walk(ctx, root.fid, dirFid, parents)
-	if err != nil {
-		c.fids.release(dirFid)
-		return nil, err
-	}
-	if len(parents) > 0 && len(qids) != len(parents) {
-		c.fids.release(dirFid)
-		return nil, fmt.Errorf("client: partial walk to parent (%d of %d steps)", len(qids), len(parents))
 	}
 
 	// Mask to permission bits (0o7777). os.FileMode type bits do not
@@ -186,12 +177,12 @@ func (c *Conn) Create(ctx context.Context, p string, flags int, mode os.FileMode
 	if err != nil {
 		// Walk succeeded -> dirFid is server-bound (to the parent dir,
 		// since create mutates on success only). Clunk before release.
-		_ = c.Clunk(context.Background(), dirFid)
-		c.fids.release(dirFid)
+		dirCleanup()
 		return nil, err
 	}
 	// Post-Lcreate/Tcreate: dirFid now refers to the newly-created
-	// file (9P spec + Linux v9fs kernel behavior).
+	// file (9P spec + Linux v9fs kernel behavior); dirCleanup is
+	// intentionally not called -- ownership moves into the *File.
 	return newFile(c, dirFid, qid, iounit), nil
 }
 

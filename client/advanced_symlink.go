@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/dotwaffle/ninep/proto"
 )
@@ -48,45 +47,27 @@ func (c *Conn) Symlink(ctx context.Context, linkPath, target string) (*File, err
 
 	// Walk from root to the parent directory of linkPath. A zero-step
 	// walk (parents == nil) clones the root fid into dirFid.
-	dirFid, err := c.fids.acquire()
+	dirFid, dirCleanup, err := c.walkNew(ctx, root.fid, parents, "parent")
 	if err != nil {
 		return nil, err
-	}
-	qids, err := c.Walk(ctx, root.fid, dirFid, parents)
-	if err != nil {
-		c.fids.release(dirFid)
-		return nil, err
-	}
-	if len(parents) > 0 && len(qids) != len(parents) {
-		// Partial walk -- dirFid is NOT server-bound, so no Clunk.
-		c.fids.release(dirFid)
-		return nil, fmt.Errorf("client: partial walk to parent (%d of %d steps)", len(qids), len(parents))
 	}
 
 	// Issue Tsymlink against the parent dirFid. GID=0 defers to the
 	// server's default (matches Linux v9fs convention).
 	qid, err := c.Raw().Tsymlink(ctx, dirFid, name, target, 0)
 	if err != nil {
-		_ = c.Clunk(context.Background(), dirFid)
-		c.fids.release(dirFid)
+		dirCleanup()
 		return nil, err
 	}
 
 	// Walk from dirFid to the newly-created symlink via a fresh fid so
 	// the caller gets a *File handle. dirFid is clunked regardless of
 	// the post-Tsymlink walk outcome -- the symlink already exists on the
-	// server either way.
-	symFid, err := c.fids.acquire()
-	if err != nil {
-		_ = c.Clunk(context.Background(), dirFid)
-		c.fids.release(dirFid)
-		return nil, err
-	}
-	_, walkErr := c.Walk(ctx, dirFid, symFid, []string{name})
-	_ = c.Clunk(context.Background(), dirFid)
-	c.fids.release(dirFid)
+	// server either way. symFid's cleanup is intentionally unused on
+	// success: ownership moves into the returned *File.
+	symFid, _, walkErr := c.walkNew(ctx, dirFid, []string{name}, "new symlink")
+	dirCleanup()
 	if walkErr != nil {
-		c.fids.release(symFid)
 		return nil, walkErr
 	}
 	// iounit=0: the symlink fid is stat-only (never opened), so there is

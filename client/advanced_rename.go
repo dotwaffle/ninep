@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"errors"
-	"fmt"
 )
 
 // Rename moves the entry at fromPath to toPath. On 9P2000.L the wire op
@@ -49,40 +48,17 @@ func (c *Conn) Rename(ctx context.Context, fromPath, toPath string) error {
 	toName := toFull[len(toFull)-1]
 
 	// Walk source parent.
-	oldDirFid, err := c.fids.acquire()
+	oldDirFid, oldCleanup, err := c.walkNew(ctx, root.fid, fromParents, "from-parent")
 	if err != nil {
 		return err
-	}
-	qids, err := c.Walk(ctx, root.fid, oldDirFid, fromParents)
-	if err != nil {
-		c.fids.release(oldDirFid)
-		return err
-	}
-	if len(fromParents) > 0 && len(qids) != len(fromParents) {
-		c.fids.release(oldDirFid)
-		return fmt.Errorf("client: partial walk to from-parent (%d of %d steps)", len(qids), len(fromParents))
 	}
 
 	// Walk dest parent. On any failure here, the source-parent fid must
 	// be clunked + released before returning.
-	newDirFid, err := c.fids.acquire()
+	newDirFid, newCleanup, err := c.walkNew(ctx, root.fid, toParents, "to-parent")
 	if err != nil {
-		_ = c.Clunk(context.Background(), oldDirFid)
-		c.fids.release(oldDirFid)
+		oldCleanup()
 		return err
-	}
-	qids, err = c.Walk(ctx, root.fid, newDirFid, toParents)
-	if err != nil {
-		c.fids.release(newDirFid)
-		_ = c.Clunk(context.Background(), oldDirFid)
-		c.fids.release(oldDirFid)
-		return err
-	}
-	if len(toParents) > 0 && len(qids) != len(toParents) {
-		c.fids.release(newDirFid)
-		_ = c.Clunk(context.Background(), oldDirFid)
-		c.fids.release(oldDirFid)
-		return fmt.Errorf("client: partial walk to to-parent (%d of %d steps)", len(qids), len(toParents))
 	}
 
 	// Issue Trenameat; clunk+release both dir fids regardless of
@@ -90,9 +66,7 @@ func (c *Conn) Rename(ctx context.Context, fromPath, toPath string) error {
 	// oldDirFid release in the common case, but either order is safe --
 	// the fids are independent server-side.
 	renameErr := c.Raw().Trenameat(ctx, oldDirFid, fromName, newDirFid, toName)
-	_ = c.Clunk(context.Background(), newDirFid)
-	c.fids.release(newDirFid)
-	_ = c.Clunk(context.Background(), oldDirFid)
-	c.fids.release(oldDirFid)
+	newCleanup()
+	oldCleanup()
 	return renameErr
 }
