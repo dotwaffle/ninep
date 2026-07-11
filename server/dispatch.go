@@ -162,11 +162,12 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 		if tw.Fid == tw.NewFid {
 			return &proto.Rwalk{}
 		}
-		// Clone: newfid points to same node with same path. Reading node and
-		// path through their locked accessors matters here: another in-place
-		// Twalk on src.Fid can be rewriting both concurrently.
-		cloneNode := src.currentNode()
-		fs := &fidState{node: cloneNode, path: c.fids.getPath(tw.Fid), state: fidAllocated}
+		// Clone: newfid points to same node with same path, read from one
+		// critical section: another in-place Twalk on src.Fid can be
+		// rewriting both concurrently, and separate reads could pair the
+		// node of one rewrite with the path of another.
+		cloneNode, clonePath := src.nodeAndPath()
+		fs := &fidState{node: cloneNode, path: clonePath, state: fidAllocated}
 		if err := c.fids.add(tw.NewFid, fs, c.maxFids); err != nil {
 			if errors.Is(err, ErrFidLimitExceeded) {
 				return c.errorMsg(proto.EMFILE)
@@ -229,10 +230,10 @@ func (c *conn) handleWalk(ctx context.Context, tw *proto.Twalk) proto.Message {
 	}
 
 	// Complete walk: assign newfid with resolved path. Read the base path
-	// through getPath: it can be rewritten concurrently by another in-place
-	// Twalk on tw.Fid (see fidTable.getPath).
+	// through the locked accessor: it can be rewritten concurrently by
+	// another in-place Twalk on tw.Fid.
 	if len(qids) == len(tw.Names) {
-		newPath := path.Clean(c.fids.getPath(tw.Fid) + "/" + strings.Join(tw.Names, "/"))
+		newPath := path.Clean(src.currentPath() + "/" + strings.Join(tw.Names, "/"))
 		if tw.Fid == tw.NewFid {
 			// In-place walk rebinds tw.Fid from its prior node to current:
 			// the prior node loses this reference, current gains one. The

@@ -31,7 +31,7 @@ const (
 type fidState struct {
 	mu        sync.Mutex // Protects state transitions, xattr, and dir fields.
 	node      Node
-	path      string // Walked filesystem path, set during attach/walk for observability.
+	path      string // Walked filesystem path for observability; protected by mu like node.
 	state     fidStatus
 	handle    FileHandle     // Non-nil after Open returns a handle (per API-04).
 	dirCache  []proto.Dirent // Cached dirents for simple Readdirer (offset tracking).
@@ -86,6 +86,23 @@ func (fs *fidState) currentNode() Node {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	return fs.node
+}
+
+// currentPath returns fs.path with proper locking; see currentNode for why
+// the locked read matters against in-place Twalk rewrites.
+func (fs *fidState) currentPath() string {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.path
+}
+
+// nodeAndPath returns fs.node and fs.path from one critical section, so a
+// walk-clone cannot capture the node of one in-place rewrite paired with
+// the path of another.
+func (fs *fidState) nodeAndPath() (Node, string) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.node, fs.path
 }
 
 // beginIO registers the caller as about to dereference fs.handle or
@@ -227,28 +244,30 @@ func (ft *fidTable) clunkAll() []*fidState {
 	return slices.Collect(maps.Values(old))
 }
 
-// setPath updates the walked filesystem path on an existing fid. No-op if the
-// fid is not present. Safe for concurrent use.
+// setPath updates the walked filesystem path on an existing fid. No-op if
+// the fid is not present. Safe for concurrent use; the write goes through
+// the per-fid mutex like every other path access.
 func (ft *fidTable) setPath(fid proto.Fid, p string) {
-	ft.mu.Lock()
-	defer ft.mu.Unlock()
-	if fs, ok := ft.fids[fid]; ok {
-		fs.path = p
+	fs := ft.get(fid)
+	if fs == nil {
+		return
 	}
+	fs.mu.Lock()
+	fs.path = p
+	fs.mu.Unlock()
 }
 
-// getPath returns the path recorded for fid, or "" if the fid is absent. The
-// read is taken under the table lock so it is synchronized against setPath,
-// which rewrites fs.path under the write lock during an in-place Twalk
-// (Fid==NewFid). Reading fs.path after get() has released the lock is a data
-// race on the string header. Safe for concurrent use.
+// getPath returns the path recorded for fid, or "" if the fid is absent.
+// The path lives under the per-fid mutex (like node), so the table lock is
+// only needed for the map lookup; lock ordering ft.mu -> fs.mu matches the
+// lifecycle methods. This runs per request from the OTel middleware, so it
+// deliberately holds the shared table lock for as little as the lookup.
 func (ft *fidTable) getPath(fid proto.Fid) string {
-	ft.mu.RLock()
-	defer ft.mu.RUnlock()
-	if fs, ok := ft.fids[fid]; ok {
-		return fs.path
+	fs := ft.get(fid)
+	if fs == nil {
+		return ""
 	}
-	return ""
+	return fs.currentPath()
 }
 
 // update replaces the node and path on an existing fid, returning the node

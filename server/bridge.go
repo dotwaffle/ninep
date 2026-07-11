@@ -353,7 +353,7 @@ func (c *conn) handleUStat(ctx context.Context, m *p9u.Tstat) proto.Message {
 
 	qid := nodeQID(fs.currentNode())
 	// Read the path under the table lock: an in-place Twalk on this fid can
-	// rewrite it concurrently (see fidTable.getPath).
+	// rewrite it concurrently (see fidState.currentPath).
 	return &p9u.Rstat{Stat: statFromAttr(c.fids.getPath(m.Fid), qid, attr)}
 }
 
