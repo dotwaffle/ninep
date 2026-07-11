@@ -46,7 +46,6 @@ type Node struct {
 // to itself rather than the host parent, preventing a walk above the export.
 type Root struct {
 	Node
-	hostPath    string
 	mapper      UIDMapper
 	dev         uint64
 	ino         uint64

@@ -54,6 +54,71 @@ func TestNewRoot_Nonexistent(t *testing.T) {
 	}
 }
 
+func TestDescriptorsAreCloseOnExec(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "existing"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := NewRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close(t.Context()) })
+	assertCloseOnExec(t, "root", root.fd)
+
+	existing, err := root.Lookup(t.Context(), "existing")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	existingNode := existing.(*Node)
+	t.Cleanup(func() { _ = existingNode.Close(t.Context()) })
+	assertCloseOnExec(t, "lookup node", existingNode.fd)
+	assertCloseOnExec(t, "lookup parent", existingNode.parentFd)
+
+	created, handle, _, err := root.Create(t.Context(), "created", unix.O_RDWR, 0644, 0)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	createdNode := created.(*Node)
+	t.Cleanup(func() { _ = createdNode.Close(t.Context()) })
+	createdHandle := handle.(*fileHandle)
+	t.Cleanup(func() { _ = createdHandle.Release(t.Context()) })
+	assertCloseOnExec(t, "created node", createdNode.fd)
+	assertCloseOnExec(t, "created parent", createdNode.parentFd)
+	assertCloseOnExec(t, "created handle", createdHandle.fd)
+
+	subdir, err := root.Mkdir(t.Context(), "subdir", 0755, 0)
+	if err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	subdirNode := subdir.(*Node)
+	t.Cleanup(func() { _ = subdirNode.Close(t.Context()) })
+	assertCloseOnExec(t, "directory node", subdirNode.fd)
+	assertCloseOnExec(t, "directory parent", subdirNode.parentFd)
+
+	symlink, err := root.Symlink(t.Context(), "symlink", "existing", 0)
+	if err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+	symlinkNode := symlink.(*Node)
+	t.Cleanup(func() { _ = symlinkNode.Close(t.Context()) })
+	assertCloseOnExec(t, "symlink node", symlinkNode.fd)
+	assertCloseOnExec(t, "symlink parent", symlinkNode.parentFd)
+}
+
+func assertCloseOnExec(t *testing.T, name string, fd int) {
+	t.Helper()
+	flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
+	if err != nil {
+		t.Fatalf("fcntl(%s fd %d): %v", name, fd, err)
+	}
+	if flags&unix.FD_CLOEXEC == 0 {
+		t.Errorf("%s fd %d does not have FD_CLOEXEC", name, fd)
+	}
+}
+
 func TestStatToAttr(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -440,6 +505,56 @@ func TestRoot_Setattr_Size(t *testing.T) {
 	}
 
 	_ = syscall.Close(fd)
+}
+
+func TestRoot_Setattr_TimesRemainAnchoredAfterRename(t *testing.T) {
+	t.Parallel()
+	parent := t.TempDir()
+	exportPath := filepath.Join(parent, "export")
+	anchoredPath := filepath.Join(parent, "anchored")
+	if err := os.Mkdir(exportPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := NewRoot(exportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close(t.Context()) })
+
+	if err := os.Rename(exportPath, anchoredPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(exportPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	const anchoredMTime = 1_700_000_000
+	const replacementMTime = 1_600_000_000
+	if err := os.Chtimes(exportPath, time.Unix(replacementMTime, 0), time.Unix(replacementMTime, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Setattr(t.Context(), proto.SetAttr{
+		Valid:    proto.SetAttrMTime,
+		MTimeSec: anchoredMTime,
+	}); err != nil {
+		t.Fatalf("Setattr(MTime): %v", err)
+	}
+
+	anchoredInfo, err := os.Stat(anchoredPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := anchoredInfo.ModTime().Unix(); got != anchoredMTime {
+		t.Errorf("anchored directory mtime = %d, want %d", got, int64(anchoredMTime))
+	}
+	replacementInfo, err := os.Stat(exportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := replacementInfo.ModTime().Unix(); got != replacementMTime {
+		t.Errorf("replacement directory mtime = %d, want %d", got, int64(replacementMTime))
+	}
 }
 
 func TestLookupOpen_UsesResolvedFD(t *testing.T) {

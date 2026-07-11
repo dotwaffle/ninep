@@ -6,10 +6,7 @@ import "golang.org/x/sys/unix"
 
 func (n *Node) openResolved(flags uint32) (int, error) {
 	if n.parentFd == 0 && n.name == "" {
-		if n.root == nil || n.root.hostPath == "" {
-			return -1, unix.EINVAL
-		}
-		return unix.Open(n.root.hostPath, openFlags(flags), 0)
+		return unix.FcntlInt(uintptr(n.fd), unix.F_DUPFD_CLOEXEC, 0)
 	}
 
 	// This is a fresh name lookup in parentFd, not a reopen of the fd this

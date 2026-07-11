@@ -13,11 +13,9 @@ import (
 
 // Link creates a hard link named name in this directory pointing to target.
 //
-// Uses parent-anchored Linkat (srcParentFd, srcName, dstDirFd, dstName, 0)
-// instead of the legacy /proc/self/fd Linkat trick: /proc isn't mounted on
-// FreeBSD by default, and AT_EMPTY_PATH is unavailable. The held parentFd
-// supplies the same TOCTOU-resistant inode anchoring on Linux without the
-// /proc dependency.
+// Hard-link creation is namespace-based on FreeBSD. The source parent
+// descriptor keeps resolution inside the original directory, while the source
+// name selects the entry that exists when Link runs.
 func (n *Node) Link(_ context.Context, target server.Node, name string) error {
 	if n.QID().Type != proto.QTDIR {
 		return proto.ENOTDIR
@@ -91,12 +89,16 @@ func (n *Node) Lookup(_ context.Context, name string) (server.Node, error) {
 	var err error
 	switch uint32(st.Mode) & unix.S_IFMT {
 	case unix.S_IFDIR:
-		fd, err = unix.Openat(n.fd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+		fd, err = unix.Openat(n.fd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	default:
 		// oPath for non-directories (files, symlinks, devices, etc.).
-		fd, err = unix.Openat(n.fd, name, oPath|unix.O_NOFOLLOW, 0)
+		fd, err = unix.Openat(n.fd, name, oPath|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	}
 	if err != nil {
+		return nil, toProtoErr(err)
+	}
+	if err := unix.Fstat(fd, &st); err != nil {
+		_ = unix.Close(fd)
 		return nil, toProtoErr(err)
 	}
 
@@ -127,7 +129,7 @@ func (n *Node) Create(_ context.Context, name string, flags uint32, mode proto.F
 		return nil, nil, 0, proto.ENOTDIR
 	}
 
-	fd, err := unix.Openat(n.fd, name, int(flags)|unix.O_CREAT|unix.O_NOFOLLOW, uint32(mode))
+	fd, err := unix.Openat(n.fd, name, int(flags)|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_CLOEXEC, uint32(mode))
 	if err != nil {
 		return nil, nil, 0, toProtoErr(err)
 	}
@@ -138,8 +140,9 @@ func (n *Node) Create(_ context.Context, name string, flags uint32, mode proto.F
 		return nil, nil, 0, toProtoErr(err)
 	}
 
-	// Open an oPath fd for the node reference, use the real fd for the handle.
-	pathFd, err := unix.Openat(n.fd, name, oPath|unix.O_NOFOLLOW, 0)
+	// Duplicate the descriptor that created the file so the Node and handle
+	// cannot diverge if the directory entry is concurrently replaced.
+	pathFd, err := unix.FcntlInt(uintptr(fd), unix.F_DUPFD_CLOEXEC, 0)
 	if err != nil {
 		_ = unix.Close(fd)
 		return nil, nil, 0, toProtoErr(err)
@@ -166,7 +169,7 @@ func (n *Node) Mkdir(_ context.Context, name string, mode proto.FileMode, _ uint
 		return nil, toProtoErr(err)
 	}
 
-	fd, err := unix.Openat(n.fd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	fd, err := unix.Openat(n.fd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
@@ -197,13 +200,13 @@ func (n *Node) Symlink(_ context.Context, name, target string, _ uint32) (server
 		return nil, toProtoErr(err)
 	}
 
-	fd, err := unix.Openat(n.fd, name, oPath|unix.O_NOFOLLOW, 0)
+	fd, err := unix.Openat(n.fd, name, oPath|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
 
 	var st unix.Stat_t
-	if err := unix.Fstatat(n.fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	if err := unix.Fstat(fd, &st); err != nil {
 		_ = unix.Close(fd)
 		return nil, toProtoErr(err)
 	}
@@ -232,13 +235,13 @@ func (n *Node) Mknod(_ context.Context, name string, mode proto.FileMode, major,
 		return nil, toProtoErr(err)
 	}
 
-	fd, err := unix.Openat(n.fd, name, oPath|unix.O_NOFOLLOW, 0)
+	fd, err := unix.Openat(n.fd, name, oPath|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
 
 	var st unix.Stat_t
-	if err := unix.Fstatat(n.fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	if err := unix.Fstat(fd, &st); err != nil {
 		_ = unix.Close(fd)
 		return nil, toProtoErr(err)
 	}
@@ -253,19 +256,9 @@ func (n *Node) Mknod(_ context.Context, name string, mode proto.FileMode, major,
 	return child, nil
 }
 
-// Readlink returns the symlink target using Readlinkat on the parent
-// directory fd with the entry name. This reads the actual symlink target
-// rather than the path the fd resolves to.
 func (n *Node) Readlink(_ context.Context) (string, error) {
-	if n.parentFd == 0 && n.name == "" {
-		return "", proto.EINVAL
-	}
-	buf := make([]byte, 4096)
-	nn, err := unix.Readlinkat(n.parentFd, n.name, buf)
-	if err != nil {
-		return "", toProtoErr(err)
-	}
-	return string(buf[:nn]), nil
+	target, err := n.readlinkResolved()
+	return target, toProtoErr(err)
 }
 
 // Unlink removes the entry named name from this directory via Unlinkat.
@@ -316,7 +309,7 @@ func (n *Node) Readdir(_ context.Context) ([]proto.Dirent, error) {
 	}
 
 	// Open a fresh fd to read directory entries from offset 0.
-	fd, err := unix.Openat(n.fd, ".", unix.O_RDONLY|unix.O_DIRECTORY, 0)
+	fd, err := unix.Openat(n.fd, ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}

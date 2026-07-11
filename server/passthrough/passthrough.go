@@ -15,7 +15,7 @@ import (
 // NewRoot creates a new passthrough filesystem root from the given host
 // directory path. The path must refer to an existing directory.
 func NewRoot(hostPath string, opts ...Option) (*Root, error) {
-	fd, err := unix.Open(hostPath, unix.O_RDONLY|unix.O_DIRECTORY, 0)
+	fd, err := unix.Open(hostPath, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open root %s: %w", hostPath, err)
 	}
@@ -27,11 +27,10 @@ func NewRoot(hostPath string, opts ...Option) (*Root, error) {
 	}
 
 	r := &Root{
-		Node:     Node{fd: fd},
-		hostPath: hostPath,
-		mapper:   IdentityMapper(),
-		dev:      uint64(st.Dev),
-		ino:      st.Ino,
+		Node:   Node{fd: fd},
+		mapper: IdentityMapper(),
+		dev:    uint64(st.Dev),
+		ino:    st.Ino,
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -78,7 +77,7 @@ func (n *Node) lookupParent() (server.Node, error) {
 	if clampToRoot {
 		target = "."
 	}
-	fd, err := unix.Openat(n.fd, target, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	fd, err := unix.Openat(n.fd, target, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, toProtoErr(err)
 	}
@@ -155,10 +154,6 @@ func (n *Node) Getattr(_ context.Context, _ proto.AttrMask) (proto.Attr, error) 
 }
 
 // Setattr modifies file attributes based on the valid mask.
-//
-// Lchown and UtimesNanoAt use parent-anchored *at calls (no /proc/self/fd):
-// /proc is not mounted on FreeBSD by default. For root nodes (no parentFd),
-// fall back to operations on the held fd or the stored host path.
 func (n *Node) Setattr(_ context.Context, attr proto.SetAttr) error {
 	if attr.Valid&proto.SetAttrMode != 0 {
 		if err := n.chmodResolved(attr.Mode); err != nil {
@@ -176,15 +171,8 @@ func (n *Node) Setattr(_ context.Context, attr proto.SetAttr) error {
 			_, hostGID := n.root.mapper.ToHost(0, attr.GID)
 			gid = int(hostGID)
 		}
-		if n.parentFd == 0 && n.name == "" {
-			// Root: fchown directly on the held fd.
-			if err := unix.Fchown(n.fd, uid, gid); err != nil {
-				return toProtoErr(err)
-			}
-		} else {
-			if err := unix.Fchownat(n.parentFd, n.name, uid, gid, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-				return toProtoErr(err)
-			}
+		if err := n.chownResolved(uid, gid); err != nil {
+			return toProtoErr(err)
 		}
 	}
 	if attr.Valid&proto.SetAttrSize != 0 {
@@ -205,18 +193,8 @@ func (n *Node) Setattr(_ context.Context, attr proto.SetAttr) error {
 		if attr.Valid&proto.SetAttrMTime != 0 {
 			ts[1] = unix.NsecToTimespec(int64(attr.MTimeSec)*1e9 + int64(attr.MTimeNSec))
 		}
-		if n.parentFd == 0 && n.name == "" {
-			// Root: utimes via stored host path.
-			if n.root == nil || n.root.hostPath == "" {
-				return proto.EINVAL
-			}
-			if err := unix.UtimesNanoAt(unix.AT_FDCWD, n.root.hostPath, ts, 0); err != nil {
-				return toProtoErr(err)
-			}
-		} else {
-			if err := unix.UtimesNanoAt(n.parentFd, n.name, ts, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-				return toProtoErr(err)
-			}
+		if err := n.setTimesResolved(ts); err != nil {
+			return toProtoErr(err)
 		}
 	}
 	return nil
