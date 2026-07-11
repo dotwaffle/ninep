@@ -3,19 +3,19 @@ package client_test
 import (
 	"context"
 	"errors"
-	"strconv"
 	"testing"
 	"time"
 
 	"github.com/dotwaffle/ninep/client"
 	"github.com/dotwaffle/ninep/proto"
+	"github.com/dotwaffle/ninep/proto/p9u"
 	"github.com/dotwaffle/ninep/server"
 	"github.com/dotwaffle/ninep/server/memfs"
 )
 
-// TestClient_Stat_L verifies that File.Stat on a .L Conn issues Tgetattr,
-// runs attrToStat, and returns a dialect-neutral p9u.Stat with the file's
-// size surfaced on Length.
+// TestClient_Stat_L verifies that File.Stat on a .L Conn issues Tgetattr
+// and returns a dialect-neutral FileInfo with the file's size surfaced
+// on Size.
 func TestClient_Stat_L(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
@@ -40,8 +40,8 @@ func TestClient_Stat_L(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	if st.Length != 12 {
-		t.Errorf("Stat.Length = %d, want 12", st.Length)
+	if st.Size != 12 {
+		t.Errorf("Stat.Size = %d, want 12", st.Size)
 	}
 	if st.QID.Type&proto.QTDIR != 0 {
 		t.Errorf("Stat.QID.Type = %#x, want file bit", st.QID.Type)
@@ -53,7 +53,7 @@ func TestClient_Stat_L(t *testing.T) {
 
 // TestClient_Stat_U exercises the .u branch of File.Stat via a uMockServer
 // extended to answer p9u.Tstat with a known Stat. Validates that File.Stat
-// returns r.Stat verbatim on .u.
+// converts the .u Stat into the neutral FileInfo shape.
 func TestClient_Stat_U(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newUMockStatClientPair(t, wantStat)
@@ -72,8 +72,8 @@ func TestClient_Stat_U(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	if st.Length != 12 {
-		t.Errorf("Stat.Length = %d, want 12", st.Length)
+	if st.Size != 12 {
+		t.Errorf("Stat.Size = %d, want 12", st.Size)
 	}
 	if st.Name != "hello.txt" {
 		t.Errorf("Stat.Name = %q, want hello.txt", st.Name)
@@ -83,9 +83,9 @@ func TestClient_Stat_U(t *testing.T) {
 	}
 }
 
-// TestClient_Stat_Consistency_LvsU asserts the attrToStat invariant: the
-// .u Stat produced by converting an equivalent .L Attr matches the fields
-// a real .u server would return for the same file. Pure unit test; does
+// TestClient_Stat_Consistency_LvsU asserts the FileInfo invariant: the
+// FileInfo produced from an equivalent .L Attr matches the one a real .u
+// server's Stat would convert to for the same file. Pure unit test; does
 // not require a live .u server.
 func TestClient_Stat_Consistency_LvsU(t *testing.T) {
 	t.Parallel()
@@ -101,26 +101,30 @@ func TestClient_Stat_Consistency_LvsU(t *testing.T) {
 		NLink: 1,
 		Size:  12,
 	}
-	converted := client.AttrToStatForTest(attr)
-	if converted.Length != 12 {
-		t.Errorf("attrToStat.Length = %d, want 12", converted.Length)
+	converted := client.AttrToFileInfoForTest(attr)
+	if converted.Size != 12 {
+		t.Errorf("attrToFileInfo.Size = %d, want 12", converted.Size)
 	}
 	if converted.QID != qid {
-		t.Errorf("attrToStat.QID = %+v, want %+v", converted.QID, qid)
+		t.Errorf("attrToFileInfo.QID = %+v, want %+v", converted.QID, qid)
 	}
-	if converted.UID != strconv.FormatUint(1000, 10) {
-		t.Errorf("attrToStat.UID = %q, want \"1000\"", converted.UID)
+	if converted.UID != 1000 {
+		t.Errorf("attrToFileInfo.UID = %d, want 1000", converted.UID)
 	}
 
-	// Equivalent p9u.Stat that a hypothetical .u server would return for the
-	// same file. Matching on the unifying invariants: QID.Path, Length.
-	// Fields attrToStat cannot preserve (Name, Dev, Type) come from server
-	// state not present in Attr and are not asserted equal here.
-	if converted.QID.Path != qid.Path {
-		t.Errorf("consistency: QID.Path %d != Attr QID.Path %d", converted.QID.Path, qid.Path)
+	// The FileInfo a hypothetical .u server's Stat would convert to for
+	// the same file. Matching on the unifying invariants: QID.Path, Size.
+	// Fields .L cannot supply (Name) come from server state not present
+	// in Attr and are not asserted equal here.
+	fromU := client.StatToFileInfoForTest(p9u.Stat{QID: qid, Length: 12, NUid: 1000, NGid: 1000})
+	if converted.QID.Path != fromU.QID.Path {
+		t.Errorf("consistency: QID.Path %d != .u QID.Path %d", converted.QID.Path, fromU.QID.Path)
 	}
-	if converted.Length != attr.Size {
-		t.Errorf("consistency: Length %d != Attr.Size %d", converted.Length, attr.Size)
+	if converted.Size != fromU.Size {
+		t.Errorf("consistency: Size %d != .u Size %d", converted.Size, fromU.Size)
+	}
+	if converted.UID != fromU.UID || converted.GID != fromU.GID {
+		t.Errorf("consistency: UID/GID %d/%d != .u %d/%d", converted.UID, converted.GID, fromU.UID, fromU.GID)
 	}
 }
 
@@ -220,8 +224,9 @@ func TestClient_Stat_PropagatesRlerror(t *testing.T) {
 	}
 }
 
-// TestAttrToStat: pure unit test of the .L Attr → .u Stat field mapping.
-func TestAttrToStat(t *testing.T) {
+// TestAttrToFileInfo: pure unit test of the .L Attr -> FileInfo field
+// mapping.
+func TestAttrToFileInfo(t *testing.T) {
 	t.Parallel()
 	qid := proto.QID{Type: 0x80, Version: 1, Path: 42}
 	attr := proto.Attr{
@@ -238,9 +243,9 @@ func TestAttrToStat(t *testing.T) {
 		Gen:         42,  // dropped
 		DataVersion: 99,  // dropped
 	}
-	got := client.AttrToStatForTest(attr)
-	if got.Length != 4096 {
-		t.Errorf("Length = %d, want 4096", got.Length)
+	got := client.AttrToFileInfoForTest(attr)
+	if got.Size != 4096 {
+		t.Errorf("Size = %d, want 4096", got.Size)
 	}
 	if got.QID != qid {
 		t.Errorf("QID = %+v, want %+v", got.QID, qid)
@@ -248,32 +253,66 @@ func TestAttrToStat(t *testing.T) {
 	if got.Mode != proto.FileMode(0o755) {
 		t.Errorf("Mode = %#o, want 0o755", got.Mode)
 	}
-	if got.Atime != 100 {
-		t.Errorf("Atime = %d, want 100", got.Atime)
+	if !got.Atime.Equal(time.Unix(100, 0)) {
+		t.Errorf("Atime = %v, want %v", got.Atime, time.Unix(100, 0))
 	}
-	if got.Mtime != 200 {
-		t.Errorf("Mtime = %d, want 200", got.Mtime)
+	if !got.Mtime.Equal(time.Unix(200, 0)) {
+		t.Errorf("Mtime = %v, want %v", got.Mtime, time.Unix(200, 0))
 	}
-	if got.UID != "1000" {
-		t.Errorf("UID = %q, want \"1000\"", got.UID)
+	if got.UID != 1000 {
+		t.Errorf("UID = %d, want 1000", got.UID)
 	}
-	if got.GID != "2000" {
-		t.Errorf("GID = %q, want \"2000\"", got.GID)
-	}
-	if got.NUid != 1000 {
-		t.Errorf("NUid = %d, want 1000", got.NUid)
-	}
-	if got.NGid != 2000 {
-		t.Errorf("NGid = %d, want 2000", got.NGid)
-	}
-	if got.MUID != "" {
-		t.Errorf("MUID = %q, want empty", got.MUID)
-	}
-	if got.Extension != "" {
-		t.Errorf("Extension = %q, want empty", got.Extension)
+	if got.GID != 2000 {
+		t.Errorf("GID = %d, want 2000", got.GID)
 	}
 	if got.Name != "" {
-		t.Errorf("Name = %q, want empty (attrToStat does not carry Name)", got.Name)
+		t.Errorf("Name = %q, want empty (attrToFileInfo does not carry Name)", got.Name)
+	}
+}
+
+// TestStatToFileInfo: pure unit test of the .u Stat -> FileInfo field
+// mapping.
+func TestStatToFileInfo(t *testing.T) {
+	t.Parallel()
+	qid := proto.QID{Type: 0x80, Version: 1, Path: 42}
+	st := p9u.Stat{
+		QID:       qid,
+		Mode:      proto.FileMode(0o644),
+		Atime:     100,
+		Mtime:     200,
+		Length:    4096,
+		Name:      "hello.txt",
+		UID:       "alice", // dropped: string form
+		GID:       "staff", // dropped: string form
+		MUID:      "bob",   // dropped
+		Extension: "x",     // dropped
+		NUid:      1000,
+		NGid:      2000,
+	}
+	got := client.StatToFileInfoForTest(st)
+	if got.Size != 4096 {
+		t.Errorf("Size = %d, want 4096", got.Size)
+	}
+	if got.QID != qid {
+		t.Errorf("QID = %+v, want %+v", got.QID, qid)
+	}
+	if got.Mode != proto.FileMode(0o644) {
+		t.Errorf("Mode = %#o, want 0o644", got.Mode)
+	}
+	if !got.Atime.Equal(time.Unix(100, 0)) {
+		t.Errorf("Atime = %v, want %v", got.Atime, time.Unix(100, 0))
+	}
+	if !got.Mtime.Equal(time.Unix(200, 0)) {
+		t.Errorf("Mtime = %v, want %v", got.Mtime, time.Unix(200, 0))
+	}
+	if got.UID != 1000 {
+		t.Errorf("UID = %d, want 1000", got.UID)
+	}
+	if got.GID != 2000 {
+		t.Errorf("GID = %d, want 2000", got.GID)
+	}
+	if got.Name != "hello.txt" {
+		t.Errorf("Name = %q, want hello.txt", got.Name)
 	}
 }
 

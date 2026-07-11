@@ -137,8 +137,8 @@
 //
 // ## Filesystem Statistics
 //
-//   - [File.Stat] -- dialect-neutral metadata (p9u.Stat on both .L and
-//     .u). On .L, internally uses Tgetattr; on .u, uses Tstat.
+//   - [File.Stat] -- dialect-neutral metadata (the [FileInfo] struct on
+//     both .L and .u). On .L, internally uses Tgetattr; on .u, uses Tstat.
 //   - [File.Getattr] -- rich .L-specific [proto.Attr] (includes NLink,
 //     Blocks, BTime, Gen, DataVersion dropped by Stat). (.L-only)
 //   - [File.Setattr] -- write metadata (chmod/chown/truncate via

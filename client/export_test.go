@@ -5,11 +5,15 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9u"
 )
 
-// AttrToStatForTest exposes the attrToStat conversion helper to the
-// external client_test package so TestAttrToStat and the
-// Stat_Consistency test can exercise the .L Attr → .u Stat mapping
-// directly without a round-trip.
-func AttrToStatForTest(a proto.Attr) p9u.Stat { return attrToStat(a) }
+// AttrToFileInfoForTest exposes the attrToFileInfo conversion helper to
+// the external client_test package so the conversion tests can exercise
+// the .L Attr -> FileInfo mapping directly without a round-trip.
+func AttrToFileInfoForTest(a proto.Attr) FileInfo { return attrToFileInfo(a) }
+
+// StatToFileInfoForTest exposes the statToFileInfo conversion helper to
+// the external client_test package so the conversion tests can exercise
+// the .u Stat -> FileInfo mapping directly without a round-trip.
+func StatToFileInfoForTest(st p9u.Stat) FileInfo { return statToFileInfo(st) }
 
 // RegisterStuckCaller is a test-only hook. It bumps callerWG and registers
 // a dummy high-numbered tag in inflightMap, simulating a caller goroutine
