@@ -734,11 +734,8 @@ func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message
 	defer putRequestCtx(rctx)
 
 	defer func() {
-		if bufPtr != nil {
-			bufpool.PutMsgBuf(bufPtr)
-		}
-		// MUST run after PutMsgBuf (defer is LIFO; source order matters).
-		putCachedMsg(msg)
+		// Recover BEFORE releasing msg: the log line below reads from msg,
+		// and once putCachedMsg runs a concurrent borrower may hold it.
 		if r := recover(); r != nil {
 			// SERV-06: Handler panic -> EIO, never crash the server.
 			c.logger.Error("handler panic",
@@ -747,6 +744,11 @@ func (c *conn) dispatchInline(rctx *requestCtx, tag proto.Tag, msg proto.Message
 			)
 			c.sendResponse(tag, c.errorMsg(proto.EIO))
 		}
+		if bufPtr != nil {
+			bufpool.PutMsgBuf(bufPtr)
+		}
+		// MUST run after PutMsgBuf (source order within this func matters).
+		putCachedMsg(msg)
 		// Fallback for the resp == nil and handler-panic paths, where the
 		// success path below did not already remove the tag. finish() both
 		// removes the tag and closes the done channel; on those paths there
