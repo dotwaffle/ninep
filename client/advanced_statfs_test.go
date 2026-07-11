@@ -35,7 +35,7 @@ func TestClient_Statfs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
-	rootF, err := cli.Attach(ctx, "me", "")
+	rootF, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestClient_Statfs_ReturnsByValue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
-	rootF, err := cli.Attach(ctx, "me", "")
+	rootF, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

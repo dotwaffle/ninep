@@ -19,7 +19,7 @@ func TestClient_Mkdir_CreatesDir(t *testing.T) {
 	ctx, cancel := mknodTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -51,7 +51,7 @@ func TestClient_Mkdir_Subdir(t *testing.T) {
 	ctx, cancel := mknodTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -75,7 +75,7 @@ func TestClient_Mkdir_NotSupportedOnU(t *testing.T) {
 	ctx, cancel := mknodTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if _, err := cli.Mkdir(ctx, "/x", proto.FileMode(0o0755), 0); !errors.Is(err, client.ErrNotSupported) {

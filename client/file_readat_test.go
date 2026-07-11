@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"errors"
+	"github.com/dotwaffle/ninep/proto"
 	"io"
 	"math/rand"
 	"os"
@@ -29,7 +30,7 @@ func TestFileReadAt_Full(t *testing.T) {
 	ctx, cancel := fileReadAtTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -63,7 +64,7 @@ func TestFileReadAt_EOFShortFill(t *testing.T) {
 	ctx, cancel := fileReadAtTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestFileReadAt_DoesNotMutateOffset(t *testing.T) {
 	ctx, cancel := fileReadAtTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -134,7 +135,7 @@ func TestFileReadAt_NegativeOffset(t *testing.T) {
 	ctx, cancel := fileReadAtTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -173,7 +174,7 @@ func TestFileReadAt_Concurrent_Race(t *testing.T) {
 	ctx, cancel := fileReadAtTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -239,7 +240,7 @@ func TestFileReadAt_ChunkedLargeFile(t *testing.T) {
 	ctx, cancel := fileReadAtTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

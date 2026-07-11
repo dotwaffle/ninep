@@ -3,6 +3,7 @@ package clienttest
 import (
 	"context"
 	"errors"
+	"github.com/dotwaffle/ninep/proto"
 	"io"
 	"os"
 	"testing"
@@ -180,7 +181,7 @@ func TestPair_Boots(t *testing.T) {
 		t.Fatal("Pair returned nil *client.Conn")
 	}
 
-	rootFile, err := cli.Attach(context.Background(), "tester", "")
+	rootFile, err := cli.Attach(context.Background(), "tester", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -235,7 +236,7 @@ func TestPair_HonorsWithCtx(t *testing.T) {
 	_, cli := Pair(t, root, WithCtx(parent))
 
 	// Sanity: Conn is usable before cancellation.
-	if _, err := cli.Attach(context.Background(), "tester", ""); err != nil {
+	if _, err := cli.Attach(context.Background(), "tester", "", proto.NoUID); err != nil {
 		t.Fatalf("pre-cancel Attach: %v", err)
 	}
 
@@ -252,7 +253,7 @@ func TestPair_HonorsWithCtx(t *testing.T) {
 		defer opCancel()
 		// Any op -- Attach works. We don't care about the specific
 		// error, just that one is produced.
-		_, _ = cli.Attach(ctx, "tester", "")
+		_, _ = cli.Attach(ctx, "tester", "", proto.NoUID)
 	}()
 	select {
 	case <-done:
@@ -279,7 +280,7 @@ func TestMemfsPair_BuildCallback(t *testing.T) {
 		t.Fatalf("build callback called %d times, want 1", buildCalls)
 	}
 
-	if _, err := cli.Attach(context.Background(), "tester", ""); err != nil {
+	if _, err := cli.Attach(context.Background(), "tester", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	f, err := cli.OpenFile(context.Background(), "foo", os.O_RDONLY, 0)
@@ -305,7 +306,7 @@ func TestMemfsPair_NilBuild(t *testing.T) {
 	if srv == nil || cli == nil {
 		t.Fatal("MemfsPair returned nil server or conn with nil build")
 	}
-	if _, err := cli.Attach(context.Background(), "tester", ""); err != nil {
+	if _, err := cli.Attach(context.Background(), "tester", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach on empty root: %v", err)
 	}
 }
@@ -315,7 +316,7 @@ func TestMemfsPair_NilBuild(t *testing.T) {
 func TestMemfsPair_EmptyBuild(t *testing.T) {
 	t.Parallel()
 	_, cli := MemfsPair(t, func(*memfs.MemDir) {})
-	if _, err := cli.Attach(context.Background(), "tester", ""); err != nil {
+	if _, err := cli.Attach(context.Background(), "tester", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach on empty root: %v", err)
 	}
 }
@@ -330,11 +331,11 @@ func TestPair_ServerOptsPassthrough(t *testing.T) {
 	root := memfs.NewDir(gen).AddStaticFile("a", "1")
 
 	_, cli := Pair(t, root, WithServerOpts(server.WithMaxFids(1)))
-	if _, err := cli.Attach(context.Background(), "tester", ""); err != nil {
+	if _, err := cli.Attach(context.Background(), "tester", "", proto.NoUID); err != nil {
 		t.Fatalf("first Attach: %v", err)
 	}
 	// Second attach creates a new fid; with MaxFids=1 this must fail.
-	_, err := cli.Attach(context.Background(), "tester2", "")
+	_, err := cli.Attach(context.Background(), "tester2", "", proto.NoUID)
 	if err == nil {
 		t.Fatal("second Attach succeeded with MaxFids=1; expected failure")
 	}
@@ -379,7 +380,7 @@ func TestUnixPair_Boots(t *testing.T) {
 		t.Fatal("UnixPair returned nil *client.Conn")
 	}
 
-	rootFile, err := cli.Attach(context.Background(), "tester", "")
+	rootFile, err := cli.Attach(context.Background(), "tester", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

@@ -611,7 +611,7 @@ func TestReadAt_ZeroCopy_PipeFallback(t *testing.T) {
 	pair := pipeFallbackPair(t)
 	defer pair.cleanup()
 
-	root, err := pair.cli.Attach(pair.ctx, "me", "")
+	root, err := pair.cli.Attach(pair.ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -665,7 +665,7 @@ func TestReadAt_ZeroCopy_CancelRace(t *testing.T) {
 	pair := pipeFallbackPair(t)
 	defer pair.cleanup()
 
-	root, err := pair.cli.Attach(pair.ctx, "me", "")
+	root, err := pair.cli.Attach(pair.ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

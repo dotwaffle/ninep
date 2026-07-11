@@ -435,7 +435,7 @@ func finalizePair(tb testing.TB, cfg *config, root server.Node, cliNC, srvNC net
 //	    root.AddStaticFile("hello.txt", "hello world\n")
 //	})
 //	_ = srv
-//	_, _ = cli.Attach(t.Context(), "example", "")
+//	_, _ = cli.Attach(t.Context(), "example", "", proto.NoUID)
 func MemfsPair(tb testing.TB, build func(root *memfs.MemDir), opts ...Option) (*server.Server, *client.Conn) {
 	tb.Helper()
 	gen := &server.QIDGenerator{}

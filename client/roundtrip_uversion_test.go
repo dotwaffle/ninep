@@ -104,7 +104,7 @@ func TestClient_Open_U(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if _, err := cli.Raw().Twalk(ctx, 0, 1, nil); err != nil {
@@ -132,7 +132,7 @@ func TestClient_Create_U(t *testing.T) {
 	ctx, cancel := roundTripTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if _, err := cli.Raw().Twalk(ctx, 0, 1, nil); err != nil {

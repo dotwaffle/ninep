@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"errors"
+	"github.com/dotwaffle/ninep/proto"
 	"io"
 	"os"
 	"testing"
@@ -27,7 +28,7 @@ func TestFileRead_Sequential(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestFileRead_EmptyBuffer(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -108,7 +109,7 @@ func TestFileRead_EOFAtEnd(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -143,7 +144,7 @@ func TestFileRead_OffsetAdvances(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -181,7 +182,7 @@ func TestFileWrite_Sequential(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -246,7 +247,7 @@ func TestFileWrite_EmptyBuffer(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -289,7 +290,7 @@ func TestFileWrite_Chunked(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -334,7 +335,7 @@ func TestFileRead_Chunked(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

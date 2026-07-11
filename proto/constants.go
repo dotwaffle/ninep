@@ -28,6 +28,10 @@ const (
 	// NoFid is the fid value indicating "no fid", used for example as the
 	// afid in Tattach when no authentication is required.
 	NoFid Fid = Fid(math.MaxUint32)
+
+	// NoUID is the numeric-UID value used by Tauth and Tattach when the
+	// client does not supply a numeric identity claim.
+	NoUID uint32 = math.MaxUint32
 )
 
 // Dirent type constants for the Type field of Dirent. These match Linux's

@@ -57,7 +57,7 @@ func TestFlushAndWait_SaturatedTagPoolCancellation(t *testing.T) {
 		client.WithMaxInflight(maxInflight))
 	defer cleanup()
 
-	if _, err := cli.Raw().Tattach(t.Context(), proto.Fid(0), "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(t.Context(), proto.Fid(0), "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 

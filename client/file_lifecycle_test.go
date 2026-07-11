@@ -17,7 +17,7 @@ func TestFileOperationAfterCloseDoesNotUseRecycledFid(t *testing.T) {
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
 	defer cleanup()
 
-	first, err := cli.Attach(t.Context(), "first", "")
+	first, err := cli.Attach(t.Context(), "first", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("first Attach: %v", err)
 	}
@@ -26,7 +26,7 @@ func TestFileOperationAfterCloseDoesNotUseRecycledFid(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	second, err := cli.Attach(t.Context(), "second", "")
+	second, err := cli.Attach(t.Context(), "second", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("second Attach: %v", err)
 	}
@@ -45,14 +45,14 @@ func TestFileMethodsRejectClosedFile(t *testing.T) {
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
 	defer cleanup()
 
-	f, err := cli.Attach(t.Context(), "first", "")
+	f, err := cli.Attach(t.Context(), "first", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if err := f.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	replacement, err := cli.Attach(t.Context(), "replacement", "")
+	replacement, err := cli.Attach(t.Context(), "replacement", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("replacement Attach: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestConnPathOperationRejectsClosedRoot(t *testing.T) {
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))
 	defer cleanup()
 
-	root, err := cli.Attach(t.Context(), "first", "")
+	root, err := cli.Attach(t.Context(), "first", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestConnPathOperationRejectsClosedRoot(t *testing.T) {
 	if reused != retiredFid {
 		t.Fatalf("AcquireFid = %d, want recycled root fid %d", reused, retiredFid)
 	}
-	if _, err := raw.Tattach(t.Context(), reused, "raw", ""); err != nil {
+	if _, err := raw.Tattach(t.Context(), reused, "raw", "", proto.NoUID); err != nil {
 		t.Fatalf("raw Tattach: %v", err)
 	}
 	defer func() {
@@ -181,7 +181,7 @@ func TestFileReadAtRunsConcurrentlyOnOneFile(t *testing.T) {
 
 	cli, cleanup := newClientServerPair(t, root)
 	defer cleanup()
-	if _, err := cli.Attach(t.Context(), "reader", ""); err != nil {
+	if _, err := cli.Attach(t.Context(), "reader", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	f, err := cli.OpenFile(t.Context(), "/parallel", 0, 0)

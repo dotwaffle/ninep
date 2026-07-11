@@ -46,7 +46,7 @@ if err != nil {
 
 The server resolves the root node for each `Tattach` request using a three-level precedence:
 
-1. **`WithAttacher`** -- If set, the `Attacher.Attach(ctx, uname, aname)` method handles all attach requests. This provides full control over per-user, per-aname root resolution.
+1. **`WithAttacher`** -- If set, `Attacher.Attach` handles all attach requests and receives the complete `Tattach` identity and tree claims.
 2. **`WithAnames`** -- If set and the client provides a non-empty aname, the server looks up the aname in the map. If the aname is not found, `ENOENT` is returned. An empty aname falls back to the default root.
 3. **Default root** -- The `root` node passed to `server.New`.
 
@@ -54,9 +54,13 @@ The server resolves the root node for each `Tattach` request using a three-level
 
 ```go
 type Attacher interface {
-    Attach(ctx context.Context, uname, aname string) (Node, error)
+    Attach(ctx context.Context, request AttachRequest) (Node, error)
 }
 ```
+
+`AttachRequest.Uname`, `Aname`, and `UID` are peer-supplied claims. The 9P
+connection does not authenticate them; use an authenticated transport and
+apply authorization in the attacher when these values affect access.
 
 ### Aname Map Example
 
@@ -239,7 +243,7 @@ behavior is configured with `SessionOption` values passed to
 ```go
 sess := client.NewSessionWithOptions(dialer, []client.Option{client.WithMsize(1 << 20)},
     client.WithOnReconnect(func(ctx context.Context, c *client.Conn) error {
-        _, err := c.Attach(ctx, "me", "")
+        _, err := c.Attach(ctx, "me", "", proto.NoUID)
         return err
     }),
 )

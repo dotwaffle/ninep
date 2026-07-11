@@ -24,7 +24,7 @@ func TestClient_Stat_L(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestClient_Stat_U(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
-	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	// The u-mock server always returns the canned Stat regardless of fid;
@@ -139,7 +139,7 @@ func TestClient_Getattr_LFields(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestClient_Stat_PropagatesRlerror(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
-	r, err := cli.Attach(ctx, "me", "")
+	r, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

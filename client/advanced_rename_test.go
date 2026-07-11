@@ -33,7 +33,7 @@ func TestClient_Rename_SameDir(t *testing.T) {
 	ctx, cancel := renameTestCtx(t)
 	defer cancel()
 
-	rootF, err := cli.Attach(ctx, "me", "")
+	rootF, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestClient_Rename_CrossDir(t *testing.T) {
 	ctx, cancel := renameTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -107,7 +107,7 @@ func TestClient_Rename_WhileOpen(t *testing.T) {
 	ctx, cancel := renameTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	openedF, err := cli.OpenFile(ctx, "/a.txt", 0, 0)
@@ -141,7 +141,7 @@ func TestClient_Rename_Missing(t *testing.T) {
 	ctx, cancel := renameTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -170,7 +170,7 @@ func TestClient_Rename_NotSupportedOnU(t *testing.T) {
 	ctx, cancel := renameTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	err := cli.Rename(ctx, "/a", "/b")

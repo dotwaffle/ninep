@@ -335,7 +335,7 @@ Because dispatchers write responses inline, there is no response channel to drai
 ### Custom Attach Logic
 
 - **`WithAnames(map[string]Node)`** -- Maps attach names to root nodes for vhost-style dispatch. The client's `Tattach.Aname` field selects which tree to serve.
-- **`WithAttacher(Attacher)`** -- Full-control attach handler. The `Attacher` interface has a single method `Attach(ctx, uname, aname) (Node, error)` that receives the client's credentials and returns the root node. Takes precedence over both the default root and aname dispatch.
+- **`WithAttacher(Attacher)`** -- Full-control attach handler. `Attach` receives an `AttachRequest` containing the peer-supplied uname, aname, and numeric UID claims and returns the root node. The transport must authenticate the peer separately. Takes precedence over both the default root and aname dispatch.
 
 ### Middleware
 

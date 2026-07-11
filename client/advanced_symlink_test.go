@@ -38,7 +38,7 @@ func TestClient_Symlink_Creates(t *testing.T) {
 	ctx, cancel := symlinkTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -70,7 +70,7 @@ func TestClient_Symlink_Subdir(t *testing.T) {
 	ctx, cancel := symlinkTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -100,7 +100,7 @@ func TestClient_Symlink_MissingParent(t *testing.T) {
 	ctx, cancel := symlinkTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -122,7 +122,7 @@ func TestClient_Readlink(t *testing.T) {
 	ctx, cancel := symlinkTestCtx(t)
 	defer cancel()
 
-	rootF, err := cli.Attach(ctx, "me", "")
+	rootF, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestClient_Readlink_NotSymlink(t *testing.T) {
 	ctx, cancel := symlinkTestCtx(t)
 	defer cancel()
 
-	rootF, err := cli.Attach(ctx, "me", "")
+	rootF, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestClient_Symlink_NotSupportedOnU(t *testing.T) {
 	defer cancel()
 	// Attach first so Conn.Symlink's root-nil check doesn't fire before
 	// the dialect gate.
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -206,7 +206,7 @@ func TestClient_Readlink_NotSupportedOnU(t *testing.T) {
 
 	ctx, cancel := symlinkTestCtx(t)
 	defer cancel()
-	rootF, err := cli.Attach(ctx, "me", "")
+	rootF, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

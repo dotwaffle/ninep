@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"fmt"
+	"github.com/dotwaffle/ninep/proto"
 	"io"
 	"net"
 	"os"
@@ -78,7 +79,7 @@ func Example_readFile() {
 	}
 	defer cleanup()
 
-	if _, err := conn.Attach(context.Background(), "example", ""); err != nil {
+	if _, err := conn.Attach(context.Background(), "example", "", proto.NoUID); err != nil {
 		fmt.Println("attach:", err)
 		return
 	}
@@ -112,7 +113,7 @@ func Example_writeFile() {
 	}
 	defer cleanup()
 
-	if _, err := conn.Attach(context.Background(), "example", ""); err != nil {
+	if _, err := conn.Attach(context.Background(), "example", "", proto.NoUID); err != nil {
 		fmt.Println("attach:", err)
 		return
 	}
@@ -150,7 +151,7 @@ func Example_concurrentAccess() {
 	}
 	defer cleanup()
 
-	if _, err := conn.Attach(context.Background(), "example", ""); err != nil {
+	if _, err := conn.Attach(context.Background(), "example", "", proto.NoUID); err != nil {
 		fmt.Println("attach:", err)
 		return
 	}
@@ -190,7 +191,7 @@ func TestExample_ReadFile_ViaClienttest(t *testing.T) {
 	_, cli := clienttest.MemfsPair(t, func(root *memfs.MemDir) {
 		root.AddStaticFile("hello.txt", "hello world\n")
 	})
-	if _, err := cli.Attach(t.Context(), "example", ""); err != nil {
+	if _, err := cli.Attach(t.Context(), "example", "", proto.NoUID); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	f, err := cli.OpenFile(t.Context(), "hello.txt", os.O_RDONLY, 0)
@@ -212,7 +213,7 @@ func TestExample_ReadFile_ViaClienttest(t *testing.T) {
 func TestExample_WriteFile_ViaClienttest(t *testing.T) {
 	t.Parallel()
 	_, cli := clienttest.MemfsPair(t, nil)
-	if _, err := cli.Attach(t.Context(), "example", ""); err != nil {
+	if _, err := cli.Attach(t.Context(), "example", "", proto.NoUID); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	f, err := cli.Create(t.Context(), "new.txt", os.O_WRONLY, 0o644)
@@ -237,7 +238,7 @@ func TestExample_ConcurrentAccess_ViaClienttest(t *testing.T) {
 	_, cli := clienttest.MemfsPair(t, func(root *memfs.MemDir) {
 		root.AddFile("big.bin", make([]byte, 4096))
 	})
-	if _, err := cli.Attach(t.Context(), "example", ""); err != nil {
+	if _, err := cli.Attach(t.Context(), "example", "", proto.NoUID); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	f, err := cli.OpenFile(t.Context(), "big.bin", os.O_RDONLY, 0)

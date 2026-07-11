@@ -10,12 +10,13 @@ import (
 )
 
 // Attach binds this Conn to a filesystem mount. Issues Tattach(rootFid,
-// NoFid, uname, aname) where rootFid is freshly allocated from this
-// Conn's fid pool. Returns a [*File] representing the root directory.
+// NoFid, uname, aname, uid) where rootFid is freshly allocated from this
+// Conn's fid pool. Pass [proto.NoUID] when no numeric UID is claimed.
+// Returns a [*File] representing the root directory.
 //
-// Authentication (afid != NoFid) is not supported -- see package
-// doc. Attach always passes NoFid for the afid field; use
-// [Raw.Tattach] if wire-level control is needed.
+// Authentication (afid != NoFid) is not supported. Uname and uid are
+// unauthenticated claims unless the surrounding transport authenticates and
+// binds them to its peer identity.
 //
 // The returned *File is also cached on the Conn as the implicit root
 // for subsequent [Conn.OpenFile] / [Conn.Create] calls. Callers may
@@ -24,12 +25,12 @@ import (
 // that care track both).
 //
 // ctx is respected for the Tattach round-trip.
-func (c *Conn) Attach(ctx context.Context, uname, aname string) (*File, error) {
+func (c *Conn) Attach(ctx context.Context, uname, aname string, uid uint32) (*File, error) {
 	fid, err := c.fids.acquire()
 	if err != nil {
 		return nil, err
 	}
-	qid, err := c.tattach(ctx, fid, uname, aname)
+	qid, err := c.tattach(ctx, fid, uname, aname, uid)
 	if err != nil {
 		c.fids.release(fid)
 		return nil, err

@@ -70,7 +70,7 @@ func TestClient_Cancellation_Stress(t *testing.T) {
 	// Attach root at fid=0. Raw's fid-taking form mirrors the
 	// concurrent_test pattern; every stress goroutine derives its per-iter
 	// fid from its id + iteration so there's no cross-goroutine collision.
-	if _, err := cli.Raw().Tattach(parent, proto.Fid(0), "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(parent, proto.Fid(0), "me", "", proto.NoUID); err != nil {
 		cleanup()
 		t.Fatalf("Attach: %v", err)
 	}

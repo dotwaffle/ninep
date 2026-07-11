@@ -20,7 +20,7 @@ func TestClient_Setattr_Mode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestClient_Setattr_Size_Truncate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

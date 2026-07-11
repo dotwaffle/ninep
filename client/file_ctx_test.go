@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"errors"
+	"github.com/dotwaffle/ninep/proto"
 	"io"
 	"os"
 	"sync"
@@ -38,7 +39,7 @@ func TestFile_ReadCtx_Delegation(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -81,7 +82,7 @@ func TestFile_WriteCtx_Delegation(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -125,7 +126,7 @@ func TestFile_ReadAtCtx_Delegation(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -161,7 +162,7 @@ func TestFile_ReadAtCtx_PreservesOffset(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -199,7 +200,7 @@ func TestFile_WriteAtCtx_Delegation(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -346,7 +347,7 @@ func TestFile_Read_InfiniteDefault_NoTimeout(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -441,7 +442,7 @@ func TestFile_ReadCtx_MutexInvariance(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 

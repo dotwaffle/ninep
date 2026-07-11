@@ -220,7 +220,7 @@ func TestClient_Lock_RequiresOpenedFid(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	rootFile, err := cli.Attach(ctx, "me", "")
+	rootFile, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -373,13 +373,13 @@ func TestClient_Lock_NotSupportedOnU(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	// The uMockServer answers Tattach; that's enough to get a *File.
-	_, err := cli.Raw().Tattach(ctx, 0, "me", "")
+	_, err := cli.Raw().Tattach(ctx, 0, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	// Now construct a *File externally via Attach which uses the higher
 	// helper. Fall back: use cli.Attach again.
-	f, err := cli.Attach(ctx, "me2", "")
+	f, err := cli.Attach(ctx, "me2", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach cli: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestClient_TryLock_NotSupportedOnU(t *testing.T) {
 	defer cleanup()
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	f, err := cli.Attach(ctx, "me", "")
+	f, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestClient_Unlock_NotSupportedOnU(t *testing.T) {
 	defer cleanup()
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	f, err := cli.Attach(ctx, "me", "")
+	f, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -427,7 +427,7 @@ func TestClient_GetLock_NotSupportedOnU(t *testing.T) {
 	defer cleanup()
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	f, err := cli.Attach(ctx, "me", "")
+	f, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -506,7 +506,7 @@ func openLockerFile(tb testing.TB, cli *client.Conn) *client.File {
 	tb.Helper()
 	ctx, cancel := context.WithTimeout(tb.Context(), 5*time.Second)
 	defer cancel()
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		tb.Fatalf("Attach: %v", err)
 	}
 	f, err := cli.OpenFile(ctx, "/locker", 0, 0)

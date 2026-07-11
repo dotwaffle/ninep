@@ -42,7 +42,7 @@ func TestFileReadDir_L_SingleCall(t *testing.T) {
 	ctx, cancel := readDirTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -75,7 +75,7 @@ func TestFileReadDir_L_Paginated(t *testing.T) {
 	ctx, cancel := readDirTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -130,7 +130,7 @@ func TestFileReadDir_EmptyDir(t *testing.T) {
 	ctx, cancel := readDirTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	dir, err := cli.OpenDir(ctx, "/empty")
@@ -163,7 +163,7 @@ func TestFileReadDir_DirEntryInterface(t *testing.T) {
 	ctx, cancel := readDirTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	dir, err := cli.OpenDir(ctx, "/")
@@ -247,7 +247,7 @@ func TestFileReadDir_MultipleTreaddir(t *testing.T) {
 	ctx, cancel := readDirTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	dir, err := cli.OpenDir(ctx, "/")

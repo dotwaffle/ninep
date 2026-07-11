@@ -473,6 +473,9 @@ func TestConstants(t *testing.T) {
 	if NoFid != Fid(math.MaxUint32) {
 		t.Errorf("NoFid = %d, want %d", NoFid, uint32(math.MaxUint32))
 	}
+	if NoUID != uint32(math.MaxUint32) {
+		t.Errorf("NoUID = %d, want %d", NoUID, uint32(math.MaxUint32))
+	}
 	if QIDSize != 13 {
 		t.Errorf("QIDSize = %d, want 13", QIDSize)
 	}

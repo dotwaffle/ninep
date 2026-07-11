@@ -34,7 +34,7 @@ func TestClient_Link(t *testing.T) {
 	ctx, cancel := linkTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -70,7 +70,7 @@ func TestClient_Link_NotSupportedOnU(t *testing.T) {
 	ctx, cancel := linkTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if err := cli.Link(ctx, "/src", "/hard"); !errors.Is(err, client.ErrNotSupported) {
@@ -95,7 +95,7 @@ func TestClient_Link_NoFidLeak(t *testing.T) {
 
 	ctx, cancel := linkTestCtx(t)
 	defer cancel()
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 

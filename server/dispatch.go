@@ -119,7 +119,11 @@ func (c *conn) handleAttach(ctx context.Context, ta *proto.Tattach) proto.Messag
 	var err error
 	switch {
 	case c.server.attacher != nil:
-		node, err = c.server.attacher.Attach(ctx, ta.Uname, ta.Aname)
+		node, err = c.server.attacher.Attach(ctx, AttachRequest{
+			Uname: ta.Uname,
+			Aname: ta.Aname,
+			UID:   ta.NUname,
+		})
 		if err != nil {
 			return c.errorMsg(errnoFromError(err))
 		}

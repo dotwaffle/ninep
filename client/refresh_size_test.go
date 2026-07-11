@@ -25,7 +25,7 @@ func TestFileRefreshSize_PopulatesCachedSize(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestFileRefreshSize_SeekEndAfterRefresh(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestFileRefreshSize_IsIdempotent(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestFileRefreshSize_ErrorPropagates(t *testing.T) {
 	ctx, cancel := fileIOTestCtx(t)
 	defer cancel()
 
-	r, err := cli.Attach(ctx, "me", "")
+	r, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestFileRefreshSize_DotU_UsesTstat(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
-	if _, err := cli.Raw().Tattach(ctx, 0, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 0, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	f := client.NewFileForTest(cli)

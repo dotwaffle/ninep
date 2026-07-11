@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"errors"
+	"github.com/dotwaffle/ninep/proto"
 	"io"
 	"os"
 	"strings"
@@ -26,7 +27,7 @@ func TestFileSeek_Start(t *testing.T) {
 	ctx, cancel := fileSeekTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestFileSeek_Current(t *testing.T) {
 	ctx, cancel := fileSeekTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestFileSeek_NegativeAbsolute(t *testing.T) {
 	ctx, cancel := fileSeekTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -138,7 +139,7 @@ func TestFileSeek_End_UnsetSize(t *testing.T) {
 	ctx, cancel := fileSeekTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -174,7 +175,7 @@ func TestFileSeek_End_WithCachedSize(t *testing.T) {
 	ctx, cancel := fileSeekTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -213,7 +214,7 @@ func TestFileSeek_InvalidWhence(t *testing.T) {
 	ctx, cancel := fileSeekTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -242,7 +243,7 @@ func TestFileSeek_PastEOF_SucceedsButReadFails(t *testing.T) {
 	ctx, cancel := fileSeekTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -282,7 +283,7 @@ func TestFileSeek_Directory_Succeeds(t *testing.T) {
 	ctx, cancel := fileSeekTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

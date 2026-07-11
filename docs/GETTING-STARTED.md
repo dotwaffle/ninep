@@ -58,6 +58,7 @@ import (
 	"os"
 
 	"github.com/dotwaffle/ninep/client"
+	"github.com/dotwaffle/ninep/proto"
 )
 
 func main() {
@@ -77,7 +78,7 @@ func main() {
 	defer c.Close()
 
 	// 3. Attach to the root.
-	if _, err := c.Attach(ctx, "me", ""); err != nil {
+	if _, err := c.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		log.Fatal(err)
 	}
 

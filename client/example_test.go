@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"fmt"
+	"github.com/dotwaffle/ninep/proto"
 	"io"
 	"log"
 	"net"
@@ -52,7 +53,7 @@ func Example() {
 	defer func() { _ = c.Close() }()
 
 	// 2. Attach to the root.
-	f, err := c.Attach(ctx, "nobody", "")
+	f, err := c.Attach(ctx, "nobody", "", proto.NoUID)
 	if err != nil {
 		log.Fatal(err)
 	}

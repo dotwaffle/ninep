@@ -49,7 +49,7 @@ func walkToXattrFile(t *testing.T, cli *client.Conn, childName string) *client.F
 	t.Helper()
 	ctx, cancel := xattrCtx(t)
 	defer cancel()
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

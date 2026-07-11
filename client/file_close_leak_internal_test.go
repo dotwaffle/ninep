@@ -78,7 +78,7 @@ func TestFileClose_TimedOutClunkLeaksFidNumber(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cli.Close() })
 
-	if _, err := cli.Attach(t.Context(), "me", ""); err != nil {
+	if _, err := cli.Attach(t.Context(), "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	f, err := cli.OpenFile(t.Context(), "/wedged", 0, 0)

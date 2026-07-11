@@ -79,7 +79,7 @@ func TestFileReadDir_HonorsRequestTimeout(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cli.Close() })
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	dir, err := cli.OpenDir(ctx, "/")

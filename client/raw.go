@@ -44,16 +44,17 @@ func (c *Conn) Raw() *Raw {
 }
 
 // Tattach associates fid with the root of the file tree named by aname
-// and establishes the session for user uname. Only afid=NoFid (no
-// authentication) is supported; Tauth is not implemented. aname selects
-// the mount point, server-defined; the empty string is the conventional
-// "default" root.
+// and establishes the session using peer-supplied uname and numeric UID
+// claims. Pass [proto.NoUID] when no numeric UID is supplied. Only
+// afid=NoFid is supported; Tauth is not implemented. aname selects the
+// server-defined mount point; the empty string conventionally selects the
+// default root.
 //
 // Returns the root QID on success, or a *Error translated from
 // Rlerror/Rerror on server-side failure. The high-level [Conn.Attach]
 // wraps this to return a *File with an allocator-owned fid.
-func (r *Raw) Tattach(ctx context.Context, fid proto.Fid, uname, aname string) (proto.QID, error) {
-	return r.c.tattach(ctx, fid, uname, aname)
+func (r *Raw) Tattach(ctx context.Context, fid proto.Fid, uname, aname string, uid uint32) (proto.QID, error) {
+	return r.c.tattach(ctx, fid, uname, aname, uid)
 }
 
 // Twalk descends from fid along names, creating newFid at the final

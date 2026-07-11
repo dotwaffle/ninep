@@ -42,7 +42,7 @@ func TestRaw_Parity_Attach(t *testing.T) {
 	defer cleanupA()
 	ctxA, cancelA := rawTestCtx(t)
 	defer cancelA()
-	wantQID, err := cliA.Raw().Tattach(ctxA, 1, "me", "")
+	wantQID, err := cliA.Raw().Tattach(ctxA, 1, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Raw.Attach (baseline): %v", err)
 	}
@@ -52,7 +52,7 @@ func TestRaw_Parity_Attach(t *testing.T) {
 	defer cleanupB()
 	ctxB, cancelB := rawTestCtx(t)
 	defer cancelB()
-	gotQID, err := cliB.Raw().Tattach(ctxB, 1, "me", "")
+	gotQID, err := cliB.Raw().Tattach(ctxB, 1, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Raw.Attach: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestRaw_Parity_Walk(t *testing.T) {
 	ctx, cancel := rawTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Raw().Tattach(ctx, 1, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, 1, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Raw.Attach: %v", err)
 	}
 	qids, err := cli.Raw().Twalk(ctx, 1, 2, nil)
@@ -99,7 +99,7 @@ func TestRaw_Parity_ReadWrite(t *testing.T) {
 
 	r := cli.Raw()
 
-	if _, err := r.Tattach(ctx, 1, "me", ""); err != nil {
+	if _, err := r.Tattach(ctx, 1, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Raw.Attach: %v", err)
 	}
 	if _, err := r.Twalk(ctx, 1, 2, []string{"rw.bin"}); err != nil {
@@ -137,7 +137,7 @@ func TestRaw_Parity_Clunk(t *testing.T) {
 
 	r := cli.Raw()
 
-	if _, err := r.Tattach(ctx, 1, "me", ""); err != nil {
+	if _, err := r.Tattach(ctx, 1, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Raw.Attach: %v", err)
 	}
 	if _, err := r.Twalk(ctx, 1, 2, []string{"hello.txt"}); err != nil {

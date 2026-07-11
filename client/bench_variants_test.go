@@ -34,6 +34,7 @@
 package client_test
 
 import (
+	"github.com/dotwaffle/ninep/proto"
 	"os"
 	"strconv"
 	"sync/atomic"
@@ -104,7 +105,7 @@ func BenchmarkClientReadVariants_4K(b *testing.B) {
 					root := newBenchTree(b)
 					cli := newBenchClientWithInflight(b, dialect, root, msize, maxInflight)
 					// Attach once; each worker then opens its own fid.
-					if _, err := cli.Attach(b.Context(), "bench", ""); err != nil {
+					if _, err := cli.Attach(b.Context(), "bench", "", proto.NoUID); err != nil {
 						b.Fatalf("attach: %v", err)
 					}
 					b.Cleanup(func() {

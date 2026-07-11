@@ -286,7 +286,7 @@ func attachAndOpen(tb testing.TB, cli *client.Conn) proto.Fid {
 	ctx, cancel := context.WithTimeout(tb.Context(), 3*time.Second)
 	defer cancel()
 
-	if _, err := cli.Raw().Tattach(ctx, proto.Fid(0), "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, proto.Fid(0), "me", "", proto.NoUID); err != nil {
 		tb.Fatalf("Attach: %v", err)
 	}
 	fid := proto.Fid(1)

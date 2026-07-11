@@ -45,7 +45,7 @@ func TestFile_QidAccessor(t *testing.T) {
 	ctx, cancel := fileTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestFile_CloseIdempotent(t *testing.T) {
 	ctx, cancel := fileTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestFile_CloseIdempotent_FirstErrorThenNil(t *testing.T) {
 	ctx, cancel := fileTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestFile_CloseReleasesFid(t *testing.T) {
 	ctx, cancel := fileTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestFile_CloseClunksOnWire(t *testing.T) {
 	ctx, cancel := fileTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestFile_Walk_ReturnsNewFile(t *testing.T) {
 	ctx, cancel := fileTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestFile_Walk_ErrorReleasesFid(t *testing.T) {
 	ctx, cancel := fileTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestFile_Clone_IndependentOffset(t *testing.T) {
 	ctx, cancel := fileTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestFile_Clone_ErrorReleasesFid(t *testing.T) {
 	ctx, cancel := fileTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

@@ -15,9 +15,9 @@
 // # Authentication Scope
 //
 // This package supports [Tattach] with afid=NoFid only. The Tauth/afid
-// handshake is not implemented - the common case (Linux v9fs default
-// trans=tcp) is no-auth. Future work may add Tauth if a concrete
-// consumer requires it.
+// handshake is not implemented. Uname and numeric UID values are
+// unauthenticated peer claims; use an authenticated transport and bind those
+// claims to its peer identity before making authorization decisions.
 //
 // # Dialects: .L Primary, .u Best-Effort
 //
@@ -99,12 +99,10 @@
 //
 // # Concurrency and parallelism
 //
-// Each *File has a private mutex that serializes Read, Write, ReadAt,
-// and WriteAt calls on the same handle. Callers wanting parallel I/O
-// on the same server-side file spawn a [File.Clone] per goroutine;
-// each clone has its own fid, its own offset, and its own mutex. The
-// underlying Conn is goroutine-safe per database/sql.DB semantics, so
-// N clones can issue N in-flight requests that overlap on the server.
+// Sequential Read, Write, Seek, and ReadDir calls share local state and are
+// serialized. ReadAt and WriteAt do not mutate that state and may overlap on
+// one File. File operations are synchronized with Close so a retired fid is
+// never reused while an operation still holds the handle.
 //
 // # Advanced Operations
 //
@@ -172,9 +170,9 @@
 //
 // ## Not Supported
 //
-// The Tauth afid handshake is not implemented. [Conn.Attach] always
-// passes NoFid; authentication must be handled at the transport layer
-// (TLS, SSH). See the "Authentication Scope" section above.
+// The Tauth afid handshake is not implemented. [Conn.Attach] always passes
+// NoFid; authentication must be handled at the transport layer. See the
+// "Authentication Scope" section above.
 //
 // Twstat is intentionally unexposed on the high-level surface. .u
 // callers that need path-rename or metadata-write semantics compose

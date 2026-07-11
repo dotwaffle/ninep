@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"errors"
+	"github.com/dotwaffle/ninep/proto"
 	"io"
 	"os"
 	"strings"
@@ -26,7 +27,7 @@ func TestFileWriteAt_Basic(t *testing.T) {
 	ctx, cancel := fileWriteAtTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestFileWriteAt_DoesNotMutateOffset(t *testing.T) {
 	ctx, cancel := fileWriteAtTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -113,7 +114,7 @@ func TestFileWriteAt_Chunked(t *testing.T) {
 	ctx, cancel := fileWriteAtTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -171,7 +172,7 @@ func TestFileWriteAt_NegativeOffset(t *testing.T) {
 	ctx, cancel := fileWriteAtTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -204,7 +205,7 @@ func TestFileWriteAt_EmptyBuffer(t *testing.T) {
 	ctx, cancel := fileWriteAtTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

@@ -76,12 +76,21 @@ func WithAnames(m map[string]Node) Option {
 	return func(s *Server) { s.anames = maps.Clone(m) }
 }
 
+// AttachRequest contains the identity and tree claims carried by Tattach.
+// Ninep does not authenticate these values; authorization-sensitive servers
+// must establish peer identity at the transport layer.
+type AttachRequest struct {
+	Uname string
+	Aname string
+	UID   uint32
+}
+
 // Attacher provides full-control attach handling. When set via WithAttacher,
 // it overrides the default root-node and aname-dispatch behavior.
 type Attacher interface {
-	// Attach resolves the root node for a connection given the uname and
-	// aname from Tattach.
-	Attach(ctx context.Context, uname, aname string) (Node, error)
+	// Attach resolves the root node for a connection from the peer's
+	// unauthenticated Tattach claims.
+	Attach(ctx context.Context, request AttachRequest) (Node, error)
 }
 
 // WithAttacher sets a custom Attacher that handles all Tattach requests.

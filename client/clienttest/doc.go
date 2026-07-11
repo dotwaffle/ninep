@@ -34,7 +34,7 @@
 //	    })
 //	    _ = srv // optional: drive the server side directly.
 //
-//	    if _, err := cli.Attach(t.Context(), "tester", ""); err != nil {
+//	    if _, err := cli.Attach(t.Context(), "tester", "", proto.NoUID); err != nil {
 //	        t.Fatal(err)
 //	    }
 //	    f, err := cli.OpenFile(t.Context(), "hello.txt", os.O_RDONLY, 0)

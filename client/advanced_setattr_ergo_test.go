@@ -16,7 +16,7 @@ func TestClient_Ergo_Chmod(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newClientServerPair(t, buildTestRoot(t))
 
-	if _, err := c.Attach(ctx, "nobody", ""); err != nil {
+	if _, err := c.Attach(ctx, "nobody", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -47,7 +47,7 @@ func TestClient_Ergo_Chmod_PreservesSpecialBits(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newClientServerPair(t, buildTestRoot(t))
 
-	if _, err := c.Attach(ctx, "nobody", ""); err != nil {
+	if _, err := c.Attach(ctx, "nobody", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	f, err := c.OpenFile(ctx, "rw.bin", os.O_RDWR, 0)
@@ -74,7 +74,7 @@ func TestClient_Ergo_Chown(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newClientServerPair(t, buildTestRoot(t))
 
-	if _, err := c.Attach(ctx, "nobody", ""); err != nil {
+	if _, err := c.Attach(ctx, "nobody", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestClient_Ergo_Truncate(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newClientServerPair(t, buildTestRoot(t))
 
-	if _, err := c.Attach(ctx, "nobody", ""); err != nil {
+	if _, err := c.Attach(ctx, "nobody", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 

@@ -247,11 +247,13 @@ func TestAttach_WithAnames(t *testing.T) {
 }
 
 type testAttacher struct {
-	node Node
-	err  error
+	node    Node
+	err     error
+	request AttachRequest
 }
 
-func (a *testAttacher) Attach(_ context.Context, _, _ string) (Node, error) {
+func (a *testAttacher) Attach(_ context.Context, request AttachRequest) (Node, error) {
+	a.request = request
 	return a.node, a.err
 }
 
@@ -264,9 +266,20 @@ func TestAttach_WithAttacher(t *testing.T) {
 	cp := newConnPair(t, root, WithAttacher(att))
 	defer cp.close(t)
 
-	ra := cp.attach(t, 1, 0, "user", "anything")
+	sendMessage(t, cp.client, 1, &proto.Tattach{
+		Fid: 0, Afid: proto.NoFid, Uname: "user", Aname: "anything", NUname: 1234,
+	})
+	_, msg := readResponse(t, cp.client)
+	ra, ok := msg.(*proto.Rattach)
+	if !ok {
+		t.Fatalf("expected Rattach, got %T: %+v", msg, msg)
+	}
 	if ra.QID != customNode.QID() {
 		t.Errorf("QID = %+v, want %+v", ra.QID, customNode.QID())
+	}
+	want := AttachRequest{Uname: "user", Aname: "anything", UID: 1234}
+	if att.request != want {
+		t.Errorf("Attach request = %+v, want %+v", att.request, want)
 	}
 }
 

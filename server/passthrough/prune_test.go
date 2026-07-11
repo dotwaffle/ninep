@@ -4,6 +4,7 @@ package passthrough
 
 import (
 	"context"
+	"github.com/dotwaffle/ninep/proto"
 	"net"
 	"os"
 	"path/filepath"
@@ -71,7 +72,7 @@ func TestPrune_WalkThenClunkRemovesChildEntry(t *testing.T) {
 	cli, teardown := newPruneTestServer(t, root)
 	defer teardown()
 
-	rootF, err := cli.Attach(t.Context(), "nobody", "")
+	rootF, err := cli.Attach(t.Context(), "nobody", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -116,7 +117,7 @@ func TestPrune_WalkCloneAliasKeepsEntryUntilAllClunk(t *testing.T) {
 	cli, teardown := newPruneTestServer(t, root)
 	defer teardown()
 
-	rootF, err := cli.Attach(t.Context(), "nobody", "")
+	rootF, err := cli.Attach(t.Context(), "nobody", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

@@ -26,7 +26,7 @@ func TestClient_Mknod_CreatesNode(t *testing.T) {
 	ctx, cancel := mknodTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -63,7 +63,7 @@ func TestClient_Mknod_Subdir(t *testing.T) {
 	ctx, cancel := mknodTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -87,7 +87,7 @@ func TestClient_Mknod_NotSupportedOnU(t *testing.T) {
 	ctx, cancel := mknodTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if _, err := cli.Mknod(ctx, "/x", proto.FileMode(0), 0, 0, 0); !errors.Is(err, client.ErrNotSupported) {

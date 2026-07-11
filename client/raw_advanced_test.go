@@ -201,7 +201,7 @@ func attachRoot(t *testing.T, cli *client.Conn, rootFid proto.Fid) {
 	t.Helper()
 	ctx, cancel := rawAdvCtx(t)
 	defer cancel()
-	if _, err := cli.Raw().Tattach(ctx, rootFid, "me", ""); err != nil {
+	if _, err := cli.Raw().Tattach(ctx, rootFid, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 }

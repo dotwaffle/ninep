@@ -108,7 +108,7 @@ func newBenchClient(tb testing.TB, transport string, root server.Node, msize uin
 // non-existent File.Open.
 func benchOpenDataFile(tb testing.TB, cli *client.Conn) *client.File {
 	tb.Helper()
-	if _, err := cli.Attach(tb.Context(), "bench", ""); err != nil {
+	if _, err := cli.Attach(tb.Context(), "bench", "", proto.NoUID); err != nil {
 		tb.Fatalf("attach: %v", err)
 	}
 	f, err := cli.OpenFile(tb.Context(), "data", os.O_RDONLY, 0)
@@ -273,7 +273,7 @@ func BenchmarkClientWalkClunk(b *testing.B) {
 			root := newBenchTree(b)
 			cli := newBenchClient(b, transport, root, 65536)
 
-			attached, err := cli.Attach(b.Context(), "bench", "")
+			attached, err := cli.Attach(b.Context(), "bench", "", proto.NoUID)
 			if err != nil {
 				b.Fatalf("attach: %v", err)
 			}

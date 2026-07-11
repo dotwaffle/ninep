@@ -251,12 +251,13 @@ func expectRType(msg proto.Message, wantTypes ...proto.MessageType) error {
 
 // tattach implements [Raw.Tattach]; [Conn.Attach] wraps it to return a
 // *File with an allocator-owned fid.
-func (c *Conn) tattach(ctx context.Context, fid proto.Fid, uname, aname string) (proto.QID, error) {
+func (c *Conn) tattach(ctx context.Context, fid proto.Fid, uname, aname string, uid uint32) (proto.QID, error) {
 	req := &proto.Tattach{
-		Fid:   fid,
-		Afid:  proto.NoFid,
-		Uname: uname,
-		Aname: aname,
+		Fid:    fid,
+		Afid:   proto.NoFid,
+		Uname:  uname,
+		Aname:  aname,
+		NUname: uid,
 	}
 	r, err := rtrip[*proto.Rattach](ctx, c, req)
 	if err != nil {

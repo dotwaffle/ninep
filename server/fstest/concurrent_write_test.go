@@ -4,6 +4,7 @@ package fstest
 
 import (
 	"bytes"
+	"github.com/dotwaffle/ninep/proto"
 	"io"
 	"os"
 	"sync"
@@ -45,7 +46,7 @@ func runConcurrentWrite(t *testing.T, cli *client.Conn) {
 	t.Helper()
 	ctx := t.Context()
 
-	if _, err := cli.Attach(ctx, "test", ""); err != nil {
+	if _, err := cli.Attach(ctx, "test", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 

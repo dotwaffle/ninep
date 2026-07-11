@@ -33,7 +33,7 @@ func TestClient_Remove_File(t *testing.T) {
 	ctx, cancel := removeTestCtx(t)
 	defer cancel()
 
-	rootF, err := cli.Attach(ctx, "me", "")
+	rootF, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestClient_Remove_Directory(t *testing.T) {
 	ctx, cancel := removeTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -89,7 +89,7 @@ func TestClient_Remove_Missing(t *testing.T) {
 	ctx, cancel := removeTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -110,7 +110,7 @@ func TestClient_Remove_NotSupportedOnU(t *testing.T) {
 	ctx, cancel := removeTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	err := cli.Remove(ctx, "/x")
@@ -139,7 +139,7 @@ func TestClient_Remove_NoFidLeak(t *testing.T) {
 
 	ctx, cancel := removeTestCtx(t)
 	defer cancel()
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 

@@ -5,6 +5,7 @@ package vsock_test
 import (
 	"context"
 	"errors"
+	"github.com/dotwaffle/ninep/proto"
 	"io"
 	"log/slog"
 	"net"
@@ -140,7 +141,7 @@ func TestNinepOverVsock(t *testing.T) {
 	}
 	defer func() { _ = cli.Close() }()
 
-	if _, err := cli.Attach(dialCtx, "tester", ""); err != nil {
+	if _, err := cli.Attach(dialCtx, "tester", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	f, err := cli.OpenFile(dialCtx, "hello.txt", os.O_RDONLY, 0)

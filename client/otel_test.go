@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"github.com/dotwaffle/ninep/proto"
 	"net"
 	"testing"
 	"time"
@@ -55,7 +56,7 @@ func TestClientOTel_TracingRespectsParentSampling(t *testing.T) {
 	opCtx, parent := parentTP.Tracer("test").Start(ctx, "parent")
 	defer parent.End()
 
-	if _, err := cli.Attach(opCtx, "nobody", ""); err != nil {
+	if _, err := cli.Attach(opCtx, "nobody", "", proto.NoUID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,7 +100,7 @@ func TestClientOTel_Tracing(t *testing.T) {
 	// Initial Tversion is not instrumented (runs inside Dial).
 	// We check for subsequent ops.
 
-	if _, err := cli.Attach(ctx, "nobody", ""); err != nil {
+	if _, err := cli.Attach(ctx, "nobody", "", proto.NoUID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -162,7 +163,7 @@ func TestClientOTel_Metrics(t *testing.T) {
 	}
 	defer func() { _ = cli.Close() }()
 
-	if _, err := cli.Attach(ctx, "nobody", ""); err != nil {
+	if _, err := cli.Attach(ctx, "nobody", "", proto.NoUID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -212,7 +213,7 @@ func TestClientOTel_ErrorSpan(t *testing.T) {
 	defer func() { _ = cli.Close() }()
 
 	// Try to walk to non-existent file to trigger error.
-	rootF, err := cli.Attach(ctx, "nobody", "")
+	rootF, err := cli.Attach(ctx, "nobody", "", proto.NoUID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +272,7 @@ func TestClientOTel_UntracedDoesNotTouchAmbientSpan(t *testing.T) {
 
 	opCtx, parentSpan := parentTP.Tracer("test").Start(ctx, "parent")
 
-	rootF, err := cli.Attach(opCtx, "nobody", "")
+	rootF, err := cli.Attach(opCtx, "nobody", "", proto.NoUID)
 	if err != nil {
 		t.Fatal(err)
 	}

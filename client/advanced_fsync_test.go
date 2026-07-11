@@ -2,6 +2,7 @@ package client_test
 
 import (
 	"errors"
+	"github.com/dotwaffle/ninep/proto"
 	"testing"
 
 	"github.com/dotwaffle/ninep/client"
@@ -21,7 +22,7 @@ func TestClient_Fsync_DispatchesToNode(t *testing.T) {
 	ctx, cancel := mknodTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
@@ -57,7 +58,7 @@ func TestClient_Fsync_RequiresOpenFid(t *testing.T) {
 	ctx, cancel := mknodTestCtx(t)
 	defer cancel()
 
-	rootF, err := cli.Attach(ctx, "me", "")
+	rootF, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -76,7 +77,7 @@ func TestClient_Fsync_NotSupportedOnU(t *testing.T) {
 	ctx, cancel := mknodTestCtx(t)
 	defer cancel()
 
-	rootF, err := cli.Attach(ctx, "me", "")
+	rootF, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

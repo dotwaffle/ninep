@@ -77,7 +77,7 @@ func TestConnAttach_Root(t *testing.T) {
 	ctx, cancel := sessionTestCtx(t)
 	defer cancel()
 
-	f, err := cli.Attach(ctx, "me", "")
+	f, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestConnAttach_Close(t *testing.T) {
 	ctx, cancel := sessionTestCtx(t)
 	defer cancel()
 
-	f1, err := cli.Attach(ctx, "me", "")
+	f1, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach 1: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestConnAttach_Close(t *testing.T) {
 	}
 	// Second Attach reuses the previously-allocated fid via the LIFO
 	// reuse cache.
-	f2, err := cli.Attach(ctx, "me", "")
+	f2, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach 2: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestConnOpenFile_L(t *testing.T) {
 	ctx, cancel := sessionTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestConnOpenFile_WalkFailure_ReleasesFid(t *testing.T) {
 	ctx, cancel := sessionTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestConnOpenFile_LopenFailure_ClunksAndReleases(t *testing.T) {
 	ctx, cancel := sessionTestCtx(t)
 	defer cancel()
 
-	root, err := cli.Attach(ctx, "me", "")
+	root, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestConn_RootAccessor(t *testing.T) {
 	if cli.Root() != nil {
 		t.Errorf("Root() before Attach = %v, want nil", cli.Root())
 	}
-	attached, err := cli.Attach(ctx, "me", "")
+	attached, err := cli.Attach(ctx, "me", "", proto.NoUID)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestConnOpenFile_AfterClosedConn(t *testing.T) {
 	ctx, cancel := sessionTestCtx(t)
 	defer cancel()
 
-	if _, err := cli.Attach(ctx, "me", ""); err != nil {
+	if _, err := cli.Attach(ctx, "me", "", proto.NoUID); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if err := cli.Close(); err != nil {
