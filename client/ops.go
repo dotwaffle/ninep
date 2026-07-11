@@ -11,21 +11,22 @@ import (
 	"github.com/dotwaffle/ninep/proto/p9l"
 	"github.com/dotwaffle/ninep/proto/p9u"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
-// roundTrip is the shared dispatch helper used by every op method on
-// *Conn. It enforces the following ordering invariants:
+// exchange is the dispatch skeleton shared by [Conn.roundTrip] and
+// [Conn.readAtZeroCopy]. It enforces the following ordering invariants:
 //
-//  1. Pre-flight isClosed check - short-circuit to ErrClosed before paying
-//     the tagAllocator round trip.
-//  2. callerWG.Add(1) / defer Done - Close() waits for callers to drain
+//  1. callerWG.Add(1) / defer Done - Close() waits for callers to drain
 //     before shutting the read goroutine.
-//  3. tagAllocator.acquire - blocks on ctx, closeCh, or free-list slot.
-//  4. inflight.register BEFORE writeT (register-before-send).
-//  5. writeT - encode + writev under writeMu.
-//  6. Wait on respCh / ctx.Done / closeCh.
-//  7. unregister(tag) BEFORE release(tag) (tag-reuse race avoidance).
-//  8. release(tag) - return to free-list.
+//  2. tagAllocator.acquire - blocks on ctx, closeCh, or free-list slot.
+//  3. Inflight registration BEFORE writeT (register-before-send). A nil
+//     dst registers a plain entry; a non-nil dst registers the zero-copy
+//     Rread entry, whose payload the read loop copies straight into dst.
+//  4. writeT - encode + writev under writeMu.
+//  5. Wait on the response chan / ctx.Done / closeCh.
+//  6. unregister(tag) BEFORE release(tag) (tag-reuse race avoidance).
+//  7. release(tag) - return to free-list.
 //
 // Error paths preserve the unregister-before-release ordering. On writeT
 // failure, the tag is released after unregistering so the caller observes
@@ -34,40 +35,36 @@ import (
 // Ctx cancellation enters [Conn.flushAndWait], which sends Tflush(tag)
 // and blocks for the first frame among (original R, Rflush, closeCh).
 // flushAndWait owns the cleanup of both the original tag AND the
-// flushTag it allocates. The returned error wraps ctx.Err() via %w so
+// flushTag it derives. The returned error wraps ctx.Err() via %w so
 // errors.Is chains work; on the Rflush-first path, [ErrFlushed] is
 // also in the chain. Late-arriving second frames are dropped by
 // inflight.deliver's unregistered-tag path.
 //
-// Returns the decoded R-message as a proto.Message value. The caller is
-// responsible for calling toError first (to translate Rlerror/Rerror) and
-// then type-asserting to the expected concrete type.
-func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message, error) {
-	if c.isClosed() {
-		return nil, ErrClosed
-	}
-
-	opName := msg.Type().String()
-	ctx, span := c.startSpan(ctx, opName, msg)
-	defer span.End()
-
-	if c.meterEnabled {
-		c.inst.activeReqs.Add(ctx, 1)
-		defer c.inst.activeReqs.Add(ctx, -1)
-	}
-
+// n mirrors the ZC entry's byte count: it is meaningful only when dst
+// was non-nil and the returned message is rreadSentinelOK (the read
+// loop writes entry.n before delivering; the cap-1 chan send/receive
+// edge makes the read here race-free). Callers own the returned
+// message's interpretation: toError translation, type assertion, and
+// the cache return.
+func (c *Conn) exchange(ctx context.Context, span trace.Span, msg proto.Message, dst []byte) (resp proto.Message, n int, err error) {
 	c.callerWG.Add(1)
 	defer c.callerWG.Done()
 
-	start := time.Now()
 	tag, err := c.tags.acquire(ctx, c.closeCh)
 	if err != nil {
 		c.recordError(span, err)
-		return nil, err
+		return nil, 0, err
 	}
 
 	// Register BEFORE writeT.
-	respCh := c.inflight.register(tag)
+	var respCh chan proto.Message
+	var entry *requestEntry
+	if dst == nil {
+		respCh = c.inflight.register(tag)
+	} else {
+		entry = c.inflight.registerZC(tag, dst)
+		respCh = entry.ch
+	}
 
 	frameSize, err := c.writeT(tag, msg)
 	if err != nil {
@@ -81,15 +78,14 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 		// io.ErrClosedPipe / net.ErrClosed wrapper.
 		if c.isClosed() {
 			c.recordError(span, ErrClosed)
-			return nil, ErrClosed
+			return nil, 0, ErrClosed
 		}
 		c.recordError(span, err)
-		return nil, err
+		return nil, 0, err
 	}
 	c.recordRequestSize(ctx, frameSize)
 
 	// Wait for response.
-	var resp proto.Message
 	select {
 	case r, ok := <-respCh:
 		if !ok {
@@ -107,29 +103,63 @@ func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message,
 			c.inflight.unregister(tag)
 			c.tags.release(tag)
 			c.recordError(span, ErrClosed)
-			return nil, ErrClosed
+			return nil, 0, ErrClosed
 		}
 		// Unregister BEFORE release.
 		c.inflight.unregister(tag)
 		c.tags.release(tag)
-		resp = r
+		if entry != nil {
+			n = entry.n
+		}
+		return r, n, nil
 	case <-ctx.Done():
 		// Delegate to flushAndWait, which sends Tflush(tag) and owns
-		// the unregister + release of both `tag` (the original) and
-		// the flushTag it acquires. The returned error wraps
-		// ctx.Err() so errors.Is(err, context.Canceled) /
-		// context.DeadlineExceeded work; on the Rflush-first path,
-		// ErrFlushed is also in the chain.
+		// the unregister + release of tag (and the derived flushTag).
+		// The returned error wraps ctx.Err() so
+		// errors.Is(err, context.Canceled) / context.DeadlineExceeded
+		// work; on the Rflush-first path, ErrFlushed is also in the
+		// chain. On the ZC path any original R that raced in is
+		// reclaimed by flushAndWait's drain arms (rreadSentinelOK is a
+		// no-op there per the sentinel guard in putCachedRMsg).
 		r, ferr := c.flushAndWait(ctx, tag, respCh)
 		if ferr != nil {
 			c.recordError(span, ferr)
 		}
-		return r, ferr
+		return r, 0, ferr
 	case <-c.closeCh:
 		c.inflight.unregister(tag)
 		c.tags.release(tag)
 		c.recordError(span, ErrClosed)
+		return nil, 0, ErrClosed
+	}
+}
+
+// roundTrip is the shared dispatch helper used by every op method on
+// *Conn: a pre-flight isClosed check, span + metric setup, then the
+// [Conn.exchange] skeleton with a plain (non-zero-copy) registration.
+//
+// Returns the decoded R-message as a proto.Message value. The caller is
+// responsible for calling toError first (to translate Rlerror/Rerror) and
+// then type-asserting to the expected concrete type; [rtrip] bundles
+// those steps.
+func (c *Conn) roundTrip(ctx context.Context, msg proto.Message) (proto.Message, error) {
+	if c.isClosed() {
 		return nil, ErrClosed
+	}
+
+	opName := msg.Type().String()
+	ctx, span := c.startSpan(ctx, opName, msg)
+	defer span.End()
+
+	if c.meterEnabled {
+		c.inst.activeReqs.Add(ctx, 1)
+		defer c.inst.activeReqs.Add(ctx, -1)
+	}
+
+	start := time.Now()
+	resp, _, err := c.exchange(ctx, span, msg, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	elapsed := time.Since(start).Seconds()
@@ -343,7 +373,8 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 	}
 
 	opName := "Tread"
-	ctx, span := c.startSpan(ctx, opName, &proto.Tread{Fid: fid, Offset: offset, Count: count})
+	req := &proto.Tread{Fid: fid, Offset: offset, Count: count}
+	ctx, span := c.startSpan(ctx, opName, req)
 	defer span.End()
 
 	if c.meterEnabled {
@@ -351,81 +382,20 @@ func (c *Conn) readAtZeroCopy(ctx context.Context, fid proto.Fid, offset uint64,
 		defer c.inst.activeReqs.Add(ctx, -1)
 	}
 
-	c.callerWG.Add(1)
-	defer c.callerWG.Done()
-
 	start := time.Now()
-	tag, err := c.tags.acquire(ctx, c.closeCh)
+	resp, n, err := c.exchange(ctx, span, req, dst)
 	if err != nil {
-		c.recordError(span, err)
 		return 0, err
-	}
-
-	// Register ZC BEFORE writeT (register-before-send).
-	// entry.n is written by the read loop's Rread fast path before deliver,
-	// and read here after entry.ch unblocks - happens-before via the
-	// cap-1 chan send/receive edge.
-	entry := c.inflight.registerZC(tag, dst)
-
-	req := &proto.Tread{Fid: fid, Offset: offset, Count: count}
-	frameSize, err := c.writeT(tag, req)
-	if err != nil {
-		// Unregister-before-release ordering preserved on error paths.
-		c.inflight.unregister(tag)
-		c.tags.release(tag)
-		if c.isClosed() {
-			c.recordError(span, ErrClosed)
-			return 0, ErrClosed
-		}
-		c.recordError(span, err)
-		return 0, err
-	}
-	c.recordRequestSize(ctx, frameSize)
-
-	// Wait for response, ctx cancel, or shutdown - same shape as roundTrip.
-	var resp proto.Message
-	select {
-	case r, ok := <-entry.ch:
-		if !ok {
-			// cancelAll fired during shutdown.
-			c.inflight.unregister(tag)
-			c.tags.release(tag)
-			c.recordError(span, ErrClosed)
-			return 0, ErrClosed
-		}
-		// Unregister BEFORE release.
-		c.inflight.unregister(tag)
-		c.tags.release(tag)
-		resp = r
-	case <-ctx.Done():
-		// Delegate to flushAndWait, which owns the unregister +
-		// release of `tag` (and any flushTag it allocates).
-		// flushAndWait returns (msg, err); for the ZC path the
-		// response (if any) is the rreadSentinelOK singleton or an
-		// Rlerror - drop both via putCachedRMsg-style cleanup. Note:
-		// flushAndWait already calls putCachedRMsg on the original R
-		// message internally (origCh drain arms), and rreadSentinelOK
-		// is a no-op there per the sentinel guard in putCachedRMsg.
-		_, ferr := c.flushAndWait(ctx, tag, entry.ch)
-		if ferr != nil {
-			c.recordError(span, ferr)
-		}
-		return 0, ferr
-	case <-c.closeCh:
-		c.inflight.unregister(tag)
-		c.tags.release(tag)
-		c.recordError(span, ErrClosed)
-		return 0, ErrClosed
 	}
 
 	elapsed := time.Since(start).Seconds()
-	// r is one of: rreadSentinelOK (zero-copy fast path success) or
+	// resp is one of: rreadSentinelOK (zero-copy fast path success) or
 	// an error R-message (Rlerror/Rerror). Defensive type-check at the
 	// end catches a misbehaving server returning Rread (cached path)
 	// or some other unexpected R-type -- never panic, always return err.
 	if resp == rreadSentinelOK {
-		c.recordZCResponse(ctx, proto.TypeTread, elapsed, entry.n)
-		return entry.n, nil
+		c.recordZCResponse(ctx, proto.TypeTread, elapsed, n)
+		return n, nil
 	}
 	if err := toError(resp); err != nil {
 		c.recordError(span, err)
