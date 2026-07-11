@@ -122,7 +122,6 @@ The server core. Key files and their roles:
 | `filehandle.go` | `FileHandle` marker interface, `FileReader`, `FileWriter`, `FileReleaser`, `FileReaddirer`, `FileRawReaddirer` |
 | `composable.go` | `ReadOnlyFile`, `ReadOnlyDir` convenience types |
 | `helpers.go` | `Symlink`, `Device`, `StaticFS` helper node types; `QIDGenerator`, `PathQID` |
-| `dirent.go` | `EncodeDirents()` -- packs `[]Dirent` into wire-format bytes |
 | `qid.go` | `QIDGenerator` (atomic counter), `PathQID` (FNV-1a deterministic), `nodeQID` resolution |
 | `errors.go` | Sentinel errors: `ErrFidInUse`, `ErrFidNotFound`, `ErrNotNegotiated`, `ErrMsizeTooSmall` |
 

@@ -468,7 +468,7 @@ func (c *conn) readdirSimple(ctx context.Context, fs *fidState, m *p9l.Treaddir,
 	// Borrow buffer from pool; wrapper Release() returns it after encode.
 	bufPtr := bufpool.GetMsgBuf(int(m.Count))
 	buf := (*bufPtr)[:m.Count]
-	n, _ := EncodeDirentsInto(buf, view)
+	n, _ := proto.EncodeDirentsInto(buf, view)
 
 	return &pooledRreaddir{Rreaddir: p9l.Rreaddir{Data: buf[:n]}, bufPtr: bufPtr}
 }

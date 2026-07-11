@@ -1,31 +1,29 @@
-package server
+package proto
 
 import (
 	"bytes"
 	"encoding/binary"
 	"testing"
-
-	"github.com/dotwaffle/ninep/proto"
 )
 
 func TestEncodeDirentsInto_SkipsOversizedName(t *testing.T) {
 	t.Parallel()
 
-	huge := proto.Dirent{QID: proto.QID{Path: 1}, Type: 4, Name: string(make([]byte, 0x10000))}
-	ok := proto.Dirent{QID: proto.QID{Path: 2}, Type: 8, Name: "normal"}
+	huge := Dirent{QID: QID{Path: 1}, Type: 4, Name: string(make([]byte, 0x10000))}
+	ok := Dirent{QID: QID{Path: 2}, Type: 8, Name: "normal"}
 
 	dst := make([]byte, 1<<20)
-	n, count := EncodeDirentsInto(dst, []proto.Dirent{huge, ok})
+	n, count := EncodeDirentsInto(dst, []Dirent{huge, ok})
 	if count != 1 {
 		t.Fatalf("count = %d, want 1 (oversized name skipped)", count)
 	}
 
 	// Only the normal entry is encoded; its 2-byte name length must be exact.
-	const nameLenOff = proto.QIDSize + 8 + 1
+	const nameLenOff = QIDSize + 8 + 1
 	if gotLen := binary.LittleEndian.Uint16(dst[nameLenOff:]); int(gotLen) != len("normal") {
 		t.Fatalf("encoded name length = %d, want %d", gotLen, len("normal"))
 	}
-	if want := proto.QIDSize + 8 + 1 + 2 + len("normal"); n != want {
+	if want := QIDSize + 8 + 1 + 2 + len("normal"); n != want {
 		t.Fatalf("encoded bytes = %d, want %d", n, want)
 	}
 }
@@ -33,9 +31,9 @@ func TestEncodeDirentsInto_SkipsOversizedName(t *testing.T) {
 func TestEncodeDirentsSingle(t *testing.T) {
 	t.Parallel()
 
-	dirents := []proto.Dirent{
+	dirents := []Dirent{
 		{
-			QID:    proto.QID{Type: proto.QTFILE, Path: 42, Version: 1},
+			QID:    QID{Type: QTFILE, Path: 42, Version: 1},
 			Offset: 1,
 			Type:   0,
 			Name:   "hello",
@@ -57,8 +55,8 @@ func TestEncodeDirentsSingle(t *testing.T) {
 	// QID: type[1] + version[4] + path[8]
 	var qidType uint8
 	_ = binary.Read(r, binary.LittleEndian, &qidType)
-	if qidType != uint8(proto.QTFILE) {
-		t.Errorf("qid type = %d, want %d", qidType, proto.QTFILE)
+	if qidType != uint8(QTFILE) {
+		t.Errorf("qid type = %d, want %d", qidType, QTFILE)
 	}
 	var qidVersion uint32
 	_ = binary.Read(r, binary.LittleEndian, &qidVersion)
@@ -105,10 +103,10 @@ func TestEncodeDirentsSingle(t *testing.T) {
 func TestEncodeDirentsMultiple(t *testing.T) {
 	t.Parallel()
 
-	dirents := []proto.Dirent{
-		{QID: proto.QID{Type: proto.QTFILE, Path: 1}, Offset: 1, Type: 0, Name: "a"},
-		{QID: proto.QID{Type: proto.QTDIR, Path: 2}, Offset: 2, Type: 4, Name: "bb"},
-		{QID: proto.QID{Type: proto.QTFILE, Path: 3}, Offset: 3, Type: 0, Name: "ccc"},
+	dirents := []Dirent{
+		{QID: QID{Type: QTFILE, Path: 1}, Offset: 1, Type: 0, Name: "a"},
+		{QID: QID{Type: QTDIR, Path: 2}, Offset: 2, Type: 4, Name: "bb"},
+		{QID: QID{Type: QTFILE, Path: 3}, Offset: 3, Type: 0, Name: "ccc"},
 	}
 
 	data, count := EncodeDirents(dirents, 4096)
@@ -125,10 +123,10 @@ func TestEncodeDirentsMultiple(t *testing.T) {
 func TestEncodeDirentsMaxBytesPartial(t *testing.T) {
 	t.Parallel()
 
-	dirents := []proto.Dirent{
-		{QID: proto.QID{Path: 1}, Offset: 1, Type: 0, Name: "a"},   // 25 bytes
-		{QID: proto.QID{Path: 2}, Offset: 2, Type: 0, Name: "bb"},  // 26 bytes
-		{QID: proto.QID{Path: 3}, Offset: 3, Type: 0, Name: "ccc"}, // 27 bytes
+	dirents := []Dirent{
+		{QID: QID{Path: 1}, Offset: 1, Type: 0, Name: "a"},   // 25 bytes
+		{QID: QID{Path: 2}, Offset: 2, Type: 0, Name: "bb"},  // 26 bytes
+		{QID: QID{Path: 3}, Offset: 3, Type: 0, Name: "ccc"}, // 27 bytes
 	}
 
 	// Only enough room for first two entries (25+26=51).
@@ -156,9 +154,9 @@ func TestEncodeDirentsEmpty(t *testing.T) {
 func TestEncodeDirentsRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	dirents := []proto.Dirent{
-		{QID: proto.QID{Type: proto.QTDIR, Path: 100, Version: 5}, Offset: 1, Type: 4, Name: "docs"},
-		{QID: proto.QID{Type: proto.QTFILE, Path: 200, Version: 0}, Offset: 2, Type: 0, Name: "README.md"},
+	dirents := []Dirent{
+		{QID: QID{Type: QTDIR, Path: 100, Version: 5}, Offset: 1, Type: 4, Name: "docs"},
+		{QID: QID{Type: QTFILE, Path: 200, Version: 0}, Offset: 2, Type: 0, Name: "README.md"},
 	}
 
 	data, count := EncodeDirents(dirents, 4096)

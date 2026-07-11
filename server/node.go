@@ -75,7 +75,7 @@ type NodeSetattrer interface {
 // The server handles offset tracking and dirent packing per-fid.
 type NodeReaddirer interface {
 	// Readdir returns all directory entries. The server caches and packs
-	// them into Rreaddir responses using EncodeDirents.
+	// them into Rreaddir responses using proto.EncodeDirents.
 	Readdir(ctx context.Context) ([]proto.Dirent, error)
 }
 

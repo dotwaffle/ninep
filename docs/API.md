@@ -454,12 +454,12 @@ Callers MUST NOT mutate a `ConnInfo` returned from `ConnFromContext` -- the same
 
 ---
 
-## Dirent Encoding (`server/dirent.go`)
+## Dirent Encoding (`proto/dirent.go`)
 
 ```go
 // EncodeDirents packs dirents into bytes fitting within maxBytes.
 // Returns the packed bytes and the number of entries that fit.
-func EncodeDirents(dirents []proto.Dirent, maxBytes uint32) ([]byte, int)
+func proto.EncodeDirents(dirents []proto.Dirent, maxBytes uint32) ([]byte, int)
 ```
 
 Wire format per entry: `qid[13] + offset[8] + type[1] + name[s]` (where `name[s]` = `len[2] + name_bytes`). The returned slice is a freshly-allocated copy-out -- safe to retain past the call boundary.

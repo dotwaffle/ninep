@@ -1,9 +1,7 @@
 package client
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io/fs"
 	"os"
@@ -65,8 +63,8 @@ func (f *File) readDir(ctx context.Context, n int) ([]os.DirEntry, error) {
 			return entries, nil
 		}
 
-		parsed, _, derr := parseDirents(data)
-		// parseDirents produces proto.Dirent values whose Name is an
+		parsed, derr := proto.ParseDirents(data)
+		// ParseDirents produces proto.Dirent values whose Name is an
 		// owned string (string(bytes) copies). Safe to drop resp now.
 		putCachedRMsg(resp)
 		if derr != nil {
@@ -99,84 +97,6 @@ func (f *File) readDir(ctx context.Context, n int) ([]os.DirEntry, error) {
 			return entries, fmt.Errorf("client: readdir cursor did not advance past offset %d", reqOffset)
 		}
 	}
-}
-
-// parseDirents decodes a packed Rreaddir.Data byte slice into a slice
-// of proto.Dirent values plus the Offset of the last decoded entry
-// (which becomes the next Treaddir's Offset cursor).
-//
-// Packed layout per 9P2000.L (inverse of server/dirent.go EncodeDirents):
-//
-//	QID[13]       = type[1] + version[4] + path[8]
-//	Offset[8]     = little-endian uint64 (server-provided cursor)
-//	Type[1]       = Linux DT_* dirent type byte
-//	Name[s]       = len[2] + bytes[len]    (little-endian uint16 length prefix)
-//
-// Bounds-checked at every field extraction. Returns the partial slice
-// on decode error so the caller can surface whatever entries arrived
-// before the corruption.
-func parseDirents(data []byte) ([]proto.Dirent, uint64, error) {
-	const minEntrySize = 13 + 8 + 1 + 2 // QID + Offset + Type + NameLen
-	out := make([]proto.Dirent, 0, 8)
-	br := bytes.NewReader(data)
-	var lastOffset uint64
-	for br.Len() > 0 {
-		if br.Len() < minEntrySize {
-			return out, lastOffset, fmt.Errorf("client: truncated dirent header (%d bytes left, need %d)", br.Len(), minEntrySize)
-		}
-		var qid proto.QID
-		var typeBuf [1]byte
-		if _, err := br.Read(typeBuf[:]); err != nil {
-			return out, lastOffset, fmt.Errorf("client: dirent qid type: %w", err)
-		}
-		qid.Type = proto.QIDType(typeBuf[0])
-
-		var verBuf [4]byte
-		if _, err := br.Read(verBuf[:]); err != nil {
-			return out, lastOffset, fmt.Errorf("client: dirent qid version: %w", err)
-		}
-		qid.Version = binary.LittleEndian.Uint32(verBuf[:])
-
-		var pathBuf [8]byte
-		if _, err := br.Read(pathBuf[:]); err != nil {
-			return out, lastOffset, fmt.Errorf("client: dirent qid path: %w", err)
-		}
-		qid.Path = binary.LittleEndian.Uint64(pathBuf[:])
-
-		var offBuf [8]byte
-		if _, err := br.Read(offBuf[:]); err != nil {
-			return out, lastOffset, fmt.Errorf("client: dirent offset: %w", err)
-		}
-		entryOffset := binary.LittleEndian.Uint64(offBuf[:])
-
-		var dtypeBuf [1]byte
-		if _, err := br.Read(dtypeBuf[:]); err != nil {
-			return out, lastOffset, fmt.Errorf("client: dirent type byte: %w", err)
-		}
-		entryType := dtypeBuf[0]
-
-		var nameLenBuf [2]byte
-		if _, err := br.Read(nameLenBuf[:]); err != nil {
-			return out, lastOffset, fmt.Errorf("client: dirent name len: %w", err)
-		}
-		nameLen := binary.LittleEndian.Uint16(nameLenBuf[:])
-		if int(nameLen) > br.Len() {
-			return out, lastOffset, fmt.Errorf("client: dirent name len %d exceeds remaining %d bytes", nameLen, br.Len())
-		}
-		nameBuf := make([]byte, nameLen)
-		if _, err := br.Read(nameBuf); err != nil {
-			return out, lastOffset, fmt.Errorf("client: dirent name: %w", err)
-		}
-
-		out = append(out, proto.Dirent{
-			QID:    qid,
-			Offset: entryOffset,
-			Type:   entryType,
-			Name:   string(nameBuf),
-		})
-		lastOffset = entryOffset
-	}
-	return out, lastOffset, nil
 }
 
 // direntEntry wraps a proto.Dirent so it satisfies [os.DirEntry]. Name

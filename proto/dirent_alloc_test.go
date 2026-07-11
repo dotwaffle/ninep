@@ -1,10 +1,8 @@
-package server
+package proto
 
 import (
 	"strconv"
 	"testing"
-
-	"github.com/dotwaffle/ninep/proto"
 )
 
 // TestEncodeDirents_ZeroAllocs pins the allocation budget for
@@ -15,16 +13,16 @@ import (
 // the backing slice.
 //
 // The pool's pre-grown capacity (PoolMaxBufSize = 128KB) absorbs the
-// entire pack loop without a single grow, and the proto.Write* fast
+// entire pack loop without a single grow, and the Write* fast
 // path drives per-field allocs to zero. Only the copy-out slice
 // remains.
 func TestEncodeDirents_ZeroAllocs(t *testing.T) {
-	dirents := make([]proto.Dirent, 100)
+	dirents := make([]Dirent, 100)
 	for i := range dirents {
-		dirents[i] = proto.Dirent{
-			QID:    proto.QID{Type: proto.QTFILE, Version: 1, Path: uint64(i)},
+		dirents[i] = Dirent{
+			QID:    QID{Type: QTFILE, Version: 1, Path: uint64(i)},
 			Offset: uint64(i + 1),
-			Type:   proto.DT_REG,
+			Type:   DT_REG,
 			Name:   "file" + strconv.Itoa(i),
 		}
 	}

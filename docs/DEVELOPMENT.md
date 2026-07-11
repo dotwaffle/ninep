@@ -96,7 +96,6 @@ ninep/
     helpers.go          Symlink, Device, StaticFS constructors (SymlinkTo, DeviceNode, etc.)
     qid.go              QIDGenerator and PathQID helper
     context.go          ConnInfo and ConnFromContext
-    dirent.go           EncodeDirents helper
     otel.go             OpenTelemetry middleware and connection-level instruments
     logging.go          NewTraceHandler (slog + OTel correlation), NewLoggingMiddleware
     doc.go              Package-level godoc
@@ -593,7 +592,7 @@ golangci-lint run ./...
 |--------|----------|---------|
 | `QIDGenerator` | `server/qid.go` | Monotonically increasing QID path values (atomic, concurrent-safe) |
 | `PathQID()` | `server/qid.go` | Deterministic QID from a path string via FNV-1a hashing |
-| `EncodeDirents()` | `server/dirent.go` | Pack `[]proto.Dirent` into wire bytes within a size limit |
+| `proto.EncodeDirents()` | `proto/dirent.go` | Pack `[]proto.Dirent` into wire bytes within a size limit |
 | `ConnFromContext()` | `server/context.go` | Access `ConnInfo` (protocol, msize, remote addr) from node handlers |
 | `NewTraceHandler()` | `server/logging.go` | Wrap a `slog.Handler` with OTel trace/span ID injection |
 | `SymlinkTo()` | `server/helpers.go` | Create a symlink node from a QIDGenerator and target path |

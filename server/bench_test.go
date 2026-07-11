@@ -439,7 +439,7 @@ func BenchmarkEncodeDirents(b *testing.B) {
 			const maxBytes uint32 = 65536
 			b.ReportAllocs()
 			for b.Loop() {
-				_, _ = EncodeDirents(dirents, maxBytes)
+				_, _ = proto.EncodeDirents(dirents, maxBytes)
 			}
 		})
 	}

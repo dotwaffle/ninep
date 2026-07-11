@@ -107,6 +107,9 @@ jobs:
           - name: p9u-codec
             target: FuzzCodecRoundTrip
             pkg: ./proto/p9u/
+          - name: dirent-codec
+            target: FuzzDirentRoundTrip
+            pkg: ./proto/
           - name: client-lock
             target: FuzzClientLock
             pkg: ./client/
