@@ -134,9 +134,6 @@ type Lock struct {
 // Protocol Safety Warning: 9P2000.L locks are tied to the fid. Clunking
 // the fid releases all locks held via that fid.
 func (f *File) Lock(ctx context.Context, lt LockType) error {
-	if err := f.conn.requireDialect(protocolL, "Lock"); err != nil {
-		return err
-	}
 	schedule := f.conn.lockSchedule()
 	r := f.conn.Raw()
 	procID := uint32(os.Getpid())
@@ -192,9 +189,6 @@ func (f *File) unlockCleanup(procID uint32) {
 //
 // Requires 9P2000.L; returns a wrapped [ErrNotSupported] on a .u Conn.
 func (f *File) Unlock(ctx context.Context) error {
-	if err := f.conn.requireDialect(protocolL, "Unlock"); err != nil {
-		return err
-	}
 	_, err := f.conn.Raw().Tlock(ctx, f.fid, proto.LockTypeUnlck,
 		0, 0, 0, uint32(os.Getpid()), "")
 	return err
@@ -212,9 +206,6 @@ func (f *File) Unlock(ctx context.Context) error {
 // Requires 9P2000.L; returns (false, wrapped [ErrNotSupported]) on a
 // .u Conn.
 func (f *File) TryLock(ctx context.Context, lt LockType) (bool, error) {
-	if err := f.conn.requireDialect(protocolL, "TryLock"); err != nil {
-		return false, err
-	}
 	status, err := f.conn.Raw().Tlock(ctx, f.fid, proto.LockType(lt),
 		0, 0, 0, uint32(os.Getpid()), "")
 	if err != nil {
@@ -244,9 +235,6 @@ func (f *File) TryLock(ctx context.Context, lt LockType) (bool, error) {
 // Requires 9P2000.L; returns (nil, wrapped [ErrNotSupported]) on a
 // .u Conn.
 func (f *File) GetLock(ctx context.Context, lt LockType) (*Lock, error) {
-	if err := f.conn.requireDialect(protocolL, "GetLock"); err != nil {
-		return nil, err
-	}
 	rr, err := f.conn.Raw().Tgetlock(ctx, f.fid, proto.LockType(lt),
 		0, 0, uint32(os.Getpid()), "")
 	if err != nil {

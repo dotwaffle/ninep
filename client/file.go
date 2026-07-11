@@ -352,10 +352,7 @@ func (f *File) WriteCtx(ctx context.Context, p []byte) (int, error) {
 		}
 		n, err := f.conn.twrite(ctx, f.fid, uint64(f.offset), chunk)
 		if err != nil {
-			if total > 0 {
-				return total, err
-			}
-			return 0, err
+			return total, err
 		}
 		total += int(n)
 		f.offset += int64(n)
@@ -470,10 +467,7 @@ func (f *File) ReadAtCtx(ctx context.Context, p []byte, off int64) (int, error) 
 		chunk := p[total : total+int(count)]
 		n, err := f.conn.readAtZeroCopy(ctx, f.fid, uint64(off)+uint64(total), count, chunk)
 		if err != nil {
-			if total > 0 {
-				return total, err
-			}
-			return 0, err
+			return total, err
 		}
 		if n == 0 {
 			return total, io.EOF
@@ -565,10 +559,7 @@ func (f *File) WriteAtCtx(ctx context.Context, p []byte, off int64) (int, error)
 		}
 		n, err := f.conn.twrite(ctx, f.fid, uint64(off)+uint64(total), chunk)
 		if err != nil {
-			if total > 0 {
-				return total, err
-			}
-			return 0, err
+			return total, err
 		}
 		total += int(n)
 		if int(n) < len(chunk) {
