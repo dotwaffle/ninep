@@ -844,7 +844,7 @@ func (c *conn) handleReVersion(_ context.Context, tag proto.Tag, body []byte) {
 	// ensures no handler goroutine reads c.msize or c.protocol while we
 	// are updating them.
 	c.inflight.cancelAll()
-	drainCtx, drainCancel := context.WithTimeout(context.Background(), cleanupDeadline)
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), c.server.drainTimeout)
 	defer drainCancel()
 	if err := c.inflight.waitWithDeadline(drainCtx); err != nil {
 		// Drain failed: at least one handler ignored ctx cancellation.

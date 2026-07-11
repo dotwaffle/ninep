@@ -269,19 +269,85 @@ func TestDisconnectCleanup_DrainDeadline(t *testing.T) {
 	// Close client side.
 	_ = client.Close()
 
-	// Cleanup should complete within cleanupDeadline + margin.
+	// Cleanup should complete within defaultDrainTimeout + margin.
 	// The stuck handler ignores context cancellation, so cleanup uses the deadline.
 	start := time.Now()
 	select {
 	case <-done:
 		elapsed := time.Since(start)
-		// Should complete roughly at cleanupDeadline (5s), not hang forever.
+		// Should complete roughly at defaultDrainTimeout (5s), not hang forever.
 		// Allow generous margin for CI variability.
 		if elapsed > 10*time.Second {
-			t.Errorf("cleanup took %v, expected ~%v", elapsed, cleanupDeadline)
+			t.Errorf("cleanup took %v, expected ~%v", elapsed, defaultDrainTimeout)
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("cleanup did not complete within deadline + margin")
+	}
+
+	// Unblock the stuck handler so the goroutine can exit.
+	close(root.block)
+}
+
+// TestDisconnectCleanup_WithDrainTimeout verifies WithDrainTimeout shortens
+// the inflight drain bound: with a handler that ignores cancellation and a
+// 200ms drain timeout, cleanup completes well before the 5s default.
+func TestDisconnectCleanup_WithDrainTimeout(t *testing.T) {
+	t.Parallel()
+
+	rootQID := proto.QID{Type: proto.QTDIR, Path: 1}
+	root := newStuckNode(rootQID)
+
+	client, server := net.Pipe()
+	defer func() { _ = server.Close() }()
+
+	srv := New(root,
+		WithMaxMsize(65536),
+		WithLogger(discardLogger()),
+		WithDrainTimeout(200*time.Millisecond),
+	)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.ServeConn(ctx, server)
+	}()
+
+	sendTversion(t, client, 65536, "9P2000.L")
+	_ = readRversion(t, client)
+
+	sendMessage(t, client, 1, &proto.Tattach{
+		Fid:   0,
+		Afid:  proto.NoFid,
+		Uname: "test",
+	})
+	readResponse(t, client)
+
+	// Send a request that will be stuck (ignores ctx cancellation).
+	sendMessage(t, client, 10, &proto.Twalk{
+		Fid:    0,
+		NewFid: 1,
+		Names:  []string{"child"},
+	})
+
+	select {
+	case <-root.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not start")
+	}
+
+	_ = client.Close()
+
+	start := time.Now()
+	select {
+	case <-done:
+		if elapsed := time.Since(start); elapsed >= defaultDrainTimeout {
+			t.Errorf("cleanup took %v, want well under the %v default", elapsed, defaultDrainTimeout)
+		}
+	case <-time.After(defaultDrainTimeout):
+		t.Fatal("cleanup did not finish before the default drain timeout; WithDrainTimeout not honored")
 	}
 
 	// Unblock the stuck handler so the goroutine can exit.

@@ -199,11 +199,11 @@ func TestTversion_DrainTimeout(t *testing.T) {
 		t.Fatalf("write Tversion: %v", err)
 	}
 
-	// Drain times out at cleanupDeadline (5s) because the slow read
+	// Drain times out at defaultDrainTimeout (5s) because the slow read
 	// handler ignores ctx.Done. The server then closes the connection
 	// rather than continuing into a state where stale tag-N responses
 	// could alias against a reused tag space. Reads should fail (EOF or
-	// pipe-closed) shortly after cleanupDeadline; we should not see an
+	// pipe-closed) shortly after defaultDrainTimeout; we should not see an
 	// Rversion for tag 200.
 	for {
 		_, mtype, err := stressReadMsg(c1, nil)
@@ -237,7 +237,7 @@ func (n *slowReadNode) Read(ctx context.Context, buf []byte, offset uint64) (int
 	if n.started != nil {
 		close(n.started)
 	}
-	// Ignore ctx.Done() to force the server to wait for cleanupDeadline.
+	// Ignore ctx.Done() to force the server to wait for defaultDrainTimeout.
 	time.Sleep(10 * time.Second)
 	return 0, nil
 }

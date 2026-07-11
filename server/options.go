@@ -108,6 +108,21 @@ func WithAttacher(a Attacher) Option {
 	return func(s *Server) { s.attacher = a }
 }
 
+// WithDrainTimeout sets the maximum time the server waits for inflight
+// request handlers to finish during connection cleanup and mid-session
+// Tversion re-negotiation. Handlers that ignore context cancellation past
+// the deadline are logged and orphaned (cleanup) or cause the connection to
+// be closed (re-negotiation). Values less than or equal to zero are ignored,
+// leaving the default in place. Default: 5s.
+func WithDrainTimeout(d time.Duration) Option {
+	return func(s *Server) {
+		if d <= 0 {
+			return
+		}
+		s.drainTimeout = d
+	}
+}
+
 // WithIdleTimeout sets the per-connection idle timeout. When d > 0, the server
 // resets read and write deadlines on the underlying net.Conn before each I/O
 // operation. A connection that sees no activity for the duration is closed.

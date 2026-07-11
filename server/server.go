@@ -34,6 +34,7 @@ type Server struct {
 	maxFids          int           // 0 = unlimited (per-connection cap)
 	idleTimeout      time.Duration // 0 = no timeout (GO-SEC-1)
 	handshakeTimeout time.Duration // bounds the initial version handshake when idleTimeout is 0
+	drainTimeout     time.Duration // bounds inflight drain during cleanup and re-negotiation
 	logger           *slog.Logger
 	anames           map[string]Node
 	attacher         Attacher
@@ -64,6 +65,7 @@ func New(root Node, opts ...Option) *Server {
 		maxInflight:      64,
 		logger:           slog.New(NewTraceHandler(slog.Default().Handler())),
 		handshakeTimeout: defaultHandshakeTimeout,
+		drainTimeout:     defaultDrainTimeout,
 		// idleTimeout: 0 (zero value = no timeout)
 	}
 	for _, opt := range opts {

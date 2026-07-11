@@ -6,9 +6,16 @@ import (
 	"time"
 )
 
-// cleanupDeadline is the maximum time to wait for inflight requests to drain
-// during connection cleanup.
-const cleanupDeadline = 5 * time.Second
+// defaultDrainTimeout is the default maximum time to wait for inflight
+// requests to drain during connection cleanup and mid-session Tversion
+// re-negotiation. Configurable via WithDrainTimeout.
+const defaultDrainTimeout = 5 * time.Second
+
+// flushWaitDeadline bounds how long a Tflush handler waits for the flushed
+// request's response to reach the wire before giving up and closing the
+// connection. Distinct from the drain timeout: this is a per-request bound
+// on a live connection, not a shutdown bound.
+const flushWaitDeadline = 5 * time.Second
 
 // cleanup performs orderly connection shutdown for the recv-mutex worker
 // model:
@@ -30,7 +37,7 @@ func (c *conn) cleanup() {
 	// Step 2: Wait for handlers to finish with deadline. If a handler
 	// ignores ctx.Done() (e.g. a stuck syscall), we log and move on -- the
 	// same contract as before (TestDisconnectCleanup_DrainDeadline).
-	deadlineCtx, deadlineCancel := context.WithTimeout(context.Background(), cleanupDeadline)
+	deadlineCtx, deadlineCancel := context.WithTimeout(context.Background(), c.server.drainTimeout)
 	defer deadlineCancel()
 
 	drained := c.inflight.waitWithDeadline(deadlineCtx) == nil

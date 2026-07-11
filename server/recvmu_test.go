@@ -264,10 +264,10 @@ func TestRecvMuWorkerLifecycle(t *testing.T) {
 		_ = client.Close()
 
 		// Wait for serve to exit (cleanup runs, then return). Bound at
-		// cleanupDeadline + slack.
+		// defaultDrainTimeout + slack.
 		select {
 		case <-serveDone:
-		case <-time.After(cleanupDeadline + 5*time.Second):
+		case <-time.After(defaultDrainTimeout + 5*time.Second):
 			t.Fatal("serve did not exit after disconnect")
 		}
 
@@ -511,7 +511,7 @@ func TestRecvMuWorkerLifecycle(t *testing.T) {
 		_ = client.Close()
 		select {
 		case <-serveDone:
-		case <-time.After(cleanupDeadline + 5*time.Second):
+		case <-time.After(defaultDrainTimeout + 5*time.Second):
 			t.Fatal("serve did not exit")
 		}
 	})
@@ -653,7 +653,7 @@ func TestHandleRequest_TversionHoldsRecvMuAcrossMutation(t *testing.T) {
 	_ = client.Close()
 	select {
 	case <-serveDone:
-	case <-time.After(cleanupDeadline + 5*time.Second):
+	case <-time.After(defaultDrainTimeout + 5*time.Second):
 		t.Fatal("serve did not exit")
 	}
 }

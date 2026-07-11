@@ -326,6 +326,7 @@ All options are passed to `server.New(root, opts...)`.
 | `WithAnames` | `func(m map[string]Node) Option` | `nil` | Vhost-style attach dispatch by aname |
 | `WithAttacher` | `func(a Attacher) Option` | `nil` | Custom attach handler; overrides root and aname map |
 | `WithIdleTimeout` | `func(d time.Duration) Option` | `0` (disabled) | Per-connection idle timeout |
+| `WithDrainTimeout` | `func(d time.Duration) Option` | `5s` | Inflight drain bound during cleanup and re-negotiation |
 | `WithMiddleware` | `func(mw ...Middleware) Option` | `nil` | Append middleware to dispatch chain |
 | `WithTracer` | `func(tp trace.TracerProvider) Option` | `nil` | OTel tracing; auto-prepends tracing middleware |
 | `WithMeter` | `func(mp metric.MeterProvider) Option` | `nil` | OTel metrics; auto-prepends metrics middleware |

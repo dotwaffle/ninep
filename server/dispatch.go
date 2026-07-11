@@ -411,7 +411,7 @@ func removeViaInodeTree(ctx context.Context, node Node) error {
 // still returned regardless of whether the tag was found.
 //
 // Returns nil (and no response is sent) when the flushed handler does not
-// finish within the cleanup deadline, or the connection is shutting down; in
+// finish within flushWaitDeadline, or the connection is shutting down; in
 // the deadline case the connection is closed, mirroring the Tversion drain
 // fallback, rather than risk the tag-reuse aliasing.
 func (c *conn) handleFlush(ctx context.Context, tf *proto.Tflush) proto.Message {
@@ -424,7 +424,7 @@ func (c *conn) handleFlush(ctx context.Context, tf *proto.Tflush) proto.Message 
 		return &proto.Rflush{}
 	case <-ctx.Done():
 		return nil
-	case <-time.After(cleanupDeadline):
+	case <-time.After(flushWaitDeadline):
 		c.logger.Warn("flush: timed out waiting for flushed request; closing connection",
 			slog.Uint64("oldtag", uint64(tf.OldTag)),
 		)
