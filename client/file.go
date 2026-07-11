@@ -108,9 +108,14 @@ func (f *File) Fid() proto.Fid {
 	return f.fid
 }
 
-// Close clunks the fid on the server, releases the fid to the
-// allocator's reuse cache, and marks the File as closed. Subsequent
-// Close calls return nil without touching the wire.
+// Close clunks the fid on the server and marks the File as closed.
+// Subsequent Close calls return nil without touching the wire. The fid
+// number returns to the allocator's reuse cache only when the server's
+// view is known to be clear: Rclunk landed, the server answered with an
+// error (the fid is clunked even then), or the connection is down. After
+// a flush or deadline expiry the number is leaked instead -- reusing it
+// against a server that may still hold the fid would alias a new
+// caller's Twalk onto the old binding.
 //
 // The error from the first Close (if Tclunk returned one) is returned
 // to THAT caller and captured into f.closeErr for diagnostics;
@@ -137,10 +142,17 @@ func (f *File) Close() error {
 		ctx, cancel := context.WithTimeout(context.Background(), cleanupDeadline)
 		defer cancel()
 		err := f.conn.Clunk(ctx, f.fid)
-		// Release AFTER Clunk returns: the Rclunk has landed at this
-		// point, so the server-view is cleared and the allocator can
-		// safely hand this fid to another caller.
-		f.conn.fids.release(f.fid)
+		// Release only when the server-side fid is known to be gone:
+		// Rclunk landed (nil), the server answered with an error (per
+		// clunk(5) the fid is clunked even then), or the connection is
+		// down and every fid died with it. A flush or deadline expiry
+		// leaves the server's view unknown -- the Tclunk may never have
+		// been processed -- so the number is leaked rather than handed
+		// to a new caller whose Twalk would alias the still-bound fid.
+		var srvErr *Error
+		if err == nil || errors.As(err, &srvErr) || errors.Is(err, ErrClosed) {
+			f.conn.fids.release(f.fid)
+		}
 		f.closeErr = err
 	})
 	if !first {
