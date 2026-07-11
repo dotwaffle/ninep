@@ -455,12 +455,6 @@ func (c *conn) handleRequest(ctx context.Context) {
 	defer c.workerCount.Add(-1)
 
 	for {
-		// Per-iteration scratch. Must be locals (not on conn) because
-		// multiple goroutines now run this loop. bodyReader is reused
-		// across iterations via Reset below; the 4-byte size header is
-		// now owned by wire.ReadSize's own stack-local.
-		var bodyReader bytes.Reader
-
 		// recvIdle++ BEFORE Lock; recvIdle-- AFTER Lock. This makes
 		// "recvIdle == 0" the precise predicate "no sibling is parked
 		// waiting to take over the wire" (p9 verbatim).
@@ -474,130 +468,19 @@ func (c *conn) handleRequest(ctx context.Context) {
 			return
 		}
 
-		// Per-iteration read deadline for idle timeout. Inside recvMu so
-		// only one goroutine ever touches the read deadline at a time.
-		if c.server.idleTimeout > 0 {
-			if err := c.nc.SetReadDeadline(time.Now().Add(c.server.idleTimeout)); err != nil {
-				c.logger.Warn("failed to set read deadline", slog.Any("error", err))
-				c.recvShutdown = true
-				c.recvMu.Unlock()
-				c.signalRecvShutdown()
-				return
-			}
-		}
-
-		// Read 4-byte size header. wire.ReadSize returns a descriptive
-		// error when size < proto.HeaderSize; the shutdown path is
-		// identical to any other read error.
-		size, err := wire.ReadSize(c.nc)
-		if err != nil {
-			if !isExpectedCloseError(err) {
-				c.logger.Debug("read error", slog.Any("error", err))
-			}
-			c.recvShutdown = true
-			c.recvMu.Unlock()
-			c.signalRecvShutdown()
-			return
-		}
-		// msize validation is server policy and lives HERE -- between the
-		// size-prefix read and the body allocation -- so a 4 GiB attacker
-		// size never causes a body buffer to be requested. Do not move
-		// this into internal/wire.
-		if size > c.msize {
-			c.logger.Warn("message exceeds msize",
-				slog.Uint64("size", uint64(size)),
-				slog.Uint64("msize", uint64(c.msize)),
-			)
-			c.recvShutdown = true
-			c.recvMu.Unlock()
-			c.signalRecvShutdown()
+		// readFrameLocked returns with recvMu still held on success; on
+		// failure it has already shut the receive path down and released
+		// the lock.
+		f, ok := c.readFrameLocked()
+		if !ok {
 			return
 		}
 
-		// Read body: type[1] + tag[2] + payload. bufpool.GetMsgBuf
-		// returns a bucket-sized slice; we slice to the exact body length
-		// so PutMsgBuf's bucket-cap match succeeds on release. wire.ReadBody
-		// fills exactly len(b) bytes and MUST NOT resize b.
-		bufPtr := bufpool.GetMsgBuf(int(size - 4))
-		b := (*bufPtr)[:size-4]
-		if err := wire.ReadBody(c.nc, b); err != nil {
-			bufpool.PutMsgBuf(bufPtr)
-			if !isExpectedCloseError(err) {
-				c.logger.Debug("read body error", slog.Any("error", err))
-			}
-			c.recvShutdown = true
-			c.recvMu.Unlock()
-			c.signalRecvShutdown()
-			return
-		}
-
-		// Parse header.
-		msgType := proto.MessageType(b[0])
-		tag := proto.Tag(binary.LittleEndian.Uint16(b[1:3]))
-
-		// Spawn-replacement decision: only if a sibling is NOT already
-		// parked on recvMu AND we are below the maxInflight cap. Skip on
-		// Tversion -- handleReVersion drains all inflight and mutates
-		// c.msize/c.protocol; a sibling reading with the old protocol
-		// mid-renegotiation would corrupt the stream.
-		spawnReplacement := false
-		if msgType != proto.TypeTversion &&
-			c.recvIdle.Load() == 0 &&
-			c.workerCount.Load() < int32(c.server.maxInflight) {
-			spawnReplacement = true
-			c.workerCount.Add(1)
-			c.recvWG.Add(1)
-		}
-
-		// Decode INSIDE recvMu. Branches are mutually exclusive
-		// (if/else if/else): unknownType skips decode entirely; Twrite
-		// defers buf release (Data aliases buf); other types copy via
-		// DecodeFrom and release the buf immediately.
-		var msg proto.Message
-		var deferredBufPtr *[]byte
-		var decodeErr error
-		var unknownType bool
-
-		msg, newMsgErr := c.newMessage(msgType)
-		if newMsgErr != nil && msgType != proto.TypeTversion {
-			// Unknown message type. Do NOT touch msg (it is nil).
-			// Release the buf here; do NOT enter any decode branch.
-			unknownType = true
-			bufpool.PutMsgBuf(bufPtr)
-		} else if msgType == proto.TypeTversion {
-			// Tversion is special: handleReVersion decodes its own body
-			// to avoid allocating a msg struct that it immediately
-			// throws away after draining inflight and clunking all fids.
-			//
-			// Keep bufPtr; it will be released in the Tversion block
-			// outside recvMu.
-		} else if tw, ok := msg.(*proto.Twrite); ok {
-			if err := tw.DecodeFromBuf(b[3:]); err != nil {
-				decodeErr = err
-				// Twrite decode failed before aliasing took effect:
-				// release buf now; the cached msg is returned in the
-				// decodeErr branch outside the lock.
-				bufpool.PutMsgBuf(bufPtr)
-			} else {
-				// Successful Twrite: m.Data aliases bufPtr; defer
-				// release to dispatchInline.
-				deferredBufPtr = bufPtr
-			}
-		} else {
-			bodyReader.Reset(b[3:])
-			if err := msg.DecodeFrom(&bodyReader); err != nil {
-				decodeErr = err
-			}
-			// DecodeFrom copied; safe to release immediately
-			// (regardless of decodeErr).
-			bufpool.PutMsgBuf(bufPtr)
-		}
-
-		if spawnReplacement {
+		if f.spawnReplacement {
 			go c.handleRequest(ctx)
 		}
 
-		if msgType == proto.TypeTversion {
+		if f.msgType == proto.TypeTversion {
 			// Keep recvMu held across the full re-negotiation
 			// choreography. Releasing it here (as a plain request would)
 			// lets an already-parked sibling acquire recvMu and read the
@@ -605,45 +488,32 @@ func (c *conn) handleRequest(ctx context.Context) {
 			// is still draining inflight and about to mutate those same
 			// fields below -- a data race between the sibling's read and
 			// this mutation.
-			c.handleReVersion(ctx, tag, b[3:])
+			c.handleReVersion(ctx, f.tag, f.body)
 			c.recvMu.Unlock()
-			bufpool.PutMsgBuf(bufPtr)
-			putCachedMsg(msg)
+			bufpool.PutMsgBuf(f.bufPtr)
+			putCachedMsg(f.msg)
 			continue
 		}
 		c.recvMu.Unlock()
 
 		// Outside recvMu from here on.
-		if unknownType {
+		if f.unknownType {
 			// msg is nil; nothing to release to msgcache.
-			c.sendError(tag, proto.ENOSYS)
+			c.sendError(f.tag, proto.ENOSYS)
 			continue
 		}
-		if decodeErr != nil {
+		if f.decodeErr != nil {
 			c.logger.Warn("decode error",
-				slog.String("type", msgType.String()),
-				slog.Any("error", decodeErr),
+				slog.String("type", f.msgType.String()),
+				slog.Any("error", f.decodeErr),
 			)
 			// Decode failures on the wire are fatal for this conn -- we
-			// cannot trust subsequent framing. Mirror the old behaviour:
-			// return after marking the connection shut down.
+			// cannot trust subsequent framing.
 			//
-			// msg is non-nil (newMsgErr was nil) and was NOT dispatched,
+			// msg is non-nil (newMessage succeeded) and was NOT dispatched,
 			// so we own it; return it to the cache before exiting.
-			putCachedMsg(msg)
-
-			// Set recvShutdown so siblings exit cleanly on next iter.
-			c.recvMu.Lock()
-			c.recvShutdown = true
-			c.recvMu.Unlock()
-			c.signalRecvShutdown()
-
-			// Closing nc fast-paths any sibling already inside a Read
-			// syscall out of it. recvShutdown alone only catches siblings
-			// at next Lock acquire. net.Conn.Close is idempotent (returns
-			// ErrClosed which we ignore); the redundant close is
-			// intentional belt-and-braces.
-			_ = c.nc.Close()
+			putCachedMsg(f.msg)
+			c.shutdownRecv()
 			return
 		}
 
@@ -654,7 +524,7 @@ func (c *conn) handleRequest(ctx context.Context) {
 		// inflight.start or dispatchInline for it. Mirror the old
 		// short-circuit explicitly here, AFTER recvMu unlock so a
 		// sibling can already be reading the next message.
-		if tf, ok := msg.(*proto.Tflush); ok {
+		if tf, ok := f.msg.(*proto.Tflush); ok {
 			// handleFlush blocks until the flushed request's response is
 			// written, then returns Rflush. It returns nil when the
 			// connection is closing or it had to close the connection after
@@ -662,13 +532,13 @@ func (c *conn) handleRequest(ctx context.Context) {
 			if resp := c.handleFlush(ctx, tf); resp != nil {
 				// sendResponseInline accepts a nil releaser; Rflush has no
 				// pooled buffers to release.
-				c.sendResponseInline(tag, resp, nil)
+				c.sendResponseInline(f.tag, resp, nil)
 			}
-			putCachedMsg(msg)
+			putCachedMsg(f.msg)
 			// No deferredBufPtr possible here (Tflush is not Twrite),
 			// but defensively release if non-nil.
-			if deferredBufPtr != nil {
-				bufpool.PutMsgBuf(deferredBufPtr)
+			if f.deferredBufPtr != nil {
+				bufpool.PutMsgBuf(f.deferredBufPtr)
 			}
 			continue
 		}
@@ -680,29 +550,195 @@ func (c *conn) handleRequest(ctx context.Context) {
 		rctx := getRequestCtx(ctx)
 		// Record the wire frame size so the OTel middleware can report
 		// request size without re-encoding the decoded message.
-		rctx.wireSize = size
-		if !c.inflight.start(tag, rctx) {
+		rctx.wireSize = f.size
+		if !c.inflight.start(f.tag, rctx) {
 			putRequestCtx(rctx)
-			if deferredBufPtr != nil {
-				bufpool.PutMsgBuf(deferredBufPtr)
+			if f.deferredBufPtr != nil {
+				bufpool.PutMsgBuf(f.deferredBufPtr)
 			}
-			putCachedMsg(msg)
+			putCachedMsg(f.msg)
 
 			c.logger.Warn("duplicate in-flight tag",
-				slog.Uint64("tag", uint64(tag)),
+				slog.Uint64("tag", uint64(f.tag)),
 			)
-			c.recvMu.Lock()
-			c.recvShutdown = true
-			c.recvMu.Unlock()
-			c.signalRecvShutdown()
-			_ = c.nc.Close()
+			c.shutdownRecv()
 			return
 		}
 
 		// Dispatch + send response inline (this folds in the work that
 		// was previously the worker's responsibility).
-		c.dispatchInline(rctx, tag, msg, deferredBufPtr)
+		c.dispatchInline(rctx, f.tag, f.msg, f.deferredBufPtr)
 	}
+}
+
+// recvFrame is one decoded request as produced by readFrameLocked. Exactly
+// one of three shapes comes back on success:
+//   - unknownType: msg is nil, no buffers held.
+//   - Tversion (msgType == proto.TypeTversion): body aliases bufPtr, which
+//     the caller must release after handleReVersion; msg is undecoded.
+//   - anything else: msg is decoded (or decodeErr is set); deferredBufPtr
+//     is non-nil only for Twrite, whose Data aliases it.
+type recvFrame struct {
+	size             uint32
+	msgType          proto.MessageType
+	tag              proto.Tag
+	msg              proto.Message
+	deferredBufPtr   *[]byte
+	bufPtr           *[]byte
+	body             []byte
+	decodeErr        error
+	unknownType      bool
+	spawnReplacement bool
+}
+
+// readFrameLocked reads and decodes one frame from the wire. The caller
+// must hold recvMu; on success the lock is STILL HELD when it returns (the
+// caller decides the unlock point -- Tversion re-negotiation must keep it
+// across handleReVersion). On failure it shuts the receive path down,
+// releases the lock, and returns ok=false.
+//
+// It also makes the spawn-replacement decision (recvFrame.spawnReplacement)
+// while the sibling-idle count is stable under the lock; the caller spawns
+// after decode so the new sibling never observes a half-read frame.
+func (c *conn) readFrameLocked() (recvFrame, bool) {
+	var f recvFrame
+
+	// Per-iteration read deadline for idle timeout. Inside recvMu so
+	// only one goroutine ever touches the read deadline at a time.
+	if c.server.idleTimeout > 0 {
+		if err := c.nc.SetReadDeadline(time.Now().Add(c.server.idleTimeout)); err != nil {
+			c.logger.Warn("failed to set read deadline", slog.Any("error", err))
+			c.shutdownRecvLocked()
+			return f, false
+		}
+	}
+
+	// Read 4-byte size header. wire.ReadSize returns a descriptive
+	// error when size < proto.HeaderSize; the shutdown path is
+	// identical to any other read error.
+	size, err := wire.ReadSize(c.nc)
+	if err != nil {
+		if !isExpectedCloseError(err) {
+			c.logger.Debug("read error", slog.Any("error", err))
+		}
+		c.shutdownRecvLocked()
+		return f, false
+	}
+	// msize validation is server policy and lives HERE -- between the
+	// size-prefix read and the body allocation -- so a 4 GiB attacker
+	// size never causes a body buffer to be requested. Do not move
+	// this into internal/wire.
+	if size > c.msize {
+		c.logger.Warn("message exceeds msize",
+			slog.Uint64("size", uint64(size)),
+			slog.Uint64("msize", uint64(c.msize)),
+		)
+		c.shutdownRecvLocked()
+		return f, false
+	}
+	f.size = size
+
+	// Read body: type[1] + tag[2] + payload. bufpool.GetMsgBuf
+	// returns a bucket-sized slice; we slice to the exact body length
+	// so PutMsgBuf's bucket-cap match succeeds on release. wire.ReadBody
+	// fills exactly len(b) bytes and MUST NOT resize b.
+	bufPtr := bufpool.GetMsgBuf(int(size - 4))
+	b := (*bufPtr)[:size-4]
+	if err := wire.ReadBody(c.nc, b); err != nil {
+		bufpool.PutMsgBuf(bufPtr)
+		if !isExpectedCloseError(err) {
+			c.logger.Debug("read body error", slog.Any("error", err))
+		}
+		c.shutdownRecvLocked()
+		return f, false
+	}
+
+	// Parse header.
+	f.msgType = proto.MessageType(b[0])
+	f.tag = proto.Tag(binary.LittleEndian.Uint16(b[1:3]))
+
+	// Spawn-replacement decision: only if a sibling is NOT already
+	// parked on recvMu AND we are below the maxInflight cap. Skip on
+	// Tversion -- handleReVersion drains all inflight and mutates
+	// c.msize/c.protocol; a sibling reading with the old protocol
+	// mid-renegotiation would corrupt the stream.
+	if f.msgType != proto.TypeTversion &&
+		c.recvIdle.Load() == 0 &&
+		c.workerCount.Load() < int32(c.server.maxInflight) {
+		f.spawnReplacement = true
+		c.workerCount.Add(1)
+		c.recvWG.Add(1)
+	}
+
+	// Decode INSIDE recvMu. Branches are mutually exclusive
+	// (if/else if/else): unknownType skips decode entirely; Twrite
+	// defers buf release (Data aliases buf); other types copy via
+	// DecodeFrom and release the buf immediately.
+	msg, newMsgErr := c.newMessage(f.msgType)
+	f.msg = msg
+	switch {
+	case newMsgErr != nil && f.msgType != proto.TypeTversion:
+		// Unknown message type. Do NOT touch msg (it is nil).
+		// Release the buf here; do NOT enter any decode branch.
+		f.unknownType = true
+		bufpool.PutMsgBuf(bufPtr)
+	case f.msgType == proto.TypeTversion:
+		// Tversion is special: handleReVersion decodes its own body
+		// to avoid allocating a msg struct that it immediately
+		// throws away after draining inflight and clunking all fids.
+		//
+		// Keep bufPtr; the caller releases it after handleReVersion.
+		f.bufPtr = bufPtr
+		f.body = b[3:]
+	default:
+		if tw, ok := msg.(*proto.Twrite); ok {
+			if err := tw.DecodeFromBuf(b[3:]); err != nil {
+				f.decodeErr = err
+				// Twrite decode failed before aliasing took effect:
+				// release buf now; the caller returns the cached msg on
+				// the decodeErr path outside the lock.
+				bufpool.PutMsgBuf(bufPtr)
+			} else {
+				// Successful Twrite: Data aliases bufPtr; defer
+				// release to dispatchInline.
+				f.deferredBufPtr = bufPtr
+			}
+			break
+		}
+		var bodyReader bytes.Reader
+		bodyReader.Reset(b[3:])
+		if err := msg.DecodeFrom(&bodyReader); err != nil {
+			f.decodeErr = err
+		}
+		// DecodeFrom copied; safe to release immediately
+		// (regardless of decodeErr).
+		bufpool.PutMsgBuf(bufPtr)
+	}
+
+	return f, true
+}
+
+// shutdownRecvLocked marks the receive path shut down and wakes the
+// cleanup goroutine. The caller must hold recvMu; it is released here.
+// Siblings observe recvShutdown at their next lock acquisition.
+func (c *conn) shutdownRecvLocked() {
+	c.recvShutdown = true
+	c.recvMu.Unlock()
+	c.signalRecvShutdown()
+}
+
+// shutdownRecv is shutdownRecvLocked for callers that do not hold recvMu.
+// It additionally closes the conn: recvShutdown alone only catches
+// siblings at their next lock acquisition, while closing nc fast-paths any
+// sibling already blocked inside a Read syscall. net.Conn.Close is
+// idempotent (returns ErrClosed, which is ignored); the redundant close is
+// intentional belt-and-braces.
+func (c *conn) shutdownRecv() {
+	c.recvMu.Lock()
+	c.recvShutdown = true
+	c.recvMu.Unlock()
+	c.signalRecvShutdown()
+	_ = c.nc.Close()
 }
 
 // dispatchInline runs one request through the middleware + dispatch chain
