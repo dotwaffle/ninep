@@ -21,7 +21,7 @@ import (
 )
 
 // skipOrFatal skips when err indicates the vsock loopback transport is
-// simply unavailable (module not loaded, AF_VSOCK unsupported, or the
+// unavailable (module not loaded, AF_VSOCK unsupported, or the
 // sandbox forbids it) and fails the test otherwise. On a CI runner with
 // `modprobe vsock_loopback` loaded this branch is never taken, so the
 // dedicated CI job asserts the tests are not skipped.

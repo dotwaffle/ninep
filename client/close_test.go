@@ -268,7 +268,7 @@ func TestClient_Ops_AfterClose(t *testing.T) {
 // surface.
 //
 // The assertion is: Close returns within (drainTimeout + 500ms grace) and
-// emits a log warning (we can't easily intercept logs without a custom
+// emits a log warning (we can't intercept logs without a custom
 // handler, so the primary assertion is timing).
 func TestClient_Close_DrainTimeout(t *testing.T) {
 	t.Parallel()

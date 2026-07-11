@@ -18,7 +18,7 @@ import (
 )
 
 // TestReadLoop_DispatchesRlerrorToRegisteredTag exercises the full
-// register → read-loop-decode → inflight.deliver → receive path for a
+// register -> read-loop-decode -> inflight.deliver -> receive path for a
 // known R-message type. We Dial against a mock server (so we own the
 // wire), then manually register a tag on the Conn's inflight, then have
 // the mock server write a tagged Rlerror frame. The test receives on the
@@ -348,7 +348,7 @@ func TestNewRMessage_CrossDialect_Rejects(t *testing.T) {
 	t.Parallel()
 
 	cL := newGateConn(t, protocolL)
-	// Rstat and Rwstat are .u-only — must error on .L.
+	// Rstat and Rwstat are .u-only -- must error on .L.
 	for _, mt := range []proto.MessageType{proto.TypeRstat, proto.TypeRwstat} {
 		if msg, err := cL.newRMessage(mt); err == nil {
 			t.Errorf("newRMessage(%v) on .L: got %T + nil err, want error", mt, msg)
@@ -356,7 +356,7 @@ func TestNewRMessage_CrossDialect_Rejects(t *testing.T) {
 	}
 
 	cU := newGateConn(t, protocolU)
-	// All .L-only R-types — must error on .u.
+	// All .L-only R-types -- must error on .u.
 	lOnly := []proto.MessageType{
 		proto.TypeRgetattr,
 		proto.TypeRsetattr,
@@ -492,7 +492,7 @@ func dialMockL(t *testing.T) (*Conn, net.Conn) {
 // to exercise the zero-copy Pitfall 1 guard paths.
 //
 // frameOverride lets tests specify a count value DIFFERENT from
-// len(payload) — for the short-dst hazard where the server lies about
+// len(payload) -- for the short-dst hazard where the server lies about
 // how many bytes it sent.
 func writeRreadFrame(t *testing.T, srv net.Conn, tag proto.Tag, count uint32, payload []byte) {
 	t.Helper()
@@ -524,7 +524,7 @@ func TestReadAt_ZeroCopy_HappyPath(t *testing.T) {
 	tag := proto.Tag(7)
 	dst := make([]byte, 12)
 	for i := range dst {
-		dst[i] = 0xFF // sentinel — must be overwritten by payload
+		dst[i] = 0xFF // sentinel -- must be overwritten by payload
 	}
 	entry := cli.inflight.registerZC(tag, dst)
 
@@ -600,10 +600,10 @@ func TestReadAt_ZeroCopy_ShortDst(t *testing.T) {
 // TestReadAt_ZeroCopy_PipeFallback verifies Pattern B is transport-
 // agnostic: the zero-copy branch fires equally on net.Pipe (no writev,
 // no msg-coalescing) as it does on AF_UNIX. The win is alloc elimination,
-// not transport-specific writev — pipe must work end-to-end.
+// not transport-specific writev -- pipe must work end-to-end.
 //
-// Goes through the full File.ReadAt → readAtZeroCopy → read-loop fast
-// path → real memfs server stack. Asserts both the byte content AND a
+// Goes through the full File.ReadAt -> readAtZeroCopy -> read-loop fast
+// path -> real memfs server stack. Asserts both the byte content AND a
 // trailing 0xFF sentinel survives unmodified (proves no overrun beyond
 // the requested count).
 func TestReadAt_ZeroCopy_PipeFallback(t *testing.T) {
@@ -652,7 +652,7 @@ func TestReadAt_ZeroCopy_PipeFallback(t *testing.T) {
 // a ReadAt does not corrupt dst, regardless of whether Rread or Rflush
 // wins the first-frame race. Under Pattern B the entire response body
 // is received before the caller's select runs, so dst is either
-// fully written or untouched — there is no mid-write cancel window.
+// fully written or untouched -- there is no mid-write cancel window.
 //
 // Stress: 100 sequential ReadAt iterations on independent Files,
 // each with a per-iter random-microsecond cancel deadline. Verifies
@@ -679,7 +679,7 @@ func TestReadAt_ZeroCopy_CancelRace(t *testing.T) {
 			t.Fatalf("iter %d: OpenFile: %v", i, err)
 		}
 
-		// Per-iter ctx with a random nanosecond deadline (0–500µs) — some
+		// Per-iter ctx with a random nanosecond deadline (0-500µs) -- some
 		// iters fire before the round trip starts (instant cancel), some
 		// after the read loop delivers (no cancel triggered).
 		ctx, cancel := context.WithTimeout(pair.ctx, time.Duration(i*5)*time.Microsecond)
@@ -705,17 +705,17 @@ func TestReadAt_ZeroCopy_CancelRace(t *testing.T) {
 			}
 		} else {
 			// err != nil under Pattern B: dst must either be fully
-			// untouched (sentinel preserved — cancel beat the read loop's
+			// untouched (sentinel preserved -- cancel beat the read loop's
 			// copy) OR fully written with content (the read loop won the
 			// copy race but Go's select picked the ctx.Done arm of
-			// readAtZeroCopy non-deterministically — a Pattern B win
+			// readAtZeroCopy non-deterministically -- a Pattern B win
 			// observable as a "flushed" error).
 			//
 			// readAtZeroCopy returns (0, ferr) on the ctx.Done arm even
 			// when dst was fully written, because the response chan was
 			// not read by the time select fired. That's correct contract
-			// behavior — the caller asked to cancel, and got a cancel
-			// error — but it means n is 0 even when dst is full content.
+			// behavior -- the caller asked to cancel, and got a cancel
+			// error -- but it means n is 0 even when dst is full content.
 			allSentinel := true
 			for _, b := range dst {
 				if b != 0xCC {
@@ -728,11 +728,11 @@ func TestReadAt_ZeroCopy_CancelRace(t *testing.T) {
 				t.Errorf("iter %d: err=%v but dst is neither all-sentinel nor full content: %q (n=%d)",
 					i, err, dst, n)
 			}
-			// Partial writes are NEVER acceptable under Pattern B —
+			// Partial writes are NEVER acceptable under Pattern B --
 			// the read loop either copies the entire payload into dst
 			// or doesn't touch dst at all.
 			if !allSentinel && !allContent {
-				t.Errorf("iter %d: PARTIAL DST WRITE: dst=%q (n=%d) — Pattern B contract violated",
+				t.Errorf("iter %d: PARTIAL DST WRITE: dst=%q (n=%d) -- Pattern B contract violated",
 					i, dst, n)
 			}
 		}
@@ -741,7 +741,7 @@ func TestReadAt_ZeroCopy_CancelRace(t *testing.T) {
 }
 
 // TestReadAt_ZeroCopy_CloseMidCopy_Race exercises WR-01: the data race
-// where Conn.Close → signalShutdown → cancelAll closes entry.ch while
+// where Conn.Close -> signalShutdown -> cancelAll closes entry.ch while
 // the read loop's Rread fast path is mid-copy into entry.dst. The fix
 // holds the inflight RLock across the lookup + copy + n + send so that
 // cancelAll's Lock either runs before lookup (entry already gone, copy
@@ -806,7 +806,7 @@ func TestReadAt_ZeroCopy_CloseMidCopy_Race(t *testing.T) {
 		// net.Pipe writes block until the read loop reads, so the
 		// goroutine is required. A failed write here is EXPECTED when
 		// Close wins the race (cliNC is closed before the frame lands)
-		// — tolerate via a local builder that doesn't t.Fatalf.
+		// -- tolerate via a local builder that doesn't t.Fatalf.
 		writeDone := make(chan struct{})
 		go func() {
 			defer close(writeDone)
@@ -830,7 +830,7 @@ func TestReadAt_ZeroCopy_CloseMidCopy_Race(t *testing.T) {
 			_ = cli.Close()
 		}()
 
-		// Drain the entry.ch arm or the cancelAll close-arm — both are
+		// Drain the entry.ch arm or the cancelAll close-arm -- both are
 		// terminal for this round trip. We don't assert the outcome
 		// because the race winner is intentionally non-deterministic.
 		select {

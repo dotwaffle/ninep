@@ -8,7 +8,7 @@ import (
 )
 
 // TestInflightMap_RegisterDeliverUnregister exercises the happy-path ordering
-// contract: register → deliver → receive → unregister.
+// contract: register -> deliver -> receive -> unregister.
 func TestInflightMap_RegisterDeliverUnregister(t *testing.T) {
 	t.Parallel()
 	im := newInflightMap()

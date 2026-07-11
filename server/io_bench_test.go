@@ -17,8 +17,8 @@ import (
 )
 
 // I/O benchmarks measure read/write throughput and allocation pressure
-// through the full server stack (encode → handleRequest (recvMu) →
-// dispatch → bridge → sendResponseInline (writeMu, writev) → wire). Each
+// through the full server stack (encode -> handleRequest (recvMu) ->
+// dispatch -> bridge -> sendResponseInline (writeMu, writev) -> wire). Each
 // subtest uses key=value naming for benchstat grouping, and all call
 // b.ReportAllocs + b.SetBytes for allocs/op and MB/s columns.
 

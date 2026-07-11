@@ -16,7 +16,7 @@ import (
 // VMADDR_CID_ANY, accepting connections addressed to any local CID
 // (including [Local] loopback).
 //
-// A port of 0 requests a kernel-assigned ephemeral port. Note that on some
+// A port of 0 requests a kernel-assigned ephemeral port. On some
 // kernels an ephemeral bind is privileged and returns EACCES for
 // unprivileged callers, so pass an explicit port if you are not running
 // with privilege.

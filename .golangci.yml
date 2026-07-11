@@ -62,7 +62,7 @@ linters:
     - recvcheck          # mixed pointer/value receivers break Marshaler ifaces
     - gocheckcompilerdirectives  # typos in //go: directives
 
-    # Architectural boundaries — see settings.depguard.
+    # Architectural boundaries -- see settings.depguard.
     - depguard
 
     # Security (no false positives on this codebase).

@@ -17,7 +17,7 @@ import (
 // TestFileRefreshSize_PopulatesCachedSize: before RefreshSize,
 // f.CachedSize == 0. After RefreshSize on /hello.txt (12 bytes),
 // f.CachedSize == 12. Exercises
-// the full Tgetattr (.L) → attr.Size → f.cachedSize path.
+// the full Tgetattr (.L) -> attr.Size -> f.cachedSize path.
 func TestFileRefreshSize_PopulatesCachedSize(t *testing.T) {
 	t.Parallel()
 	cli, cleanup := newClientServerPair(t, buildTestRoot(t))

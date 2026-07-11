@@ -169,7 +169,7 @@ func TestClient_Msize_RreadOversized(t *testing.T) {
 		_ = srvNC.Close()
 	})
 
-	// Mock server: handshake Tversion → Rversion(msize=1024), then on
+	// Mock server: handshake Tversion -> Rversion(msize=1024), then on
 	// the FIRST T-message from the client, respond with a 4-byte size
 	// prefix claiming 2048 (> 1024 msize). The client read loop must
 	// treat this as fatal and shut down.

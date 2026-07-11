@@ -488,7 +488,7 @@ func TestXattr_ENOSYS_NoCapability(t *testing.T) {
 
 	// Txattrcreate with AttrSize>0 succeeds (the type assertion against the
 	// Inode stub passes); ENOSYS surfaces when the commit calls SetXattr.
-	// Clone fid 0 → 2 so the fid-mutating xattrcreate doesn't break root.
+	// Clone fid 0 -> 2 so the fid-mutating xattrcreate doesn't break root.
 	cp.walk(t, 4, 0, 2)
 	sendMessage(t, cp.client, 5, &p9l.Txattrcreate{Fid: 2, Name: "user.bar", AttrSize: 3, Flags: 0})
 	_, msg = readResponse(t, cp.client)
@@ -503,7 +503,7 @@ func TestXattr_ENOSYS_NoCapability(t *testing.T) {
 	msg = cp.clunk(t, 7, 2)
 	isError(t, msg, proto.ENOSYS)
 
-	// Txattrcreate with AttrSize=0 (remove) → clunk invokes RemoveXattr.
+	// Txattrcreate with AttrSize=0 (remove) -> clunk invokes RemoveXattr.
 	cp.walk(t, 8, 0, 3)
 	sendMessage(t, cp.client, 9, &p9l.Txattrcreate{Fid: 3, Name: "user.rm", AttrSize: 0, Flags: 0})
 	_, msg = readResponse(t, cp.client)
@@ -542,7 +542,7 @@ func TestXattr_ENOSYS_NoSetter(t *testing.T) {
 	}
 	cp.clunk(t, 4, 10)
 
-	// Clone fid 2 → 3 for the set-mode xattrcreate.
+	// Clone fid 2 -> 3 for the set-mode xattrcreate.
 	cp.walk(t, 5, 2, 3)
 	sendMessage(t, cp.client, 6, &p9l.Txattrcreate{Fid: 3, Name: "user.set", AttrSize: 5, Flags: 0})
 	_, msg = readResponse(t, cp.client)
@@ -553,7 +553,7 @@ func TestXattr_ENOSYS_NoSetter(t *testing.T) {
 	if _, ok := msg.(*proto.Rwrite); !ok {
 		t.Fatalf("expected Rwrite, got %T: %+v", msg, msg)
 	}
-	// Clunk reaches SetXattr → Inode default returns ENOSYS.
+	// Clunk reaches SetXattr -> Inode default returns ENOSYS.
 	msg = cp.clunk(t, 8, 3)
 	isError(t, msg, proto.ENOSYS)
 
@@ -564,7 +564,7 @@ func TestXattr_ENOSYS_NoSetter(t *testing.T) {
 	if _, ok := msg.(*p9l.Rxattrcreate); !ok {
 		t.Fatalf("expected Rxattrcreate, got %T: %+v", msg, msg)
 	}
-	// Clunk reaches RemoveXattr → Inode default returns ENOSYS.
+	// Clunk reaches RemoveXattr -> Inode default returns ENOSYS.
 	msg = cp.clunk(t, 11, 4)
 	isError(t, msg, proto.ENOSYS)
 }
@@ -622,7 +622,7 @@ func TestXattr_Overwrite_ENOSPC(t *testing.T) {
 		t.Fatalf("expected Rxattrcreate, got %T: %+v", msg, msg)
 	}
 
-	// Write 5 bytes (exceeds declared 3) → ENOSPC.
+	// Write 5 bytes (exceeds declared 3) -> ENOSPC.
 	msg = cp.write(t, 5, 3, 0, []byte("hello"))
 	isError(t, msg, proto.ENOSPC)
 

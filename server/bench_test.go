@@ -533,7 +533,7 @@ func BenchmarkXattrRead(b *testing.B) {
 // (server/node.go:85-88) so BenchmarkCreateWriteClose exercises Tlcreate
 // through the full bridge path rather than bouncing off Rlerror(ENOSYS).
 // Created files live in-memory, share no storage with the parent, and are
-// never read back -- the bench measures create→write→clunk round-trip cost,
+// never read back -- the bench measures create->write->clunk round-trip cost,
 // not file content persistence.
 //
 // Compare with benchDir in io_bench_test.go (lines 58-63) which only
@@ -569,7 +569,7 @@ func newBenchCreateTree(b *testing.B) *benchCreateDir {
 }
 
 // BenchmarkCreateWriteClose measures the 4-message create-write-close pipeline
-// (Twalk(clone) → Tlcreate → Twrite(4K) → Tclunk) over a unix domain socket.
+// (Twalk(clone) -> Tlcreate -> Twrite(4K) -> Tclunk) over a unix domain socket.
 // Mirrors the Q workload's small_file_create pattern without a kernel 9p
 // mount: every iteration creates a fresh file, writes 4 KiB, and clunks.
 //

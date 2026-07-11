@@ -1,7 +1,7 @@
 package client
 
 // Internal-package dialect-gate tests for the .L-only / .u-only ops. These
-// tests assemble a *Conn with a chosen dialect without running Dial — the
+// tests assemble a *Conn with a chosen dialect without running Dial -- the
 // dialect-gate check fires at method entry BEFORE any wire action, so no
 // I/O is needed. Positive-path (real round-trip) tests live in the external
 // client_test package via a mock-server pair (see roundtrip_dialect_test.go).
@@ -128,7 +128,7 @@ func TestClient_DialectGates_All(t *testing.T) {
 	// .L-only ops exercised on a protocolU Conn. The gate fires at
 	// method entry via requireDialect(protocolL, ...); f.fid is never
 	// dereferenced on the wrong-dialect path, so a bare &File{conn, fid}
-	// is sufficient — no tree, no open, no wire I/O.
+	// is sufficient -- no tree, no open, no wire I/O.
 	cU := newGateConn(t, protocolU)
 	fU := &File{conn: cU, fid: 1}
 

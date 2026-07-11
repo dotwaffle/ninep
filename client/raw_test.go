@@ -87,7 +87,7 @@ func TestRaw_Parity_Walk(t *testing.T) {
 	}
 }
 
-// TestRaw_Parity_ReadWrite: attach → walk → Lopen → Write → Read round
+// TestRaw_Parity_ReadWrite: attach -> walk -> Lopen -> Write -> Read round
 // trip against rw.bin returns the bytes just written.
 func TestRaw_Parity_ReadWrite(t *testing.T) {
 	t.Parallel()

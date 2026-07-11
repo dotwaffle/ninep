@@ -45,7 +45,7 @@ func (f *File) xattrChunk() uint32 {
 	return m - ioFrameOverhead
 }
 
-// twoPhaseXattrRead is the Txattrwalk → Tread-loop → Tclunk
+// twoPhaseXattrRead is the Txattrwalk -> Tread-loop -> Tclunk
 // choreography shared by XattrGet and XattrList (the latter uses
 // name="" per 9P2000.L convention).
 //
@@ -80,7 +80,7 @@ func (f *File) twoPhaseXattrRead(ctx context.Context, name string) ([]byte, erro
 	r := f.conn.Raw()
 	size, err := r.Txattrwalk(ctx, f.fid, newFid, name)
 	if err != nil {
-		// Txattrwalk failed → server never bound newFid. No Clunk.
+		// Txattrwalk failed -> server never bound newFid. No Clunk.
 		f.conn.fids.release(newFid)
 		return nil, err
 	}
@@ -156,7 +156,7 @@ func (f *File) twoPhaseXattrRead(ctx context.Context, name string) ([]byte, erro
 }
 
 // XattrGet retrieves the value of the extended attribute name. Hides
-// the 9P2000.L two-phase protocol (Txattrwalk → Tread loop → Tclunk).
+// the 9P2000.L two-phase protocol (Txattrwalk -> Tread loop -> Tclunk).
 //
 // Returns a non-nil, zero-length []byte when the attribute exists with
 // an empty value; returns a *[Error] wrapping [proto.ENODATA] when the
@@ -226,7 +226,7 @@ func (f *File) XattrSet(ctx context.Context, name string, data []byte, flags uin
 	r := f.conn.Raw()
 	size := uint64(len(data))
 	if err := r.Txattrcreate(ctx, clone.fid, name, size, flags); err != nil {
-		// Txattrcreate failed → server state unchanged. Clone's fid is
+		// Txattrcreate failed -> server state unchanged. Clone's fid is
 		// still in the walked state, so a normal Clunk is the right
 		// release gesture.
 		_ = r.Tclunk(context.Background(), clone.fid)

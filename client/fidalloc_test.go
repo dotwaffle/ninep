@@ -32,7 +32,7 @@ func TestFidAllocator_AcquireStartsAtOne(t *testing.T) {
 	}
 }
 
-// TestFidAllocator_ReleaseReused verifies acquire→release(fid=1) leaves the
+// TestFidAllocator_ReleaseReused verifies acquire->release(fid=1) leaves the
 // next acquire returning 1 via the LIFO reuse cache.
 func TestFidAllocator_ReleaseReused(t *testing.T) {
 	t.Parallel()
@@ -173,7 +173,7 @@ func TestFidAllocator_Concurrent(t *testing.T) {
 	}
 }
 
-// TestFidAllocator_LeakStress_1000Cycles verifies 1000 acquire→release pairs
+// TestFidAllocator_LeakStress_1000Cycles verifies 1000 acquire->release pairs
 // leave len() bounded at <= reuseCacheSize. Steady-state reuse means the
 // counter does not grow past a small bound either.
 //
@@ -194,7 +194,7 @@ func TestFidAllocator_LeakStress_1000Cycles(t *testing.T) {
 	if got := fa.len(); got > reuseCacheSize {
 		t.Fatalf("len() after 1000 cycles = %d, want <= %d", got, reuseCacheSize)
 	}
-	// Single acquire→release pair at a time means reuse cache holds one
+	// Single acquire->release pair at a time means reuse cache holds one
 	// fid at rest. This asserts the happy-path steady state.
 	if got := fa.len(); got != 1 {
 		t.Fatalf("len() after 1000 cycles = %d, want 1 (single-outstanding steady state)", got)

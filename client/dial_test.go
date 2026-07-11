@@ -260,7 +260,7 @@ func TestDial_CtxDeadlineDuringRead(t *testing.T) {
 }
 
 // TestDial_MsizeTooSmall: client proposes 128; server accepts; negotiated
-// < 256 → ErrMsizeTooSmall.
+// < 256 -> ErrMsizeTooSmall.
 func TestDial_MsizeTooSmall(t *testing.T) {
 	t.Parallel()
 	cliNC, srvNC := net.Pipe()

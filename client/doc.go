@@ -122,15 +122,15 @@
 //
 //   - [File.XattrGet] / [File.XattrSet] / [File.XattrList] /
 //     [File.XattrRemove]
-//   - All four hide the 9P two-phase protocol (Txattrwalk → Tread-loop
-//     → Tclunk for get; Clone + Txattrcreate + Twrite + Tclunk for
+//   - All four hide the 9P two-phase protocol (Txattrwalk -> Tread-loop
+//     -> Tclunk for get; Clone + Txattrcreate + Twrite + Tclunk for
 //     set).
 //   - Callers needing streaming access use [Raw.Txattrwalk] directly.
 //
 // ## POSIX Locks (.L-only)
 //
 //   - [File.Lock] / [File.Unlock] / [File.TryLock] / [File.GetLock]
-//   - Blocking Lock uses exponential backoff (10ms → 500ms cap); tests
+//   - Blocking Lock uses exponential backoff (10ms -> 500ms cap); tests
 //     can override via [WithLockPollSchedule].
 //   - Ctx cancellation unconditionally releases any granted lock via a
 //     background-ctx Tlock(UNLCK) -- belt-and-braces against the

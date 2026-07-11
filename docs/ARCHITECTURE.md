@@ -26,8 +26,8 @@ ninep is a Go library implementing the 9P2000.L and 9P2000.u network filesystem 
                      │
             ┌────────▼────────┐
             │ dispatchInline  │  panic recovery, bufPtr release,
-            │  middleware →   │  cached-msg release, finish(tag)
-            │  dispatch →     │
+            │  middleware ->   │  cached-msg release, finish(tag)
+            │  dispatch ->     │
             │  bridge         │
             └────────┬────────┘
                      │
@@ -178,7 +178,7 @@ Protocol-level conformance test harness. `Check(t, root)` or `CheckFactory(t, ne
 | `NodeXattrLister` | `ListXattrs(ctx) ([]string, error)` | List extended attribute names |
 | `NodeXattrRemover` | `RemoveXattr(ctx, name) error` | Remove extended attribute |
 
-Additionally, `RawXattrer` provides protocol-level control over the xattr two-phase flow (xattrwalk/xattrcreate), taking precedence over the simple xattr interfaces when implemented.
+`RawXattrer` provides protocol-level control over the xattr two-phase flow (xattrwalk/xattrcreate), taking precedence over the simple xattr interfaces when implemented.
 
 ### Inode
 

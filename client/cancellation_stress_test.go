@@ -78,7 +78,7 @@ func TestClient_Cancellation_Stress(t *testing.T) {
 	var observed cancellationStressCounters
 
 	// Observer goroutine fires cli.Close() once a threshold of operations have started.
-	// This ensures we always hit the close path even on very fast machines where
+	// The close path is then hit even on very fast machines where
 	// a hardcoded sleep would be too long.
 	closeFired := make(chan struct{})
 	startCount := atomic.Int32{}
@@ -257,7 +257,7 @@ func (c *cancellationStressCounters) snapshot() cancellationStressSnapshot {
 // issueStressOp performs one of three op variants per (gid,iter) so the
 // stress mix covers both wire-level and session-level paths:
 //
-//   - variant 0: wire-level Walk → Clunk on a unique fid (mirrors
+//   - variant 0: wire-level Walk -> Clunk on a unique fid (mirrors
 //     concurrent_test.go's base pattern).
 //   - variant 1: session-level OpenFile + ReadCtx + Close (exercises
 //     the *Ctx variants end-to-end).

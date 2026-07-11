@@ -33,7 +33,7 @@ var treadPool = sync.Pool{
 // a minimal 11-byte Tread body: fid[4] + offset[8] + count[4] = 16 actually
 // but including msg decode path specifics... just make a valid body.
 var treadBody = func() []byte {
-	// fid=0, offset=0, count=4096 → 4 + 8 + 4 = 16 bytes
+	// fid=0, offset=0, count=4096 -> 4 + 8 + 4 = 16 bytes
 	b := make([]byte, 16)
 	// offsets already 0
 	// count=4096 at bytes 12..16
