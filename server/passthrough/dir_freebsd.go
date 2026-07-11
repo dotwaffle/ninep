@@ -317,16 +317,3 @@ func parseDirents(buf []byte) []proto.Dirent {
 
 	return dirents
 }
-
-// dtypeToQIDType maps a d_type to proto.QIDType. The DT_* values are the
-// same on FreeBSD as on Linux.
-func dtypeToQIDType(dtype uint8) proto.QIDType {
-	switch dtype {
-	case unix.DT_DIR:
-		return proto.QTDIR
-	case unix.DT_LNK:
-		return proto.QTSYMLINK
-	default:
-		return proto.QTFILE
-	}
-}

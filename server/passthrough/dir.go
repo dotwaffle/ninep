@@ -44,3 +44,18 @@ func (n *Node) Link(_ context.Context, target server.Node, name string) error {
 	}
 	return nil
 }
+
+// dtypeToQIDType maps a d_type value to proto.QIDType. The DT_* values
+// are identical on Linux and FreeBSD, so this one mapping serves both
+// platforms' parseDirents (dir_linux.go, dir_freebsd.go) even though
+// the surrounding dirent binary layouts they parse are not shared.
+func dtypeToQIDType(dtype uint8) proto.QIDType {
+	switch dtype {
+	case unix.DT_DIR:
+		return proto.QTDIR
+	case unix.DT_LNK:
+		return proto.QTSYMLINK
+	default:
+		return proto.QTFILE
+	}
+}
