@@ -117,6 +117,14 @@ func ReadString(r io.Reader) (string, error) {
 	return string(*scratch), nil
 }
 
+// ReadFid reads a fid[4] field from r. It exists so message decoders
+// assign fid-typed fields directly instead of repeating the
+// uint32-then-convert dance, which the type system cannot check.
+func ReadFid(r io.Reader) (Fid, error) {
+	v, err := ReadUint32(r)
+	return Fid(v), err
+}
+
 // ReadData reads exactly count bytes from r into a freshly allocated slice.
 // Callers must bound count (e.g. against MaxDataSize) before calling.
 //

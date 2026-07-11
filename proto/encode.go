@@ -91,6 +91,12 @@ func WriteUint32(w io.Writer, v uint32) error {
 	return err
 }
 
+// WriteFid writes a fid[4] field to w. Counterpart of ReadFid; see its
+// doc for why fid fields do not go through the raw uint32 helpers.
+func WriteFid(w io.Writer, f Fid) error {
+	return WriteUint32(w, uint32(f))
+}
+
 // WriteUint64 writes a little-endian uint64 to w.
 func WriteUint64(w io.Writer, v uint64) error {
 	if buf, ok := w.(*bytes.Buffer); ok {

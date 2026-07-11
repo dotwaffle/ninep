@@ -66,7 +66,7 @@ func (m *Topen) Type() proto.MessageType { return proto.TypeTopen }
 
 // EncodeTo writes the Topen body: fid[4] + mode[1].
 func (m *Topen) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode topen fid: %w", err)
 	}
 	if err := proto.WriteUint8(w, m.Mode); err != nil {
@@ -77,11 +77,11 @@ func (m *Topen) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Topen body: fid[4] + mode[1].
 func (m *Topen) DecodeFrom(r io.Reader) error {
-	fid, err := proto.ReadUint32(r)
+	fid, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode topen fid: %w", err)
 	}
-	m.Fid = proto.Fid(fid)
+	m.Fid = fid
 	if m.Mode, err = proto.ReadUint8(r); err != nil {
 		return fmt.Errorf("decode topen mode: %w", err)
 	}
@@ -137,7 +137,7 @@ func (m *Tcreate) Type() proto.MessageType { return proto.TypeTcreate }
 
 // EncodeTo writes the Tcreate body: fid[4] + name[s] + perm[4] + mode[1] + extension[s].
 func (m *Tcreate) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tcreate fid: %w", err)
 	}
 	if err := proto.WriteString(w, m.Name); err != nil {
@@ -157,11 +157,11 @@ func (m *Tcreate) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tcreate body: fid[4] + name[s] + perm[4] + mode[1] + extension[s].
 func (m *Tcreate) DecodeFrom(r io.Reader) error {
-	fid, err := proto.ReadUint32(r)
+	fid, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tcreate fid: %w", err)
 	}
-	m.Fid = proto.Fid(fid)
+	m.Fid = fid
 	if m.Name, err = proto.ReadString(r); err != nil {
 		return fmt.Errorf("decode tcreate name: %w", err)
 	}
@@ -400,7 +400,7 @@ func (m *Tstat) Type() proto.MessageType { return proto.TypeTstat }
 
 // EncodeTo writes the Tstat body: fid[4].
 func (m *Tstat) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tstat fid: %w", err)
 	}
 	return nil
@@ -408,11 +408,11 @@ func (m *Tstat) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tstat body: fid[4].
 func (m *Tstat) DecodeFrom(r io.Reader) error {
-	fid, err := proto.ReadUint32(r)
+	fid, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tstat fid: %w", err)
 	}
-	m.Fid = proto.Fid(fid)
+	m.Fid = fid
 	return nil
 }
 
@@ -473,7 +473,7 @@ func (m *Twstat) Type() proto.MessageType { return proto.TypeTwstat }
 
 // EncodeTo writes the Twstat body: fid[4] + nstat[2] + stat_data[nstat].
 func (m *Twstat) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode twstat fid: %w", err)
 	}
 	encodedSize, err := m.Stat.EncodedSize()
@@ -492,11 +492,11 @@ func (m *Twstat) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Twstat body: fid[4] + nstat[2] + stat_data[nstat].
 func (m *Twstat) DecodeFrom(r io.Reader) error {
-	fid, err := proto.ReadUint32(r)
+	fid, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode twstat fid: %w", err)
 	}
-	m.Fid = proto.Fid(fid)
+	m.Fid = fid
 	nstat, err := proto.ReadUint16(r)
 	if err != nil {
 		return fmt.Errorf("decode twstat nstat: %w", err)

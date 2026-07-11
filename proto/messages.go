@@ -86,7 +86,7 @@ func (m *Tauth) Type() MessageType { return TypeTauth }
 
 // EncodeTo writes the Tauth body: afid[4] + uname[s] + aname[s] + n_uname[4].
 func (m *Tauth) EncodeTo(w io.Writer) error {
-	if err := WriteUint32(w, uint32(m.Afid)); err != nil {
+	if err := WriteFid(w, m.Afid); err != nil {
 		return fmt.Errorf("encode tauth afid: %w", err)
 	}
 	if err := WriteString(w, m.Uname); err != nil {
@@ -103,11 +103,11 @@ func (m *Tauth) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tauth body: afid[4] + uname[s] + aname[s] + n_uname[4].
 func (m *Tauth) DecodeFrom(r io.Reader) error {
-	afid, err := ReadUint32(r)
+	afid, err := ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tauth afid: %w", err)
 	}
-	m.Afid = Fid(afid)
+	m.Afid = afid
 	if m.Uname, err = ReadString(r); err != nil {
 		return fmt.Errorf("decode tauth uname: %w", err)
 	}
@@ -160,10 +160,10 @@ func (m *Tattach) Type() MessageType { return TypeTattach }
 
 // EncodeTo writes the Tattach body: fid[4] + afid[4] + uname[s] + aname[s] + n_uname[4].
 func (m *Tattach) EncodeTo(w io.Writer) error {
-	if err := WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tattach fid: %w", err)
 	}
-	if err := WriteUint32(w, uint32(m.Afid)); err != nil {
+	if err := WriteFid(w, m.Afid); err != nil {
 		return fmt.Errorf("encode tattach afid: %w", err)
 	}
 	if err := WriteString(w, m.Uname); err != nil {
@@ -180,16 +180,16 @@ func (m *Tattach) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tattach body: fid[4] + afid[4] + uname[s] + aname[s] + n_uname[4].
 func (m *Tattach) DecodeFrom(r io.Reader) error {
-	fid, err := ReadUint32(r)
+	fid, err := ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tattach fid: %w", err)
 	}
-	m.Fid = Fid(fid)
-	afid, err := ReadUint32(r)
+	m.Fid = fid
+	afid, err := ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tattach afid: %w", err)
 	}
-	m.Afid = Fid(afid)
+	m.Afid = afid
 	if m.Uname, err = ReadString(r); err != nil {
 		return fmt.Errorf("decode tattach uname: %w", err)
 	}
@@ -281,10 +281,10 @@ func (m *Twalk) EncodeTo(w io.Writer) error {
 	if len(m.Names) > MaxWalkElements {
 		return fmt.Errorf("walk name count %d exceeds max %d", len(m.Names), MaxWalkElements)
 	}
-	if err := WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode twalk fid: %w", err)
 	}
-	if err := WriteUint32(w, uint32(m.NewFid)); err != nil {
+	if err := WriteFid(w, m.NewFid); err != nil {
 		return fmt.Errorf("encode twalk newfid: %w", err)
 	}
 	if err := WriteUint16(w, uint16(len(m.Names))); err != nil {
@@ -300,16 +300,16 @@ func (m *Twalk) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Twalk body: fid[4] + newfid[4] + nwname[2] + nwname*(wname[s]).
 func (m *Twalk) DecodeFrom(r io.Reader) error {
-	fid, err := ReadUint32(r)
+	fid, err := ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode twalk fid: %w", err)
 	}
-	m.Fid = Fid(fid)
-	newfid, err := ReadUint32(r)
+	m.Fid = fid
+	newfid, err := ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode twalk newfid: %w", err)
 	}
-	m.NewFid = Fid(newfid)
+	m.NewFid = newfid
 	nwname, err := ReadUint16(r)
 	if err != nil {
 		return fmt.Errorf("decode twalk nwname: %w", err)
@@ -381,7 +381,7 @@ func (m *Tread) Type() MessageType { return TypeTread }
 
 // EncodeTo writes the Tread body: fid[4] + offset[8] + count[4].
 func (m *Tread) EncodeTo(w io.Writer) error {
-	if err := WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tread fid: %w", err)
 	}
 	if err := WriteUint64(w, m.Offset); err != nil {
@@ -395,11 +395,11 @@ func (m *Tread) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tread body: fid[4] + offset[8] + count[4].
 func (m *Tread) DecodeFrom(r io.Reader) error {
-	fid, err := ReadUint32(r)
+	fid, err := ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tread fid: %w", err)
 	}
-	m.Fid = Fid(fid)
+	m.Fid = fid
 	if m.Offset, err = ReadUint64(r); err != nil {
 		return fmt.Errorf("decode tread offset: %w", err)
 	}
@@ -499,7 +499,7 @@ func (m *Twrite) EncodeFixed(w io.Writer) error {
 	if len(m.Data) > MaxDataSize {
 		return fmt.Errorf("encode twrite count %d exceeds maximum %d", len(m.Data), MaxDataSize)
 	}
-	if err := WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode twrite fid: %w", err)
 	}
 	if err := WriteUint64(w, m.Offset); err != nil {
@@ -536,11 +536,11 @@ func (m *Twrite) EncodeTo(w io.Writer) error {
 // m.Data is allocated and populated from r; callers can freely reuse r's
 // underlying storage after DecodeFrom returns.
 func (m *Twrite) DecodeFrom(r io.Reader) error {
-	fid, err := ReadUint32(r)
+	fid, err := ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode twrite fid: %w", err)
 	}
-	m.Fid = Fid(fid)
+	m.Fid = fid
 	if m.Offset, err = ReadUint64(r); err != nil {
 		return fmt.Errorf("decode twrite offset: %w", err)
 	}
@@ -617,7 +617,7 @@ func (m *Tclunk) Type() MessageType { return TypeTclunk }
 
 // EncodeTo writes the Tclunk body: fid[4].
 func (m *Tclunk) EncodeTo(w io.Writer) error {
-	if err := WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tclunk fid: %w", err)
 	}
 	return nil
@@ -625,11 +625,11 @@ func (m *Tclunk) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tclunk body: fid[4].
 func (m *Tclunk) DecodeFrom(r io.Reader) error {
-	fid, err := ReadUint32(r)
+	fid, err := ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tclunk fid: %w", err)
 	}
-	m.Fid = Fid(fid)
+	m.Fid = fid
 	return nil
 }
 
@@ -655,7 +655,7 @@ func (m *Tremove) Type() MessageType { return TypeTremove }
 
 // EncodeTo writes the Tremove body: fid[4].
 func (m *Tremove) EncodeTo(w io.Writer) error {
-	if err := WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tremove fid: %w", err)
 	}
 	return nil
@@ -663,11 +663,11 @@ func (m *Tremove) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tremove body: fid[4].
 func (m *Tremove) DecodeFrom(r io.Reader) error {
-	fid, err := ReadUint32(r)
+	fid, err := ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tremove fid: %w", err)
 	}
-	m.Fid = Fid(fid)
+	m.Fid = fid
 	return nil
 }
 

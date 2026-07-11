@@ -45,7 +45,7 @@ func (m *Tstatfs) Type() proto.MessageType { return proto.TypeTstatfs }
 
 // EncodeTo writes the Tstatfs body: fid[4].
 func (m *Tstatfs) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tstatfs fid: %w", err)
 	}
 	return nil
@@ -53,11 +53,11 @@ func (m *Tstatfs) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tstatfs body: fid[4].
 func (m *Tstatfs) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tstatfs fid: %w", err)
 	}
-	m.Fid = proto.Fid(v)
+	m.Fid = v
 	return nil
 }
 
@@ -147,7 +147,7 @@ func (m *Tlopen) Type() proto.MessageType { return proto.TypeTlopen }
 
 // EncodeTo writes the Tlopen body: fid[4] flags[4].
 func (m *Tlopen) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tlopen fid: %w", err)
 	}
 	if err := proto.WriteUint32(w, m.Flags); err != nil {
@@ -158,11 +158,11 @@ func (m *Tlopen) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tlopen body: fid[4] flags[4].
 func (m *Tlopen) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tlopen fid: %w", err)
 	}
-	m.Fid = proto.Fid(v)
+	m.Fid = v
 	if m.Flags, err = proto.ReadUint32(r); err != nil {
 		return fmt.Errorf("decode tlopen flags: %w", err)
 	}
@@ -219,7 +219,7 @@ func (m *Tlcreate) Type() proto.MessageType { return proto.TypeTlcreate }
 
 // EncodeTo writes the Tlcreate body: fid[4] name[s] flags[4] mode[4] gid[4].
 func (m *Tlcreate) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tlcreate fid: %w", err)
 	}
 	if err := proto.WriteString(w, m.Name); err != nil {
@@ -239,11 +239,11 @@ func (m *Tlcreate) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tlcreate body: fid[4] name[s] flags[4] mode[4] gid[4].
 func (m *Tlcreate) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tlcreate fid: %w", err)
 	}
-	m.Fid = proto.Fid(v)
+	m.Fid = v
 	if m.Name, err = proto.ReadString(r); err != nil {
 		return fmt.Errorf("decode tlcreate name: %w", err)
 	}
@@ -310,7 +310,7 @@ func (m *Tsymlink) Type() proto.MessageType { return proto.TypeTsymlink }
 
 // EncodeTo writes the Tsymlink body: fid[4] name[s] symtgt[s] gid[4].
 func (m *Tsymlink) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.DirFid)); err != nil {
+	if err := proto.WriteFid(w, m.DirFid); err != nil {
 		return fmt.Errorf("encode tsymlink dirfid: %w", err)
 	}
 	if err := proto.WriteString(w, m.Name); err != nil {
@@ -327,11 +327,11 @@ func (m *Tsymlink) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tsymlink body: fid[4] name[s] symtgt[s] gid[4].
 func (m *Tsymlink) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tsymlink dirfid: %w", err)
 	}
-	m.DirFid = proto.Fid(v)
+	m.DirFid = v
 	if m.Name, err = proto.ReadString(r); err != nil {
 		return fmt.Errorf("decode tsymlink name: %w", err)
 	}
@@ -387,7 +387,7 @@ func (m *Tmknod) Type() proto.MessageType { return proto.TypeTmknod }
 
 // EncodeTo writes the Tmknod body: dfid[4] name[s] mode[4] major[4] minor[4] gid[4].
 func (m *Tmknod) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.DirFid)); err != nil {
+	if err := proto.WriteFid(w, m.DirFid); err != nil {
 		return fmt.Errorf("encode tmknod dirfid: %w", err)
 	}
 	if err := proto.WriteString(w, m.Name); err != nil {
@@ -410,11 +410,11 @@ func (m *Tmknod) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tmknod body: dfid[4] name[s] mode[4] major[4] minor[4] gid[4].
 func (m *Tmknod) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tmknod dirfid: %w", err)
 	}
-	m.DirFid = proto.Fid(v)
+	m.DirFid = v
 	if m.Name, err = proto.ReadString(r); err != nil {
 		return fmt.Errorf("decode tmknod name: %w", err)
 	}
@@ -475,10 +475,10 @@ func (m *Trename) Type() proto.MessageType { return proto.TypeTrename }
 
 // EncodeTo writes the Trename body: fid[4] dfid[4] name[s].
 func (m *Trename) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode trename fid: %w", err)
 	}
-	if err := proto.WriteUint32(w, uint32(m.DirFid)); err != nil {
+	if err := proto.WriteFid(w, m.DirFid); err != nil {
 		return fmt.Errorf("encode trename dirfid: %w", err)
 	}
 	if err := proto.WriteString(w, m.Name); err != nil {
@@ -489,16 +489,16 @@ func (m *Trename) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Trename body: fid[4] dfid[4] name[s].
 func (m *Trename) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode trename fid: %w", err)
 	}
-	m.Fid = proto.Fid(v)
-	dfid, err := proto.ReadUint32(r)
+	m.Fid = v
+	dfid, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode trename dirfid: %w", err)
 	}
-	m.DirFid = proto.Fid(dfid)
+	m.DirFid = dfid
 	if m.Name, err = proto.ReadString(r); err != nil {
 		return fmt.Errorf("decode trename name: %w", err)
 	}
@@ -528,7 +528,7 @@ func (m *Treadlink) Type() proto.MessageType { return proto.TypeTreadlink }
 
 // EncodeTo writes the Treadlink body: fid[4].
 func (m *Treadlink) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode treadlink fid: %w", err)
 	}
 	return nil
@@ -536,11 +536,11 @@ func (m *Treadlink) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Treadlink body: fid[4].
 func (m *Treadlink) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode treadlink fid: %w", err)
 	}
-	m.Fid = proto.Fid(v)
+	m.Fid = v
 	return nil
 }
 
@@ -583,7 +583,7 @@ func (m *Tgetattr) Type() proto.MessageType { return proto.TypeTgetattr }
 
 // EncodeTo writes the Tgetattr body: fid[4] request_mask[8].
 func (m *Tgetattr) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tgetattr fid: %w", err)
 	}
 	if err := proto.WriteUint64(w, uint64(m.RequestMask)); err != nil {
@@ -594,11 +594,11 @@ func (m *Tgetattr) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tgetattr body: fid[4] request_mask[8].
 func (m *Tgetattr) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tgetattr fid: %w", err)
 	}
-	m.Fid = proto.Fid(v)
+	m.Fid = v
 	mask, err := proto.ReadUint64(r)
 	if err != nil {
 		return fmt.Errorf("decode tgetattr request_mask: %w", err)
@@ -764,7 +764,7 @@ func (m *Tsetattr) Type() proto.MessageType { return proto.TypeTsetattr }
 
 // EncodeTo writes the Tsetattr body: fid[4] then all 9 SetAttr fields.
 func (m *Tsetattr) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tsetattr fid: %w", err)
 	}
 	if err := proto.WriteUint32(w, uint32(m.Attr.Valid)); err != nil {
@@ -799,11 +799,11 @@ func (m *Tsetattr) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tsetattr body: fid[4] then all 9 SetAttr fields.
 func (m *Tsetattr) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tsetattr fid: %w", err)
 	}
-	m.Fid = proto.Fid(v)
+	m.Fid = v
 	valid, err := proto.ReadUint32(r)
 	if err != nil {
 		return fmt.Errorf("decode tsetattr valid: %w", err)
@@ -862,10 +862,10 @@ func (m *Txattrwalk) Type() proto.MessageType { return proto.TypeTxattrwalk }
 
 // EncodeTo writes the Txattrwalk body: fid[4] newfid[4] name[s].
 func (m *Txattrwalk) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode txattrwalk fid: %w", err)
 	}
-	if err := proto.WriteUint32(w, uint32(m.NewFid)); err != nil {
+	if err := proto.WriteFid(w, m.NewFid); err != nil {
 		return fmt.Errorf("encode txattrwalk newfid: %w", err)
 	}
 	if err := proto.WriteString(w, m.Name); err != nil {
@@ -876,16 +876,16 @@ func (m *Txattrwalk) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Txattrwalk body: fid[4] newfid[4] name[s].
 func (m *Txattrwalk) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode txattrwalk fid: %w", err)
 	}
-	m.Fid = proto.Fid(v)
-	nf, err := proto.ReadUint32(r)
+	m.Fid = v
+	nf, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode txattrwalk newfid: %w", err)
 	}
-	m.NewFid = proto.Fid(nf)
+	m.NewFid = nf
 	if m.Name, err = proto.ReadString(r); err != nil {
 		return fmt.Errorf("decode txattrwalk name: %w", err)
 	}
@@ -934,7 +934,7 @@ func (m *Txattrcreate) Type() proto.MessageType { return proto.TypeTxattrcreate 
 
 // EncodeTo writes the Txattrcreate body: fid[4] name[s] attr_size[8] flags[4].
 func (m *Txattrcreate) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode txattrcreate fid: %w", err)
 	}
 	if err := proto.WriteString(w, m.Name); err != nil {
@@ -951,11 +951,11 @@ func (m *Txattrcreate) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Txattrcreate body: fid[4] name[s] attr_size[8] flags[4].
 func (m *Txattrcreate) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode txattrcreate fid: %w", err)
 	}
-	m.Fid = proto.Fid(v)
+	m.Fid = v
 	if m.Name, err = proto.ReadString(r); err != nil {
 		return fmt.Errorf("decode txattrcreate name: %w", err)
 	}
@@ -994,7 +994,7 @@ func (m *Treaddir) Type() proto.MessageType { return proto.TypeTreaddir }
 
 // EncodeTo writes the Treaddir body: fid[4] offset[8] count[4].
 func (m *Treaddir) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode treaddir fid: %w", err)
 	}
 	if err := proto.WriteUint64(w, m.Offset); err != nil {
@@ -1008,11 +1008,11 @@ func (m *Treaddir) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Treaddir body: fid[4] offset[8] count[4].
 func (m *Treaddir) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode treaddir fid: %w", err)
 	}
-	m.Fid = proto.Fid(v)
+	m.Fid = v
 	if m.Offset, err = proto.ReadUint64(r); err != nil {
 		return fmt.Errorf("decode treaddir offset: %w", err)
 	}
@@ -1084,7 +1084,7 @@ func (m *Tfsync) Type() proto.MessageType { return proto.TypeTfsync }
 
 // EncodeTo writes the Tfsync body: fid[4] datasync[4].
 func (m *Tfsync) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tfsync fid: %w", err)
 	}
 	if err := proto.WriteUint32(w, m.DataSync); err != nil {
@@ -1095,11 +1095,11 @@ func (m *Tfsync) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tfsync body: fid[4] datasync[4].
 func (m *Tfsync) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tfsync fid: %w", err)
 	}
-	m.Fid = proto.Fid(v)
+	m.Fid = v
 	if m.DataSync, err = proto.ReadUint32(r); err != nil {
 		return fmt.Errorf("decode tfsync datasync: %w", err)
 	}
@@ -1136,7 +1136,7 @@ func (m *Tlock) Type() proto.MessageType { return proto.TypeTlock }
 
 // EncodeTo writes the Tlock body.
 func (m *Tlock) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tlock fid: %w", err)
 	}
 	if err := proto.WriteUint8(w, uint8(m.LockType)); err != nil {
@@ -1162,11 +1162,11 @@ func (m *Tlock) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tlock body.
 func (m *Tlock) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tlock fid: %w", err)
 	}
-	m.Fid = proto.Fid(v)
+	m.Fid = v
 	lt, err := proto.ReadUint8(r)
 	if err != nil {
 		return fmt.Errorf("decode tlock type: %w", err)
@@ -1245,7 +1245,7 @@ func (m *Tgetlock) Type() proto.MessageType { return proto.TypeTgetlock }
 
 // EncodeTo writes the Tgetlock body.
 func (m *Tgetlock) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tgetlock fid: %w", err)
 	}
 	if err := proto.WriteUint8(w, uint8(m.LockType)); err != nil {
@@ -1268,11 +1268,11 @@ func (m *Tgetlock) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tgetlock body.
 func (m *Tgetlock) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tgetlock fid: %w", err)
 	}
-	m.Fid = proto.Fid(v)
+	m.Fid = v
 	lt, err := proto.ReadUint8(r)
 	if err != nil {
 		return fmt.Errorf("decode tgetlock type: %w", err)
@@ -1369,10 +1369,10 @@ func (m *Tlink) Type() proto.MessageType { return proto.TypeTlink }
 
 // EncodeTo writes the Tlink body: dfid[4] fid[4] name[s].
 func (m *Tlink) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.DirFid)); err != nil {
+	if err := proto.WriteFid(w, m.DirFid); err != nil {
 		return fmt.Errorf("encode tlink dirfid: %w", err)
 	}
-	if err := proto.WriteUint32(w, uint32(m.Fid)); err != nil {
+	if err := proto.WriteFid(w, m.Fid); err != nil {
 		return fmt.Errorf("encode tlink fid: %w", err)
 	}
 	if err := proto.WriteString(w, m.Name); err != nil {
@@ -1383,16 +1383,16 @@ func (m *Tlink) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tlink body: dfid[4] fid[4] name[s].
 func (m *Tlink) DecodeFrom(r io.Reader) error {
-	dfid, err := proto.ReadUint32(r)
+	dfid, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tlink dirfid: %w", err)
 	}
-	m.DirFid = proto.Fid(dfid)
-	fid, err := proto.ReadUint32(r)
+	m.DirFid = dfid
+	fid, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tlink fid: %w", err)
 	}
-	m.Fid = proto.Fid(fid)
+	m.Fid = fid
 	if m.Name, err = proto.ReadString(r); err != nil {
 		return fmt.Errorf("decode tlink name: %w", err)
 	}
@@ -1425,7 +1425,7 @@ func (m *Tmkdir) Type() proto.MessageType { return proto.TypeTmkdir }
 
 // EncodeTo writes the Tmkdir body: dfid[4] name[s] mode[4] gid[4].
 func (m *Tmkdir) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.DirFid)); err != nil {
+	if err := proto.WriteFid(w, m.DirFid); err != nil {
 		return fmt.Errorf("encode tmkdir dirfid: %w", err)
 	}
 	if err := proto.WriteString(w, m.Name); err != nil {
@@ -1442,11 +1442,11 @@ func (m *Tmkdir) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tmkdir body: dfid[4] name[s] mode[4] gid[4].
 func (m *Tmkdir) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tmkdir dirfid: %w", err)
 	}
-	m.DirFid = proto.Fid(v)
+	m.DirFid = v
 	if m.Name, err = proto.ReadString(r); err != nil {
 		return fmt.Errorf("decode tmkdir name: %w", err)
 	}
@@ -1502,13 +1502,13 @@ func (m *Trenameat) Type() proto.MessageType { return proto.TypeTrenameat }
 
 // EncodeTo writes the Trenameat body: olddirfid[4] oldname[s] newdirfid[4] newname[s].
 func (m *Trenameat) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.OldDirFid)); err != nil {
+	if err := proto.WriteFid(w, m.OldDirFid); err != nil {
 		return fmt.Errorf("encode trenameat olddirfid: %w", err)
 	}
 	if err := proto.WriteString(w, m.OldName); err != nil {
 		return fmt.Errorf("encode trenameat oldname: %w", err)
 	}
-	if err := proto.WriteUint32(w, uint32(m.NewDirFid)); err != nil {
+	if err := proto.WriteFid(w, m.NewDirFid); err != nil {
 		return fmt.Errorf("encode trenameat newdirfid: %w", err)
 	}
 	if err := proto.WriteString(w, m.NewName); err != nil {
@@ -1519,19 +1519,19 @@ func (m *Trenameat) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Trenameat body: olddirfid[4] oldname[s] newdirfid[4] newname[s].
 func (m *Trenameat) DecodeFrom(r io.Reader) error {
-	od, err := proto.ReadUint32(r)
+	od, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode trenameat olddirfid: %w", err)
 	}
-	m.OldDirFid = proto.Fid(od)
+	m.OldDirFid = od
 	if m.OldName, err = proto.ReadString(r); err != nil {
 		return fmt.Errorf("decode trenameat oldname: %w", err)
 	}
-	nd, err := proto.ReadUint32(r)
+	nd, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode trenameat newdirfid: %w", err)
 	}
-	m.NewDirFid = proto.Fid(nd)
+	m.NewDirFid = nd
 	if m.NewName, err = proto.ReadString(r); err != nil {
 		return fmt.Errorf("decode trenameat newname: %w", err)
 	}
@@ -1563,7 +1563,7 @@ func (m *Tunlinkat) Type() proto.MessageType { return proto.TypeTunlinkat }
 
 // EncodeTo writes the Tunlinkat body: dirfid[4] name[s] flags[4].
 func (m *Tunlinkat) EncodeTo(w io.Writer) error {
-	if err := proto.WriteUint32(w, uint32(m.DirFid)); err != nil {
+	if err := proto.WriteFid(w, m.DirFid); err != nil {
 		return fmt.Errorf("encode tunlinkat dirfid: %w", err)
 	}
 	if err := proto.WriteString(w, m.Name); err != nil {
@@ -1577,11 +1577,11 @@ func (m *Tunlinkat) EncodeTo(w io.Writer) error {
 
 // DecodeFrom reads the Tunlinkat body: dirfid[4] name[s] flags[4].
 func (m *Tunlinkat) DecodeFrom(r io.Reader) error {
-	v, err := proto.ReadUint32(r)
+	v, err := proto.ReadFid(r)
 	if err != nil {
 		return fmt.Errorf("decode tunlinkat dirfid: %w", err)
 	}
-	m.DirFid = proto.Fid(v)
+	m.DirFid = v
 	if m.Name, err = proto.ReadString(r); err != nil {
 		return fmt.Errorf("decode tunlinkat name: %w", err)
 	}
