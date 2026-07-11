@@ -256,6 +256,11 @@ func chunkLen(n int, m uint32) uint32 {
 // verbatim - [WithRequestTimeout] (if set on the Conn) is IGNORED in
 // favor of the caller's ctx.
 //
+// Internally uses the same zero-copy read path as [File.ReadAtCtx]:
+// the Rread response is decoded directly into p, skipping both the
+// intermediate Rread.Data allocation and the result-copy that
+// [Conn.Read] would otherwise pay.
+//
 // Serializes against other I/O methods on the same *File via f.mu.
 // For parallel I/O, use [File.Clone] (which issues its own fid).
 //
@@ -273,11 +278,10 @@ func (f *File) ReadCtx(ctx context.Context, p []byte) (int, error) {
 		return 0, fmt.Errorf("client: negative offset %d", f.offset)
 	}
 	count := chunkLen(len(p), f.maxChunk())
-	data, err := f.conn.Read(ctx, f.fid, uint64(f.offset), count)
+	n, err := f.conn.readAtZeroCopy(ctx, f.fid, uint64(f.offset), count, p[:count])
 	if err != nil {
 		return 0, err
 	}
-	n := copy(p, data)
 	f.offset += int64(n)
 	if n == 0 {
 		return 0, io.EOF
